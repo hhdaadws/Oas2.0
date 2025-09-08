@@ -1,0 +1,28 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(curl:*)",
+      "Bash(npm init:*)",
+      "Read(//etc/nginx/**)",
+      "Bash(npm install)",
+      "Bash(netstat:*)",
+      "Bash(pkill:*)",
+      "Bash(npm run dev:*)",
+      "Bash(sqlite3:*)",
+      "Bash(venv/bin/python:*)",
+      "Bash(venv/bin/pip install:*)",
+      "WebSearch",
+      "Bash(claude mcp:*)",
+      "mcp__playwright__browser_navigate",
+      "Bash(npx playwright:*)",
+      "WebFetch(domain:github.com)",
+      "Read(//root/.cache/**)",
+      "mcp__playwright__browser_install",
+      "mcp__playwright__browser_close",
+      "Bash(PYTHONPATH=src venv/bin/uvicorn app.main:app --reload --host 0.0.0.0 --port 9001)",
+      "Bash(git add:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

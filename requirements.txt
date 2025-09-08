@@ -1,0 +1,41 @@
+# Web框架
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+python-multipart==0.0.6
+
+# 数据库
+sqlalchemy==2.0.23
+alembic==1.12.1
+
+# 配置和验证
+pydantic==2.5.0
+pydantic-settings==2.1.0
+python-dotenv==1.0.0
+
+# 调度器
+apscheduler==3.10.4
+
+# 日志
+loguru==0.7.2
+
+# 重试
+tenacity==8.2.3
+
+# 异步
+aiofiles==23.2.1
+httpx==0.25.2
+
+# WebSocket
+python-socketio==5.10.0
+
+# 时间处理
+python-dateutil==2.8.2
+
+# 测试
+pytest==7.4.3
+pytest-asyncio==0.21.1
+pytest-cov==4.1.0
+
+# 开发工具
+black==23.11.0
+flake8==6.1.0

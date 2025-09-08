@@ -1,0 +1,55 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+
+# Database
+*.db
+*.db-journal
+data.db
+
+# Logs
+logs/
+*.log
+
+# Environment
+.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Screenshots and artifacts
+screenshots/
+artifacts/
+
+# Backup
+backups/
+*.backup
+
+# Node.js (for Vue frontend)
+node_modules/
+dist/
+.DS_Store
+*.local
+
+# Frontend build
+frontend/dist/
+frontend/node_modules/
+frontend/.env.local
+frontend/.env.*.local
+
+# Test coverage
+htmlcov/
+.coverage
+.pytest_cache/
+
+# System
+logindata/
