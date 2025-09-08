@@ -3,7 +3,7 @@ Web API模块
 """
 from fastapi import FastAPI
 from .routers import accounts, tasks, dashboard, emulators, coop
-from .routers import emulators_test, system
+from .routers import emulators_test, system, executor
 
 
 def register_routers(app: FastAPI):
@@ -15,6 +15,7 @@ def register_routers(app: FastAPI):
     app.include_router(coop.router)
     app.include_router(emulators_test.router)
     app.include_router(system.router)
+    app.include_router(executor.router)
 
 
 __all__ = ["register_routers"]

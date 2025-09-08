@@ -24,7 +24,7 @@
         </el-menu-item>
       </el-menu>
     </el-aside>
-    
+
     <!-- 主体区域 -->
     <el-container>
       <!-- 顶部栏 -->
@@ -36,7 +36,7 @@
           <span class="time">{{ currentTime }}</span>
         </div>
       </el-header>
-      
+
       <!-- 内容区域 -->
       <el-main class="layout-main">
         <router-view v-slot="{ Component }">
@@ -85,9 +85,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
-  if (timer) {
-    clearInterval(timer)
-  }
+  if (timer) clearInterval(timer)
 })
 </script>
 
@@ -98,21 +96,21 @@ onUnmounted(() => {
 
 .layout-aside {
   background-color: #304156;
-  
+
   .logo {
     height: 60px;
     display: flex;
     align-items: center;
     justify-content: center;
     background-color: #2b2f3a;
-    
+
     h3 {
       color: #fff;
       margin: 0;
       font-size: 16px;
     }
   }
-  
+
   .el-menu {
     border-right: none;
   }
@@ -125,7 +123,7 @@ onUnmounted(() => {
   align-items: center;
   justify-content: space-between;
   padding: 0 20px;
-  
+
   .header-left {
     h2 {
       margin: 0;
@@ -133,7 +131,7 @@ onUnmounted(() => {
       color: #303133;
     }
   }
-  
+
   .header-right {
     .time {
       color: #606266;
@@ -147,7 +145,7 @@ onUnmounted(() => {
   padding: 20px;
 }
 
-// 过渡动画
+/* 过渡动画 */
 .fade-enter-active,
 .fade-leave-active {
   transition: opacity 0.3s;
