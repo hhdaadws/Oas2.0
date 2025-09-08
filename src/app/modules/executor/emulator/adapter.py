@@ -6,6 +6,14 @@ import subprocess
 from typing import Optional, Tuple
 from ....core.logger import logger
 from ..vision.utils import add_random_offset, ensure_point_in_screen, calculate_click_delay
+from enum import Enum
+
+
+class AppStartMethod(str, Enum):
+    """应用启动方式"""
+    MONKEY = "monkey"           # monkey命令启动
+    AM_START = "am_start"       # am start启动
+    INTENT = "intent"           # intent启动
 
 
 class EmulatorError(Exception):
@@ -16,11 +24,14 @@ class EmulatorError(Exception):
 class EmulatorAdapter:
     """模拟器适配器"""
     
-    def __init__(self, adb_addr: str, instance_id: int, adb_path: str = "adb"):
+    def __init__(self, adb_addr: str, instance_id: int, adb_path: str = "adb", 
+                 start_method: AppStartMethod = AppStartMethod.MONKEY):
         self.adb_addr = adb_addr
         self.instance_id = instance_id
         self.adb_path = adb_path
+        self.start_method = start_method
         self.package_name = "com.netease.onmyoji"  # 阴阳师包名
+        self.activity_name = "com.netease.onmyoji.Onmyoji"  # 主Activity
         self.logger = logger.bind(device=adb_addr, module="EmulatorAdapter")
     
     async def ensure_running(self) -> bool:
@@ -45,10 +56,13 @@ class EmulatorAdapter:
             self.logger.error(f"确保模拟器运行失败: {str(e)}")
             return False
     
-    async def start_app(self) -> bool:
+    async def start_app(self, method: Optional[AppStartMethod] = None) -> bool:
         """
         启动阴阳师应用
         
+        Args:
+            method: 启动方式，None则使用默认配置
+            
         Returns:
             是否启动成功
         """
@@ -58,12 +72,13 @@ class EmulatorAdapter:
                 self.logger.info("阴阳师已在前台运行")
                 return True
             
-            # 启动应用
-            cmd = [
-                self.adb_path, "-s", self.adb_addr,
-                "shell", "monkey", "-p", self.package_name,
-                "-c", "android.intent.category.LAUNCHER", "1"
-            ]
+            # 确定启动方式
+            start_method = method or self.start_method
+            
+            # 根据启动方式构建命令
+            cmd = await self._build_start_command(start_method)
+            
+            self.logger.info(f"使用{start_method}方式启动阴阳师")
             
             process = await asyncio.create_subprocess_exec(
                 *cmd,
@@ -74,7 +89,7 @@ class EmulatorAdapter:
             stdout, stderr = await process.communicate()
             
             if process.returncode == 0:
-                self.logger.info("阴阳师启动命令执行成功")
+                self.logger.info(f"阴阳师启动命令执行成功: {start_method}")
                 # 等待应用启动
                 await asyncio.sleep(5)
                 
@@ -87,6 +102,44 @@ class EmulatorAdapter:
         except Exception as e:
             self.logger.error(f"启动阴阳师失败: {str(e)}")
             return False
+    
+    async def _build_start_command(self, method: AppStartMethod) -> list:
+        """
+        构建启动命令
+        
+        Args:
+            method: 启动方式
+            
+        Returns:
+            ADB命令列表
+        """
+        base_cmd = [self.adb_path, "-s", self.adb_addr, "shell"]
+        
+        if method == AppStartMethod.MONKEY:
+            # monkey命令启动
+            return base_cmd + [
+                "monkey", "-p", self.package_name,
+                "-c", "android.intent.category.LAUNCHER", "1"
+            ]
+        elif method == AppStartMethod.AM_START:
+            # am start启动
+            return base_cmd + [
+                "am", "start", "-n", f"{self.package_name}/{self.activity_name}"
+            ]
+        elif method == AppStartMethod.INTENT:
+            # intent启动
+            return base_cmd + [
+                "am", "start",
+                "-a", "android.intent.action.MAIN",
+                "-c", "android.intent.category.LAUNCHER",
+                self.package_name
+            ]
+        else:
+            # 默认使用monkey
+            return base_cmd + [
+                "monkey", "-p", self.package_name,
+                "-c", "android.intent.category.LAUNCHER", "1"
+            ]
     
     async def tap(self, x: int, y: int, add_random: bool = True) -> bool:
         """
