@@ -14,6 +14,9 @@
         <el-icon><Refresh /></el-icon>
         刷新
       </el-button>
+      <el-button type="danger" plain :disabled="selectedGameIds.length === 0" @click="handleBatchDelete">
+        批量删除
+      </el-button>
     </el-card>
     
     <!-- 账号列表 -->
@@ -22,14 +25,28 @@
       <el-col :span="8">
         <el-card class="account-tree">
           <template #header>
-            <span>账号列表</span>
+            <div class="tree-header">
+              <span>账号列表</span>
+              <el-input
+                v-model="searchText"
+                placeholder="搜索 Login ID"
+                clearable
+                size="small"
+                style="max-width: 220px"
+              />
+            </div>
           </template>
           
           <el-tree
-            :data="accountTree"
+            :data="filteredAccountTree"
             :props="treeProps"
             node-key="id"
+            show-checkbox
+            ref="accountTreeRef"
+            check-on-click-node
             default-expand-all
+            @check="handleTreeCheck"
+            @check-change="handleTreeCheck"
             @node-click="handleNodeClick"
           >
             <template #default="{ node, data }">
@@ -49,6 +66,32 @@
                 >
                   {{ getStatusText(data.status) }}
                 </el-tag>
+                <el-popconfirm
+                  v-if="data.type === 'email'"
+                  width="260"
+                  confirm-button-text="删除"
+                  confirm-button-type="danger"
+                  cancel-button-text="取消"
+                  title="删除该邮箱及其下所有ID账号？此操作不可恢复"
+                  @confirm="() => handleDeleteEmail(data.email)"
+                >
+                  <template #reference>
+                    <el-button link type="danger" size="small">删除</el-button>
+                  </template>
+                </el-popconfirm>
+                <el-popconfirm
+                  v-else
+                  width="220"
+                  confirm-button-text="删除"
+                  confirm-button-type="danger"
+                  cancel-button-text="取消"
+                  title="删除该ID账号？此操作不可恢复"
+                  @confirm="() => handleDeleteGame(data.id)"
+                >
+                  <template #reference>
+                    <el-button link type="danger" size="small">删除</el-button>
+                  </template>
+                </el-popconfirm>
               </span>
             </template>
           </el-tree>
@@ -311,9 +354,7 @@
         <el-form-item label="体力">
           <el-input-number v-model="gameForm.stamina" :min="0" :max="9999" />
         </el-form-item>
-        <el-form-item label="金币">
-          <el-input-number v-model="gameForm.coin" :min="0" />
-        </el-form-item>
+        
       </el-form>
       <template #footer>
         <el-button @click="gameDialogVisible = false">取消</el-button>
@@ -324,7 +365,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import {
   getAccounts,
   createEmailAccount,
@@ -332,13 +373,20 @@ import {
   updateAccount,
   updateTaskConfig,
   updateRestConfig,
-  getRestPlan
+  getRestPlan,
+  deleteGameAccount,
+  deleteEmailAccount
 } from '@/api/accounts'
+import { deleteGameAccounts } from '@/api/accounts'
 import { ElMessage } from 'element-plus'
+import { ElMessageBox } from 'element-plus'
 
 // 数据
 const accountTree = ref([])
+const searchText = ref('')
 const selectedAccount = ref(null)
+const accountTreeRef = ref(null)
+const selectedGameIds = ref([])
 const taskConfig = reactive({
   寄养: { enabled: true, next_time: "2020-01-01 00:00" },
   委托: { enabled: true, next_time: "2020-01-01 00:00" },
@@ -366,7 +414,7 @@ const gameForm = reactive({
   zone: '樱之华',
   level: 1,
   stamina: 0,
-  coin: 0
+  
 })
 
 // 树形控件配置
@@ -374,6 +422,29 @@ const treeProps = {
   children: 'children',
   label: 'label'
 }
+
+// 过滤后的树数据（按 login_id 模糊匹配）
+const filteredAccountTree = computed(() => {
+  const q = (searchText.value || '').trim().toLowerCase()
+  if (!q) return accountTree.value
+
+  const matchLogin = (s) => String(s ?? '').toLowerCase().includes(q)
+
+  const result = []
+  for (const node of accountTree.value) {
+    if (node.type === 'email') {
+      const children = (node.children || []).filter((c) => matchLogin(c.login_id))
+      if (children.length > 0) {
+        result.push({ ...node, children })
+      }
+    } else if (node.type === 'game') {
+      if (matchLogin(node.login_id)) {
+        result.push(node)
+      }
+    }
+  }
+  return result
+})
 
 // 获取账号列表
 const fetchAccounts = async () => {
@@ -391,8 +462,10 @@ const formatAccountTree = (data) => {
     if (item.type === 'email') {
       return {
         ...item,
+        // 为邮箱节点补一个唯一 id，避免 el-tree node-key 缺失导致勾选异常
+        id: `email:${item.email}`,
         label: item.email,
-        children: item.children.map(child => ({
+        children: (item.children || []).map(child => ({
           ...child,
           label: child.login_id
         }))
@@ -404,6 +477,41 @@ const formatAccountTree = (data) => {
       }
     }
   })
+}
+
+// 勾选变化，收集被选中的游戏账号ID
+const handleTreeCheck = () => {
+  const keys = accountTreeRef.value?.getCheckedKeys(false) || []
+  const ids = keys
+    .map(k => (typeof k === 'string' && /^\d+$/.test(k)) ? Number(k) : k)
+    .filter(k => typeof k === 'number')
+  selectedGameIds.value = ids
+}
+
+// 批量删除
+const handleBatchDelete = async () => {
+  if (!selectedGameIds.value.length) return
+  try {
+    await ElMessageBox.confirm(`确认删除选中的 ${selectedGameIds.value.length} 个账号？此操作不可恢复`, '提示', {
+      confirmButtonText: '删除',
+      cancelButtonText: '取消',
+      type: 'warning'
+    })
+  } catch {
+    return
+  }
+
+  try {
+    await deleteGameAccounts(selectedGameIds.value)
+    ElMessage.success('批量删除成功')
+    if (accountTreeRef.value) accountTreeRef.value.setCheckedKeys([])
+    selectedGameIds.value = []
+    selectedAccount.value = null
+    restPlan.value = {}
+    await fetchAccounts()
+  } catch (e) {
+    ElMessage.error('批量删除失败')
+  }
 }
 
 // 处理节点点击
@@ -594,7 +702,7 @@ const showAddGameDialog = () => {
   gameForm.zone = '樱之华'
   gameForm.level = 1
   gameForm.stamina = 0
-  gameForm.coin = 0
+  
   gameDialogVisible.value = true
 }
 
@@ -642,6 +750,34 @@ const getStatusText = (status) => {
   return status === 1 ? '正常' : '失效'
 }
 
+// 删除邮箱账号
+const handleDeleteEmail = async (email) => {
+  try {
+    await deleteEmailAccount(email)
+    ElMessage.success('邮箱及其ID账号已删除')
+    selectedAccount.value = null
+    restPlan.value = {}
+    await fetchAccounts()
+  } catch (e) {
+    ElMessage.error('删除失败')
+  }
+}
+
+// 删除游戏账号
+const handleDeleteGame = async (id) => {
+  try {
+    await deleteGameAccount(id)
+    ElMessage.success('账号已删除')
+    if (selectedAccount.value && selectedAccount.value.id === id) {
+      selectedAccount.value = null
+      restPlan.value = {}
+    }
+    await fetchAccounts()
+  } catch (e) {
+    ElMessage.error('删除失败')
+  }
+}
+
 onMounted(() => {
   fetchAccounts()
 })
@@ -653,9 +789,16 @@ onMounted(() => {
     margin-bottom: 20px;
   }
   
-  .account-tree {
+.account-tree {
     height: calc(100vh - 200px);
     overflow: auto;
+    
+    .tree-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
     
     .tree-node {
       display: flex;
@@ -683,3 +826,39 @@ onMounted(() => {
   }
 }
 </style>
+// 勾选变化，收集被选中的游戏账号ID
+const handleTreeCheck = () => {
+  // 直接使用已勾选的 key 列表，过滤出数值型（游戏账号的 id）
+  const keys = accountTreeRef.value?.getCheckedKeys(false) || []
+  const ids = keys
+    .map(k => (typeof k === 'string' && /^\d+$/.test(k)) ? Number(k) : k)
+    .filter(k => typeof k === 'number')
+  selectedGameIds.value = ids
+}
+
+// 批量删除
+const handleBatchDelete = async () => {
+  if (!selectedGameIds.value.length) return
+  try {
+    await ElMessageBox.confirm(`确认删除选中的 ${selectedGameIds.value.length} 个账号？此操作不可恢复`, '提示', {
+      confirmButtonText: '删除',
+      cancelButtonText: '取消',
+      type: 'warning'
+    })
+  } catch {
+    return
+  }
+
+  try {
+    await deleteGameAccounts(selectedGameIds.value)
+    ElMessage.success('批量删除成功')
+    // 清空勾选
+    if (accountTreeRef.value) accountTreeRef.value.setCheckedKeys([])
+    selectedGameIds.value = []
+    selectedAccount.value = null
+    restPlan.value = {}
+    await fetchAccounts()
+  } catch (e) {
+    ElMessage.error('批量删除失败')
+  }
+}

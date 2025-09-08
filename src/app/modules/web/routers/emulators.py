@@ -75,7 +75,7 @@ async def create_emulator(
         name=emulator.name,
         role=emulator.role,
         adb_addr=emulator.adb_addr,
-        state="stopped"
+        state="disconnected"
     )
     
     # 设置instance_id（如果列存在）

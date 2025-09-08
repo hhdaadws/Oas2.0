@@ -61,7 +61,8 @@ const menuRoutes = [
   { path: '/dashboard', meta: { title: '仪表盘', icon: 'Monitor' } },
   { path: '/accounts', meta: { title: '账号管理', icon: 'User' } },
   { path: '/coop', meta: { title: '勾协管理', icon: 'Connection' } },
-  { path: '/emulators', meta: { title: '模拟器配置', icon: 'Monitor' } }
+  { path: '/emulators', meta: { title: '模拟器配置', icon: 'Monitor' } },
+  { path: '/settings', meta: { title: '系统配置', icon: 'Setting' } }
 ]
 
 // 当前激活菜单

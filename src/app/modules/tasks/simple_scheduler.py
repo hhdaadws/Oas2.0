@@ -2,8 +2,9 @@
 简化的任务调度器 - 直接基于账号配置调度，无需Task对象
 """
 import asyncio
+import random
 from typing import Dict, Set
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time
 from sqlalchemy.orm.attributes import flag_modified
 
 from ...core.logger import logger
@@ -15,7 +16,7 @@ from ...core.constants import (
     TaskType, DEFAULT_TASK_CONFIG
 )
 from ...db.base import SessionLocal
-from ...db.models import GameAccount, Log
+from ...db.models import GameAccount, Log, AccountRestConfig, RestPlan
 from ..executor.base import MockExecutor
 
 
@@ -28,6 +29,8 @@ class SimpleScheduler:
         self.logger = logger.bind(module="SimpleScheduler")
         self._running = False
         self._check_task = None
+        # 标记当日是否已在1点后生成过休息计划
+        self._rest_plan_generated_date = None
         
     async def start(self):
         """启动调度器"""
@@ -83,12 +86,85 @@ class SimpleScheduler:
         """主检查循环"""
         while self._running:
             try:
+                await self._ensure_daily_rest_plans()
                 await self._check_all_accounts()
                 await asyncio.sleep(10)  # 每10秒检查一次
             except Exception as e:
                 self.logger.error(f"检查循环异常: {str(e)}")
                 await asyncio.sleep(5)
-    
+
+    async def _ensure_daily_rest_plans(self):
+        """每天1点后为所有账号生成当日休息计划（若不存在）。
+        - 随机模式：随机 2-3 小时，开始时间位于 07:00-23:00 之间且结束不超过 23:00
+        - 自定义模式：使用配置中的开始时间与持续时长
+        """
+        bj_now = now_beijing()
+        today_str = bj_now.date().isoformat()
+
+        # 仅在北京时间1点后执行，且每天只执行一次
+        if bj_now.hour < 1:
+            return
+        if self._rest_plan_generated_date == today_str:
+            return
+
+        try:
+            with SessionLocal() as db:
+                accounts = db.query(GameAccount).filter(
+                    GameAccount.status == 1
+                ).all()
+
+                for account in accounts:
+                    # 已有今日计划则跳过
+                    existing = db.query(RestPlan).filter(
+                        RestPlan.account_id == account.id,
+                        RestPlan.date == today_str,
+                    ).first()
+                    if existing:
+                        continue
+
+                    # 读取个体休息配置
+                    rc = db.query(AccountRestConfig).filter(
+                        AccountRestConfig.account_id == account.id
+                    ).first()
+
+                    if rc and rc.mode == "custom" and rc.rest_start and rc.rest_duration:
+                        start_time = rc.rest_start
+                        duration_hours = float(rc.rest_duration)
+                        start_dt = datetime.strptime(f"{today_str} {start_time}", "%Y-%m-%d %H:%M")
+                    else:
+                        # 随机 2-3 小时，且结束不超过 23:00
+                        duration_hours = random.uniform(2, 3)
+                        start_min_dt = datetime.combine(bj_now.date(), time(7, 0))
+                        latest_start_dt = datetime.combine(bj_now.date(), time(23, 0)) - timedelta(hours=duration_hours)
+                        if latest_start_dt < start_min_dt:
+                            latest_start_dt = start_min_dt
+                        total_minutes = max(int((latest_start_dt - start_min_dt).total_seconds() // 60), 0)
+                        offset_min = random.randint(0, total_minutes)
+                        start_dt = start_min_dt + timedelta(minutes=offset_min)
+                        start_time = start_dt.strftime("%H:%M")
+
+                    end_dt = start_dt + timedelta(hours=duration_hours)
+                    end_limit_dt = datetime.combine(bj_now.date(), time(23, 0))
+                    if end_dt > end_limit_dt:
+                        end_dt = end_limit_dt
+                    end_time = end_dt.strftime("%H:%M")
+
+                    plan = RestPlan(
+                        account_id=account.id,
+                        date=today_str,
+                        start_time=start_time,
+                        end_time=end_time,
+                    )
+                    db.add(plan)
+
+                db.commit()
+
+            self._rest_plan_generated_date = today_str
+            self.logger.info(f"已生成今日休息计划（每日1点）：{today_str}")
+        except Exception as e:
+            # 避免影响主循环
+            self.logger.error(f"生成休息计划异常: {e}")
+
     async def _check_all_accounts(self):
         """检查所有账号的任务执行条件"""
         with SessionLocal() as db:

@@ -1,16 +1,16 @@
-import axios from 'axios'
+﻿import axios from 'axios'
 import { ElMessage } from 'element-plus'
 
-// 创建axios实例
+// 鍒涘缓axios瀹炰緥
 const service = axios.create({
-  baseURL: 'http://113.45.64.80:9001/api',
+  baseURL: 'http://127.0.0.1:9001/api',
   timeout: 15000
 })
 
-// 请求拦截器
+// 璇锋眰鎷︽埅鍣?
 service.interceptors.request.use(
   config => {
-    // 可以在这里添加token等
+    // 鍙互鍦ㄨ繖閲屾坊鍔爐oken绛?
     return config
   },
   error => {
@@ -19,7 +19,7 @@ service.interceptors.request.use(
   }
 )
 
-// 响应拦截器
+// 鍝嶅簲鎷︽埅鍣?
 service.interceptors.response.use(
   response => {
     const res = response.data
@@ -27,8 +27,7 @@ service.interceptors.response.use(
   },
   error => {
     console.error('err' + error)
-    ElMessage({
-      message: error.message,
+    ElMessage({ message: (error.response && (error.response.data?.detail || error.response.data?.message || error.response.data?.error)) || error.message,
       type: 'error',
       duration: 5 * 1000
     })

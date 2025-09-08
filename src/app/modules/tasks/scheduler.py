@@ -23,8 +23,8 @@ from ...core.constants import (
 )
 from ...db.base import SessionLocal
 from ...db.models import (
-    Task, GameAccount, AccountRestConfig, RestPlan, 
-    Worker, TaskRun, Email
+    Task, GameAccount, AccountRestConfig, RestPlan,
+    Worker, TaskRun, Email, CoopAccount, CoopWindow, CoopPool
 )
 from .queue import TaskQueue
 from ..executor.base import MockExecutor
@@ -119,6 +119,42 @@ class TaskScheduler:
             name="条件任务检查"
         )
     
+    @staticmethod
+    def _current_window(now: Optional[datetime] = None) -> (str, int):
+        """返回 (window_date, slot). slot in {12,18}"""
+        now = now or datetime.now()
+        today = now.date()
+        noon = datetime.combine(today, datetime.min.time()).replace(hour=12)
+        eve = datetime.combine(today, datetime.min.time()).replace(hour=18)
+        if now < noon:
+            wd = (today - timedelta(days=1)).isoformat()
+            return wd, 18
+        elif now < eve:
+            return today.isoformat(), 12
+        else:
+            return today.isoformat(), 18
+
+    def _occupy_coop_slot(self, db: Session, coop_account_id: int) -> Optional[CoopWindow]:
+        """占用勾协库账号当前窗口容量（used_count+1）。成功返回窗口记录，否则返回 None。"""
+        wd, slot = self._current_window()
+        win = db.query(CoopWindow).filter(
+            CoopWindow.coop_account_id == coop_account_id,
+            CoopWindow.window_date == wd,
+            CoopWindow.slot == slot,
+        ).first()
+        if not win:
+            win = CoopWindow(coop_account_id=coop_account_id, window_date=wd, slot=slot, used_count=0)
+            db.add(win)
+            db.commit()
+            db.refresh(win)
+        if win.used_count >= 2:
+            return None
+        win.used_count += 1
+        if win.used_count >= 2 and not win.completed_at:
+            win.completed_at = datetime.utcnow()
+        db.commit()
+        return win
+
     async def _dispatch_loop(self):
         """任务分发循环"""
         while self._running:
@@ -761,11 +797,9 @@ class TaskScheduler:
             
             # 为每个区服创建起号任务
             for idx, zone in enumerate(settings.zones):
-                # 创建游戏账号
-                login_id = f"{email}_{zone}"  # 临时login_id，执行器会更新
-                
+                # 创建游戏账号：未初始化之前无登录数据，login_id 固定为 -1
                 account = GameAccount(
-                    login_id=login_id,
+                    login_id="-1",
                     email_fk=email,
                     zone=zone,
                     progress="init",

@@ -2,7 +2,7 @@
 数据库模型定义
 """
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, JSON, Float, Text, UniqueConstraint
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, JSON, Float, Text, UniqueConstraint, Index, text
 from sqlalchemy.orm import relationship
 from .base import Base
 
@@ -24,7 +24,9 @@ class GameAccount(Base):
     __tablename__ = "game_accounts"
     
     id = Column(Integer, primary_key=True, index=True)
-    login_id = Column(String(255), unique=True, nullable=False, index=True)
+    # login_id: -1 代表当前尚未生成平台登录数据，仅可通过邮箱触发起号
+    # 不再强制唯一，以便同一邮箱在不同区服初始化阶段均为 -1
+    login_id = Column(String(255), nullable=False, index=True)
     email_fk = Column(String(255), ForeignKey("emails.email"), nullable=True)
     zone = Column(String(50), nullable=False)
     level = Column(Integer, default=1)
@@ -41,8 +43,23 @@ class GameAccount(Base):
     tasks = relationship("Task", back_populates="account")
     rest_config = relationship("AccountRestConfig", back_populates="account", uselist=False)
     rest_plans = relationship("RestPlan", back_populates="account")
-    coop_pools = relationship("CoopPool", foreign_keys="CoopPool.account_id", back_populates="account")
+    # 历史：GameAccount 作为勾协发起方的配对记录
+    coop_pools = relationship(
+        "CoopPool",
+        foreign_keys="CoopPool.owner_account_id",
+        back_populates="owner_account",
+    )
     logs = relationship("Log", back_populates="account")
+
+    # 仅对 login_id != '-1' 强制唯一
+    __table_args__ = (
+        Index(
+            'ux_game_accounts_login_id_nonminus1',
+            'login_id',
+            unique=True,
+            sqlite_where=text("login_id <> '-1'"),
+        ),
+    )
 
 
 class AccountRestConfig(Base):
@@ -84,19 +101,69 @@ class Task(Base):
 
 
 class CoopPool(Base):
-    """勾协池表"""
+    """勾协配对池（历史亲和与统计）"""
     __tablename__ = "coop_pools"
-    
+
     id = Column(Integer, primary_key=True, index=True)
-    account_id = Column(Integer, ForeignKey("game_accounts.id"), nullable=False, index=True)
-    expire_at = Column(DateTime, nullable=False)
-    linked_account_id = Column(Integer, ForeignKey("game_accounts.id"), nullable=True)
+    # 发起勾协的一侧（普通游戏账号）
+    owner_account_id = Column(Integer, ForeignKey("game_accounts.id"), nullable=False, index=True)
+    # 被勾协的一侧（来自勾协库账号）
+    coop_account_id = Column(Integer, ForeignKey("coop_accounts.id"), nullable=False, index=True)
     used_count = Column(Integer, default=0)
+    last_used_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
-    
+
     # 关系
-    account = relationship("GameAccount", foreign_keys=[account_id], back_populates="coop_pools")
-    linked_account = relationship("GameAccount", foreign_keys=[linked_account_id])
+    owner_account = relationship(
+        "GameAccount",
+        back_populates="coop_pools",
+    )
+    coop_account = relationship(
+        "CoopAccount",
+        back_populates="coop_pools",
+    )
+
+    __table_args__ = (
+        UniqueConstraint('owner_account_id', 'coop_account_id', name='ux_coop_pair'),
+    )
+
+
+class CoopAccount(Base):
+    """勾协账号库（仅录入ID账号）"""
+    __tablename__ = "coop_accounts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    login_id = Column(String(255), unique=True, nullable=False, index=True)
+    zone = Column(String(50), nullable=True)
+    status = Column(Integer, default=1)  # 1=可用 2=失效
+    expire_date = Column(String(10), nullable=True, index=True)  # YYYY-MM-DD（过期日期）
+    note = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # 关系：作为被勾协方的配对记录
+    coop_pools = relationship(
+        "CoopPool",
+        foreign_keys="CoopPool.coop_account_id",
+        back_populates="coop_account",
+    )
+
+
+class CoopWindow(Base):
+    """勾协时间窗用量计数（12点/18点自然分段）"""
+    __tablename__ = "coop_windows"
+
+    id = Column(Integer, primary_key=True, index=True)
+    coop_account_id = Column(Integer, ForeignKey("coop_accounts.id"), nullable=False, index=True)
+    window_date = Column(String(10), nullable=False, index=True)  # YYYY-MM-DD（窗口起始日）
+    slot = Column(Integer, nullable=False, index=True)  # 12 或 18（窗口起点）
+    used_count = Column(Integer, default=0)
+    completed_at = Column(DateTime, nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        UniqueConstraint('coop_account_id', 'window_date', 'slot', name='ux_coop_window_unique'),
+    )
 
 
 class Emulator(Base):
@@ -186,3 +253,19 @@ class RestPlan(Base):
     __table_args__ = (
         UniqueConstraint('account_id', 'date', name='_account_date_uc'),
     )
+
+
+class SystemConfig(Base):
+    """系统配置（单行）"""
+    __tablename__ = "system_config"
+
+    id = Column(Integer, primary_key=True, index=True)
+    launch_mode = Column(String(20), default="adb_monkey")  # adb_monkey|adb_intent
+    adb_path = Column(String(255), default="adb")
+    ipc_dll_path = Column(String(500), nullable=True)
+    mumu_manager_path = Column(String(500), nullable=True)
+    nemu_folder = Column(String(500), nullable=True)
+    pkg_name = Column(String(200), default="com.netease.onmyoji")
+    activity_name = Column(String(200), default=".MainActivity")
+    python_path = Column(String(1000), nullable=True)  # 额外的 Python 模块搜索路径（分号或逗号分隔）
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

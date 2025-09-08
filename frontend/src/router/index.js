@@ -30,6 +30,18 @@ const routes = [
         name: 'Emulators',
         component: () => import('@/views/Emulators.vue'),
         meta: { title: '模拟器配置', icon: 'Monitor' }
+      },
+      {
+        path: 'emulators/test',
+        name: 'EmulatorTest',
+        component: () => import('@/views/EmulatorTest.vue'),
+        meta: { title: '模拟器测试', icon: 'Monitor' }
+      },
+      {
+        path: 'settings',
+        name: 'SystemConfig',
+        component: () => import('@/views/SystemConfig.vue'),
+        meta: { title: '系统配置', icon: 'Setting' }
       }
     ]
   }

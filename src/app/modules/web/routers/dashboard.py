@@ -7,7 +7,7 @@ from datetime import datetime
 from ....core.timeutils import format_beijing_time, now_beijing
 
 from ....db.base import get_db
-from ....db.models import GameAccount, Task, TaskRun, Log
+from ....db.models import GameAccount, Task, TaskRun, Log, CoopAccount
 from ....core.constants import AccountStatus, TaskStatus
 from ...tasks.simple_scheduler import simple_scheduler
 
@@ -34,11 +34,27 @@ async def get_dashboard(db: Session = Depends(get_db)):
     # 任务队列预览（前10个）
     queue_preview = simple_scheduler.get_queue_info()
     
+    # 勾协库活跃账号（未过期且状态=1）
+    today = datetime.now().date()
+    coop_all = db.query(CoopAccount).filter(CoopAccount.status == AccountStatus.ACTIVE).all()
+    coop_active = 0
+    for c in coop_all:
+        expired = False
+        if getattr(c, 'expire_date', None):
+            try:
+                d = datetime.strptime(c.expire_date, "%Y-%m-%d").date()
+                expired = d < today
+            except Exception:
+                expired = False
+        if not expired:
+            coop_active += 1
+
     return {
         "active_accounts": len(active_accounts),
         "running_accounts": len(running_account_ids),
         "running_tasks": running_tasks,
-        "queue_preview": queue_preview
+        "queue_preview": queue_preview,
+        "coop_active_accounts": coop_active,
     }
 
 

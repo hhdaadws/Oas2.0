@@ -15,10 +15,18 @@ class Settings(BaseSettings):
     # OCR
     paddle_ocr_lang: str = Field(default="ch", env="PADDLE_OCR_LANG")
     
-    # 模拟器
+    # 模拟器/启动配置
     mumu_manager_path: str = Field(default="", env="MUMU_MANAGER_PATH")
     adb_path: str = Field(default="adb", env="ADB_PATH")
     pkg_name: str = Field(default="com.netease.onmyoji", env="PKG_NAME")
+    # 阴阳师启动方式: adb|ipc|mumu
+    launch_mode: str = Field(default="adb_monkey", env="LAUNCH_MODE")
+    # IPC DLL 路径（可选）
+    ipc_dll_path: str = Field(default="", env="IPC_DLL_PATH")
+    # MuMu 安装目录，用于定位 IPC DLL
+    nemu_folder: str = Field(default="", env="NEMU_FOLDER")
+    # ADB intent 启动时的 Activity 名称
+    activity_name: str = Field(default=".MainActivity", env="ACTIVITY_NAME")
     
     # 调度
     coop_times: str = Field(default="18:00,21:00", env="COOP_TIMES")

@@ -60,3 +60,28 @@ export function getRestPlan(id) {
     method: 'get'
   })
 }
+
+// 删除游戏账号（ID账号）
+export function deleteGameAccount(id) {
+  return request({
+    url: `/accounts/${id}`,
+    method: 'delete'
+  })
+}
+
+// 删除邮箱账号（及其名下所有ID账号）
+export function deleteEmailAccount(email) {
+  return request({
+    url: `/accounts/email/${encodeURIComponent(email)}`,
+    method: 'delete'
+  })
+}
+
+// 批量删除游戏账号
+export function deleteGameAccounts(ids) {
+  return request({
+    url: '/accounts/batch-delete',
+    method: 'post',
+    data: { ids }
+  })
+}

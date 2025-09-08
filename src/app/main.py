@@ -13,13 +13,18 @@ from .modules.tasks.simple_scheduler import simple_scheduler
 app = FastAPI(
     title="阴阳师自动化调度系统",
     description="多账号任务调度管理系统",
-    version="1.0.0"
+    version="1.0.0",
+    debug=True,
 )
 
 # 配置CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # 生产环境应该配置具体的前端地址
+    # 明确允许本地前端来源，避免带凭据时与通配符的冲突
+    allow_origins=[
+        "http://localhost:9000",
+        "http://127.0.0.1:9000",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

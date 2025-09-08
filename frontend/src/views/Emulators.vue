@@ -5,10 +5,24 @@
       <template #header>
         <div class="card-header">
           <span>模拟器配置</span>
-          <el-button type="primary" @click="showAddDialog">
-            <el-icon><Plus /></el-icon>
-            添加模拟器
-          </el-button>
+          <div>
+            <el-button @click="refreshStatus" style="margin-right: 8px;">
+              <el-icon><Refresh /></el-icon>
+              刷新状态
+            </el-button>
+            <el-button @click="connectAll" style="margin-right: 8px;">
+              <el-icon><Link /></el-icon>
+              连接模拟器
+            </el-button>
+            <el-button @click="goTest" style="margin-right: 8px;">
+              <el-icon><Monitor /></el-icon>
+              测试
+            </el-button>
+            <el-button type="primary" @click="showAddDialog">
+              <el-icon><Plus /></el-icon>
+              添加模拟器
+            </el-button>
+          </div>
         </div>
       </template>
       
@@ -91,16 +105,46 @@
         <el-button type="primary" @click="handleSubmit">确定</el-button>
       </template>
     </el-dialog>
+    
+    <!-- 连接结果对话框 -->
+    <el-dialog v-model="connectDialogVisible" title="连接结果" width="720px">
+      <div style="margin-bottom: 10px;">
+        连接完成：{{ connectSummary.connected }}/{{ connectSummary.total }}
+      </div>
+      <el-table :data="connectDetails" size="small" border>
+        <el-table-column prop="addr" label="地址" width="200" />
+        <el-table-column label="状态" width="120">
+          <template #default="{ row }">
+            <el-tag :type="row.ok ? 'success' : 'danger'">{{ row.ok ? '已连接' : '连接失败' }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="信息">
+          <template #default="{ row }">
+            <div v-if="row.ok">{{ row.stdout || 'connected' }}</div>
+            <div v-else>
+              <div v-if="row.stderr">{{ row.stderr }}</div>
+              <div v-else-if="row.stdout">{{ row.stdout }}</div>
+              <div v-else>未知错误（返回码：{{ row.returncode }}）</div>
+            </div>
+          </template>
+        </el-table-column>
+      </el-table>
+      <template #footer>
+        <el-button type="primary" @click="connectDialogVisible = false">知道了</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup>
 import { ref, reactive, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import dayjs from 'dayjs'
 import { API_ENDPOINTS, apiRequest } from '@/config'
 
 // 数据
+const router = useRouter()
 const emulators = ref([])
 const dialogVisible = ref(false)
 const isEdit = ref(false)
@@ -160,6 +204,49 @@ const showAddDialog = () => {
     adb_port: 16384
   })
   dialogVisible.value = true
+}
+
+// 跳转到测试页
+const goTest = () => {
+  router.push('/emulators/test')
+}
+
+// 一键连接所有模拟器（adb connect）
+const connectDialogVisible = ref(false)
+const connectSummary = ref({ connected: 0, total: 0 })
+const connectDetails = ref([])
+const connectAll = async () => {
+  try {
+    const resp = await apiRequest(API_ENDPOINTS.emulatorConnectAll, { method: 'POST' })
+    const data = await resp.json()
+    if (resp.ok) {
+      connectSummary.value = { connected: data.connected || 0, total: data.total || 0 }
+      connectDetails.value = Array.isArray(data.details) ? data.details : []
+      connectDialogVisible.value = true
+      await fetchEmulators()
+    } else {
+      // 请求失败时提示错误
+      ElMessageBox.alert(data?.detail || '连接失败', '连接模拟器', { type: 'error' })
+    }
+  } catch (e) {
+    ElMessageBox.alert('连接失败', '连接模拟器', { type: 'error' })
+  }
+}
+
+// 刷新所有模拟器状态（adb devices）
+const refreshStatus = async () => {
+  try {
+    const resp = await apiRequest(API_ENDPOINTS.emulatorRefresh, { method: 'POST' })
+    const data = await resp.json()
+    if (resp.ok) {
+      ElMessage.success(`状态已刷新：${data.connected}/${data.total}`)
+      await fetchEmulators()
+    } else {
+      ElMessage.error(data?.detail || '刷新失败')
+    }
+  } catch (e) {
+    ElMessage.error('刷新失败')
+  }
 }
 
 // 编辑模拟器
@@ -269,9 +356,12 @@ const getRoleText = (role) => {
 // 获取状态类型
 const getStateType = (state) => {
   const map = {
+    'connected': 'success',
+    'disconnected': 'info',
+    'error': 'danger',
+    // 兼容旧状态
     'running': 'success',
-    'stopped': 'info',
-    'error': 'danger'
+    'stopped': 'info'
   }
   return map[state] || 'info'
 }
@@ -279,9 +369,12 @@ const getStateType = (state) => {
 // 获取状态文本
 const getStateText = (state) => {
   const map = {
+    'connected': '已连接',
+    'disconnected': '未连接',
+    'error': '错误',
+    // 兼容旧状态
     'running': '运行中',
-    'stopped': '已停止',
-    'error': '错误'
+    'stopped': '未连接'
   }
   return map[state] || state
 }

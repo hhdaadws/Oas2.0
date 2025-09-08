@@ -1,0 +1,4 @@
+DEFAULT_TM_THRESHOLD: float = 0.85
+
+__all__ = ["DEFAULT_TM_THRESHOLD"]
+
