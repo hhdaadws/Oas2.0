@@ -269,6 +269,63 @@ class EmulatorAdapter:
             self.logger.error(f"检查应用前台状态失败: {str(e)}")
             return False
     
+    async def stop_app(self) -> bool:
+        """
+        关闭阴阳师应用
+        
+        Returns:
+            是否关闭成功
+        """
+        try:
+            cmd = [
+                self.adb_path, "-s", self.adb_addr,
+                "shell", "am", "force-stop", self.package_name
+            ]
+            
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            
+            stdout, stderr = await process.communicate()
+            
+            if process.returncode == 0:
+                self.logger.info("阴阳师应用关闭成功")
+                # 等待应用完全关闭
+                await asyncio.sleep(2)
+                return True
+            else:
+                error_msg = stderr.decode('utf-8') if stderr else "未知错误"
+                raise EmulatorError(f"关闭应用命令失败: {error_msg}")
+            
+        except Exception as e:
+            self.logger.error(f"关闭阴阳师失败: {str(e)}")
+            return False
+    
+    async def restart_app(self) -> bool:
+        """
+        重启阴阳师应用
+        
+        Returns:
+            是否重启成功
+        """
+        try:
+            self.logger.info("重启阴阳师应用...")
+            
+            # 先关闭
+            await self.stop_app()
+            
+            # 等待一段时间
+            await asyncio.sleep(3)
+            
+            # 再启动
+            return await self.start_app()
+            
+        except Exception as e:
+            self.logger.error(f"重启阴阳师失败: {str(e)}")
+            return False
+    
     async def ensure_app_foreground(self) -> bool:
         """确保阴阳师在前台"""
         if await self._is_app_foreground():

@@ -222,6 +222,45 @@ class GameExecutor:
             self.logger.error(f"多模板匹配点击失败: {str(e)}")
             return False
     
+    async def stop_onmyoji_game(self) -> bool:
+        """
+        关闭阴阳师游戏
+        
+        Returns:
+            是否关闭成功
+        """
+        try:
+            self.logger.info("关闭阴阳师游戏...")
+            return await self.emulator.stop_app()
+            
+        except Exception as e:
+            self.logger.error(f"关闭阴阳师失败: {str(e)}")
+            return False
+    
+    async def restart_onmyoji_game(self) -> bool:
+        """
+        重启阴阳师游戏
+        
+        Returns:
+            是否重启成功
+        """
+        try:
+            self.logger.info("重启阴阳师游戏...")
+            return await self.emulator.restart_app()
+            
+        except Exception as e:
+            self.logger.error(f"重启阴阳师失败: {str(e)}")
+            return False
+    
+    async def is_onmyoji_running(self) -> bool:
+        """
+        检查阴阳师是否在运行
+        
+        Returns:
+            是否在前台运行
+        """
+        return await self.emulator._is_app_foreground()
+    
     async def start_onmyoji_game(self) -> bool:
         """
         启动阴阳师游戏并等待进入主界面

@@ -29,7 +29,8 @@
       "Bash(ssh-keygen:*)",
       "Read(//root/.ssh/**)",
       "Bash(git remote set-url:*)",
-      "Bash(git checkout:*)"
+      "Bash(git checkout:*)",
+      "Bash(git commit:*)"
     ],
     "deny": [],
     "ask": []

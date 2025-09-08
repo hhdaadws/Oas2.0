@@ -27,12 +27,29 @@ async def main():
         await executor.take_screenshot(save_path=screenshot_path)
         print(f"截图已保存: {screenshot_path}")
         
-        # 3. 启动阴阳师
+        # 3. 检查阴阳师状态
+        print("检查阴阳师运行状态...")
+        if await executor.is_onmyoji_running():
+            print("阴阳师已在运行")
+        else:
+            print("阴阳师未运行，尝试启动...")
+            
+        # 4. 启动阴阳师
         print("启动阴阳师游戏...")
         if await executor.start_onmyoji_game():
             print("阴阳师启动成功")
         else:
             print("阴阳师启动失败")
+        
+        # 5. 关闭阴阳师示例
+        print("关闭阴阳师游戏...")
+        if await executor.stop_onmyoji_game():
+            print("阴阳师关闭成功")
+        
+        # 6. 重启阴阳师示例  
+        print("重启阴阳师游戏...")
+        if await executor.restart_onmyoji_game():
+            print("阴阳师重启成功")
         
         # 4. 模板匹配示例
         print("查找并点击模板...")
