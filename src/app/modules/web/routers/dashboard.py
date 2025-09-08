@@ -4,6 +4,7 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from datetime import datetime
+from ....core.timeutils import format_beijing_time, now_beijing
 
 from ....db.base import get_db
 from ....db.models import GameAccount, Task, TaskRun, Log
@@ -78,5 +79,5 @@ async def get_realtime_stats(db: Session = Depends(get_db)):
             "running": running_count,
             "today_completed": today_completed
         },
-        "timestamp": datetime.utcnow().isoformat()
+        "timestamp": format_beijing_time(now_beijing())
     }

@@ -167,15 +167,9 @@
         <el-table-column prop="message" label="消息" min-width="200" />
       </el-table>
       
-      <!-- 分页 -->
-      <el-pagination
-        v-model:current-page="logPage.current"
-        v-model:page-size="logPage.size"
-        :total="logPage.total"
-        layout="total, prev, pager, next"
-        style="margin-top: 20px"
-        @current-change="fetchLogs"
-      />
+      <div style="margin-top: 10px; text-align: center; color: #909399; font-size: 12px">
+        显示最新 {{ systemLogs.length }} 条日志
+      </div>
     </el-card>
   </div>
 </template>
@@ -185,6 +179,7 @@ import { ref, reactive, onMounted, onUnmounted } from 'vue'
 import { getDashboard, getRealtimeStats } from '@/api/dashboard'
 import { ElMessage } from 'element-plus'
 import dayjs from 'dayjs'
+import { API_ENDPOINTS, apiRequest } from '@/config'
 
 // 数据
 const stats = ref({
@@ -204,12 +199,8 @@ const logFilter = reactive({
   account_id: null
 })
 
-// 日志分页
-const logPage = reactive({
-  current: 1,
-  size: 20,
-  total: 0
-})
+// 日志配置（固定30条）
+const LOG_LIMIT = 30
 
 // 定时器
 let refreshTimer = null
@@ -239,7 +230,7 @@ const fetchData = async () => {
 // 检查调度器状态
 const checkSchedulerStatus = async () => {
   try {
-    const response = await fetch('/api/tasks/scheduler/status')
+    const response = await apiRequest(API_ENDPOINTS.tasks.scheduler.status)
     const data = await response.json()
     schedulerRunning.value = data.running
   } catch (error) {
@@ -250,7 +241,7 @@ const checkSchedulerStatus = async () => {
 // 启动调度器
 const startScheduler = async () => {
   try {
-    await fetch('/api/tasks/scheduler/start', { method: 'POST' })
+    await apiRequest(API_ENDPOINTS.tasks.scheduler.start, { method: 'POST' })
     schedulerRunning.value = true
     ElMessage.success('调度器已启动')
   } catch (error) {
@@ -261,7 +252,7 @@ const startScheduler = async () => {
 // 停止调度器
 const stopScheduler = async () => {
   try {
-    await fetch('/api/tasks/scheduler/stop', { method: 'POST' })
+    await apiRequest(API_ENDPOINTS.tasks.scheduler.stop, { method: 'POST' })
     schedulerRunning.value = false
     ElMessage.success('调度器已停止')
   } catch (error) {
@@ -307,12 +298,12 @@ const getLevelType = (level) => {
   return map[level] || 'info'
 }
 
-// 获取系统日志
+// 获取系统日志（最新30条）
 const fetchLogs = async () => {
   try {
     const params = new URLSearchParams()
-    params.set('limit', logPage.size.toString())
-    params.set('offset', ((logPage.current - 1) * logPage.size).toString())
+    params.set('limit', LOG_LIMIT.toString())
+    params.set('offset', '0')  // 始终从第一条开始
     
     if (logFilter.level) {
       params.set('level', logFilter.level)
@@ -321,11 +312,10 @@ const fetchLogs = async () => {
       params.set('account_id', logFilter.account_id.toString())
     }
     
-    const response = await fetch(`/api/tasks/logs?${params}`)
+    const response = await apiRequest(`${API_ENDPOINTS.tasks.logs}?${params}`)
     const data = await response.json()
     
     systemLogs.value = data.logs || []
-    logPage.total = data.total || 0
   } catch (error) {
     console.error('获取系统日志失败:', error)
   }

@@ -26,10 +26,10 @@ const routes = [
         meta: { title: '勾协管理', icon: 'Connection' }
       },
       {
-        path: 'config',
-        name: 'Config',
-        component: () => import('@/views/Config.vue'),
-        meta: { title: '系统配置', icon: 'Setting' }
+        path: 'emulators',
+        name: 'Emulators',
+        component: () => import('@/views/Emulators.vue'),
+        meta: { title: '模拟器配置', icon: 'Monitor' }
       }
     ]
   }

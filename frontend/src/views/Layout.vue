@@ -60,9 +60,8 @@ const route = useRoute()
 const menuRoutes = [
   { path: '/dashboard', meta: { title: '仪表盘', icon: 'Monitor' } },
   { path: '/accounts', meta: { title: '账号管理', icon: 'User' } },
-  { path: '/tasks', meta: { title: '任务中心', icon: 'List' } },
   { path: '/coop', meta: { title: '勾协管理', icon: 'Connection' } },
-  { path: '/config', meta: { title: '系统配置', icon: 'Setting' } }
+  { path: '/emulators', meta: { title: '模拟器配置', icon: 'Monitor' } }
 ]
 
 // 当前激活菜单

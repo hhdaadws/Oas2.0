@@ -29,7 +29,6 @@ class GameAccount(Base):
     zone = Column(String(50), nullable=False)
     level = Column(Integer, default=1)
     stamina = Column(Integer, default=0)
-    coin = Column(Integer, default=0)
     progress = Column(String(20), default="init")  # init|ok
     status = Column(Integer, default=1)  # 1=可执行|2=失效
     current_task = Column(String(50), nullable=True)
@@ -109,6 +108,7 @@ class Emulator(Base):
     role = Column(String(20), nullable=False)  # coop|general|init
     state = Column(String(20), default="stopped")
     adb_addr = Column(String(100), nullable=False)
+    instance_id = Column(Integer, nullable=True, default=0)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     

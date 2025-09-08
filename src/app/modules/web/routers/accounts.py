@@ -30,7 +30,6 @@ class GameAccountCreate(BaseModel):
     zone: str
     level: int = 1
     stamina: int = 0
-    coin: int = 0
 
 
 class AccountUpdate(BaseModel):
@@ -39,7 +38,6 @@ class AccountUpdate(BaseModel):
     progress: Optional[str] = None
     level: Optional[int] = None
     stamina: Optional[int] = None
-    coin: Optional[int] = None
 
 
 class TaskConfigUpdate(BaseModel):
@@ -89,7 +87,6 @@ async def get_accounts(db: Session = Depends(get_db)):
                 "zone": account.zone,
                 "level": account.level,
                 "stamina": account.stamina,
-                "coin": account.coin,
                 "status": account.status,
                 "progress": account.progress,
                 "current_task": account.current_task,
@@ -111,7 +108,6 @@ async def get_accounts(db: Session = Depends(get_db)):
             "zone": account.zone,
             "level": account.level,
             "stamina": account.stamina,
-            "coin": account.coin,
             "status": account.status,
             "progress": account.progress,
             "current_task": account.current_task,
@@ -177,7 +173,6 @@ async def create_game_account(
         zone=account.zone,
         level=account.level,
         stamina=account.stamina,
-        coin=account.coin,
         progress="ok",  # ID账号默认已完成初始化
         status=AccountStatus.ACTIVE,
         task_config=DEFAULT_TASK_CONFIG
@@ -232,8 +227,6 @@ async def update_account(
             logger.info(f"账号 {account.login_id} 体力达到阈值，触发任务检查")
             # 这里调度器会在下一个检查周期自动处理
     
-    if update.coin is not None:
-        account.coin = update.coin
     
     account.updated_at = datetime.utcnow()
     db.commit()

@@ -98,14 +98,6 @@
                 @change="updateAccountInfo"
               />
             </el-descriptions-item>
-            <el-descriptions-item label="金币">
-              <el-input-number
-                v-model="selectedAccount.coin"
-                :min="0"
-                size="small"
-                @change="updateAccountInfo"
-              />
-            </el-descriptions-item>
             <el-descriptions-item label="状态">
               <el-select
                 v-model="selectedAccount.status"
@@ -485,8 +477,7 @@ const updateAccountInfo = async () => {
       status: selectedAccount.value.status,
       progress: selectedAccount.value.progress,
       level: selectedAccount.value.level,
-      stamina: selectedAccount.value.stamina,
-      coin: selectedAccount.value.coin
+      stamina: selectedAccount.value.stamina
     })
     
     // 更新账号树中的数据
@@ -497,7 +488,6 @@ const updateAccountInfo = async () => {
           node.progress = selectedAccount.value.progress
           node.level = selectedAccount.value.level
           node.stamina = selectedAccount.value.stamina
-          node.coin = selectedAccount.value.coin
           break
         }
         if (node.children) {
