@@ -343,6 +343,61 @@ async def get_rest_plan(
     }
 
 
+@router.delete("/email/{email}")
+async def delete_email_account(
+    email: str,
+    db: Session = Depends(get_db)
+):
+    """
+    删除邮箱账号及其关联的游戏账号
+    """
+    email_account = db.query(Email).filter(Email.email == email).first()
+    if not email_account:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="邮箱账号不存在"
+        )
+    
+    # 删除关联的游戏账号
+    game_accounts = db.query(GameAccount).filter(GameAccount.email_fk == email).all()
+    for account in game_accounts:
+        db.delete(account)
+    
+    # 删除邮箱账号
+    db.delete(email_account)
+    db.commit()
+    
+    logger.info(f"删除邮箱账号: {email}, 关联游戏账号数: {len(game_accounts)}")
+    
+    return {"message": "邮箱账号删除成功"}
+
+
+@router.delete("/game/{account_id}")
+async def delete_game_account(
+    account_id: int,
+    db: Session = Depends(get_db)
+):
+    """
+    删除游戏账号
+    """
+    account = db.query(GameAccount).filter(GameAccount.id == account_id).first()
+    if not account:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="游戏账号不存在"
+        )
+    
+    login_id = account.login_id
+    is_email_account = account.email_fk is not None
+    
+    db.delete(account)
+    db.commit()
+    
+    logger.info(f"删除游戏账号: {login_id}, 是否邮箱账号: {is_email_account}")
+    
+    return {"message": "游戏账号删除成功"}
+
+
 @router.post("/init-status")
 async def update_init_status(
     data: Dict[str, Any],

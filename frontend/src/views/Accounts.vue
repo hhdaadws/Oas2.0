@@ -49,6 +49,15 @@
                 >
                   {{ getStatusText(data.status) }}
                 </el-tag>
+                <el-button
+                  link
+                  type="danger"
+                  size="small"
+                  style="margin-left: 8px"
+                  @click.stop="deleteAccount(data)"
+                >
+                  <el-icon><Delete /></el-icon>
+                </el-button>
               </span>
             </template>
           </el-tree>
@@ -334,7 +343,7 @@ import {
   updateRestConfig,
   getRestPlan
 } from '@/api/accounts'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 
 // 数据
 const accountTree = ref([])
@@ -640,6 +649,56 @@ const getStatusType = (status) => {
 // 获取状态文本
 const getStatusText = (status) => {
   return status === 1 ? '正常' : '失效'
+}
+
+// 删除账号
+const deleteAccount = async (accountData) => {
+  try {
+    const accountType = accountData.type === 'email' ? '邮箱账号' : '游戏账号'
+    const accountName = accountData.label
+    
+    await ElMessageBox.confirm(
+      `确定要删除${accountType}"${accountName}"吗？${accountData.type === 'email' ? '这将同时删除其下的所有游戏账号。' : ''}`,
+      '确认删除',
+      {
+        type: 'warning',
+        confirmButtonText: '确定删除',
+        cancelButtonText: '取消'
+      }
+    )
+    
+    let response
+    if (accountData.type === 'email') {
+      // 删除邮箱账号
+      response = await fetch(`http://113.45.64.80:9001/api/accounts/email/${encodeURIComponent(accountData.email)}`, {
+        method: 'DELETE'
+      })
+    } else {
+      // 删除游戏账号
+      response = await fetch(`http://113.45.64.80:9001/api/accounts/game/${accountData.id}`, {
+        method: 'DELETE'
+      })
+    }
+    
+    if (response.ok) {
+      ElMessage.success(`${accountType}删除成功`)
+      await fetchAccounts()  // 刷新账号列表
+      
+      // 如果删除的是当前选中的账号，清空选中状态
+      if (selectedAccount.value && 
+          ((accountData.type === 'game' && selectedAccount.value.id === accountData.id) ||
+           (accountData.type === 'email' && selectedAccount.value.email === accountData.email))) {
+        selectedAccount.value = null
+      }
+    } else {
+      throw new Error('删除失败')
+    }
+    
+  } catch (error) {
+    if (error !== 'cancel') {
+      ElMessage.error('删除失败')
+    }
+  }
 }
 
 onMounted(() => {
