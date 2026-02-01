@@ -113,14 +113,14 @@
             <el-descriptions-item label="区服">
               {{ selectedAccount.zone }}
             </el-descriptions-item>
-            <el-descriptions-item label="璧峰彿鐘舵€?>
+            <el-descriptions-item label="起号状态">
               <el-select
                 v-model="selectedAccount.progress"
                 size="small"
                 @change="updateAccountInfo"
               >
-                <el-option value="init" label="寰呰捣鍙? />
-                <el-option value="ok" label="宸插畬鎴? />
+                <el-option value="init" label="待起号" />
+                <el-option value="ok" label="已完成" />
               </el-select>
             </el-descriptions-item>
             <el-descriptions-item label="等级">
@@ -141,14 +141,14 @@
                 @change="updateAccountInfo"
               />
             </el-descriptions-item>
-            <el-descriptions-item label="鐘舵€?>
+            <el-descriptions-item label="状态">
               <el-select
                 v-model="selectedAccount.status"
                 size="small"
                 @change="updateAccountInfo"
               >
-                <el-option :value="1" label="鍙墽琛? />
-                <el-option :value="2" label="澶辨晥" />
+                <el-option :value="1" label="可执行" />
+                <el-option :value="2" label="失效" />
               </el-select>
             </el-descriptions-item>
             <el-descriptions-item label="当前任务" :span="2">
@@ -223,7 +223,7 @@
               />
               <span v-if="taskConfig.探索突破.enabled" class="config-item">体力</span>
             </el-form-item>
-            <el-form-item label="结界卡合成>
+            <el-form-item label="结界卡合成"
               <el-switch
                 v-model="taskConfig.结界卡合成enabled"
                 @change="updateTaskConfigData"
@@ -241,7 +241,7 @@
                 /40 娆?
               </span>
             </el-form-item>
-            <el-form-item label="加好友>
+            <el-form-item label="加好友"
               <el-switch
                 v-model="taskConfig.加好友enabled"
                 @change="updateTaskConfigData"
@@ -271,7 +271,7 @@
                 <el-radio label="custom">鑷畾涔?/el-radio>
               </el-radio-group>
             </el-form-item>
-            <el-form-item v-if="restConfig.mode === 'custom'" label="寮€濮嬫椂闂?>
+            <el-form-item v-if="restConfig.mode === 'custom'" label="开始时间"
               <el-time-picker
                 v-model="restConfig.start_time"
                 format="HH:mm"
@@ -280,7 +280,7 @@
                 @change="updateRestConfigData"
               />
             </el-form-item>
-            <el-form-item v-if="restConfig.mode === 'custom'" label="鎸佺画鏃堕暱">
+            <el-form-item v-if="restConfig.mode === 'custom'" label="持续时长">
               <el-input-number
                 v-model="restConfig.duration"
                 :min="1"
@@ -747,7 +747,7 @@ const getStatusType = (status) => {
 
 // 鑾峰彇鐘舵€佹枃鏈?
 const getStatusText = (status) => {
-  return status === 1 ? '姝ｅ父' : '澶辨晥'
+  return status === 1 ? '姝ｅ父' : '失效'
 }
 
 // 删除邮箱账号

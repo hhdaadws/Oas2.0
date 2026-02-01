@@ -38,7 +38,11 @@
       "Bash(while read f)",
       "Bash(do if head -c 3 \"$f\")",
       "Bash(iconv:*)",
-      "Bash(find:*)"
+      "Bash(find:*)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nfix: 修复编码问题和循环导入\n\n- 修复 executor 模块循环导入：将 TaskIntent 移至独立的 types.py\n- 修复 feeder.py 中的中文字符编码问题\n- 修复 frontend/Accounts.vue 大量 GBK/UTF-8 编码乱码\n- 移除文件中的 UTF-8 BOM 标记\n- 修复所有中文文本的正确显示\n\nCo-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(kill:*)",
+      "Bash(xargs:*)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nfix: 修复CORS跨域和剩余编码问题\n\n- 添加前端端口 9028 到 CORS 允许列表\n- 修复 Accounts.vue 中剩余的乱码字符\n- 修复缺少的引号导致的 Vue 编译错误\n\nCo-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>\nEOF\n\\)\")"
     ],
     "deny": [],
     "ask": []
