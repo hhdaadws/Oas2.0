@@ -223,7 +223,7 @@
               />
               <span v-if="taskConfig.探索突破.enabled" class="config-item">体力</span>
             </el-form-item>
-            <el-form-item label="结界卡合成"
+            <el-form-item label="结界卡合成">
               <el-switch
                 v-model="taskConfig.结界卡合成.enabled"
                 @change="updateTaskConfigData"
