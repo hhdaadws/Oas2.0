@@ -225,30 +225,30 @@
             </el-form-item>
             <el-form-item label="结界卡合成"
               <el-switch
-                v-model="taskConfig.结界卡合成enabled"
+                v-model="taskConfig.结界卡合成.enabled"
                 @change="updateTaskConfigData"
               />
-              <span v-if="taskConfig.结界卡合成enabled" style="margin-left: 10px">
+              <span v-if="taskConfig.结界卡合成.enabled" style="margin-left: 10px">
                 宸叉帰绱細
                 <el-input-number
-                  v-model="taskConfig.结界卡合成explore_count"
+                  v-model="taskConfig.结界卡合成.explore_count"
                   :min="0"
                   :max="100"
                   size="small"
                   style="width: 80px; margin: 0 5px"
                   @change="updateTaskConfigData"
                 />
-                /40 娆?
+                /40 次
               </span>
             </el-form-item>
-            <el-form-item label="加好友"
+            <el-form-item label="加好友">
               <el-switch
-                v-model="taskConfig.加好友enabled"
+                v-model="taskConfig.加好友.enabled"
                 @change="updateTaskConfigData"
               />
               <el-date-picker
-                v-if="taskConfig.加好友enabled"
-                v-model="taskConfig.加好友next_time"
+                v-if="taskConfig.加好友.enabled"
+                v-model="taskConfig.加好友.next_time"
                 type="datetime"
                 placeholder="涓嬫鎵ц鏃堕棿"
                 format="YYYY-MM-DD HH:mm"
@@ -635,12 +635,12 @@ const updateTaskConfigData = async () => {
         stamina_threshold: taskConfig.探索突破.stamina_threshold
       },
       结界卡合成: { 
-        enabled: taskConfig.结界卡合成enabled,
-        explore_count: taskConfig.结界卡合成explore_count
+        enabled: taskConfig.结界卡合成.enabled,
+        explore_count: taskConfig.结界卡合成.explore_count
       },
       加好友: { 
-        enabled: taskConfig.加好友enabled,
-        next_time: taskConfig.加好友next_time
+        enabled: taskConfig.加好友.enabled,
+        next_time: taskConfig.加好友.next_time
       }
     }
     await updateTaskConfig(selectedAccount.value.id, configToSend)
