@@ -29,7 +29,7 @@
               <span>账号鍒楄〃</span>
               <el-input
                 v-model="searchText"
-                placeholder="鎼滅储 Login ID"
+                placeholder="搜索 Login ID"
                 clearable
                 size="small"
                 style="max-width: 220px"
@@ -152,7 +152,7 @@
               </el-select>
             </el-descriptions-item>
             <el-descriptions-item label="当前任务" :span="2">
-              {{ selectedAccount.current_task || '无 }}
+              {{ selectedAccount.current_task || '无' }}
             </el-descriptions-item>
           </el-descriptions>
           
@@ -217,7 +217,7 @@
                 v-model="taskConfig.探索突破.stamina_threshold"
                 :min="100"
                 :max="9999"
-                placeholder="体力闃堝€?
+                  placeholder="体力阈值"
                 style="margin-left: 10px; width: 150px"
                 @change="updateTaskConfigData"
               />
@@ -313,13 +313,13 @@
     >
       <el-form :model="emailForm" label-width="80px">
         <el-form-item label="邮箱" required>
-          <el-input v-model="emailForm.email" placeholder="璇疯緭鍏ラ偖绠? />
+          <el-input v-model="emailForm.email" placeholder="请输入邮箱" />
         </el-form-item>
         <el-form-item label="瀵嗙爜" required>
           <el-input
             v-model="emailForm.password"
             type="password"
-            placeholder="璇疯緭鍏ュ瘑鐮?
+            placeholder="请输入密码"
             show-password
           />
         </el-form-item>
@@ -709,7 +709,7 @@ const showAddGameDialog = () => {
 // 添加邮箱账号
 const handleAddEmail = async () => {
   if (!emailForm.email || !emailForm.password) {
-    ElMessage.warning('璇峰～鍐欏畬鏁翠俊鎭?)
+    ElMessage.warning('请填写完整信息')
     return
   }
   
@@ -726,7 +726,7 @@ const handleAddEmail = async () => {
 // 添加游戏账号
 const handleAddGame = async () => {
   if (!gameForm.login_id || !gameForm.zone) {
-    ElMessage.warning('璇峰～鍐欏畬鏁翠俊鎭?)
+    ElMessage.warning('请填写完整信息')
     return
   }
   
@@ -767,7 +767,7 @@ const handleDeleteEmail = async (email) => {
 const handleDeleteGame = async (id) => {
   try {
     await deleteGameAccount(id)
-    ElMessage.success('账号已删除)
+    ElMessage.success('账号已删除')
     if (selectedAccount.value && selectedAccount.value.id === id) {
       selectedAccount.value = null
       restPlan.value = {}

@@ -21,12 +21,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:9000",
-        "http://127.0.0.1:9000",
-        "http://localhost:9028",
-        "http://127.0.0.1:9028",
-    ],
+    allow_origins=["*"],  # 允许所有来源，开发环境使用
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
