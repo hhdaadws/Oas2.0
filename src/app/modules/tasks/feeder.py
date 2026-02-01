@@ -124,13 +124,13 @@ class Feeder:
         coop = cfg.get("勾协", {})
         if coop.get("enabled", True) and coop.get("next_time") and is_time_reached(coop["next_time"]):
             executor_service.enqueue(account.id, TaskType.COOP)
-        addf = cfg.get("加好�?, {})
+        addf = cfg.get("加好友", {})
         if addf.get("enabled", True) and addf.get("next_time") and is_time_reached(addf["next_time"]):
             executor_service.enqueue(account.id, TaskType.ADD_FRIEND)
 
     async def _push_conditional_tasks(self, account: GameAccount, cfg: Dict) -> None:
         # 结界卡合成优先
-        card = cfg.get("结界卡合�?, {})
+        card = cfg.get("结界卡合成", {})
         if card.get("enabled", True) and card.get("explore_count", 0) >= 40:
             executor_service.enqueue(account.id, TaskType.CARD_SYNTHESIS)
         # 探索突破（体力阈值）

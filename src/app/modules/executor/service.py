@@ -20,15 +20,8 @@ from ...core.logger import logger
 from ...core.constants import TaskType
 from ...db.base import SessionLocal
 from ...db.models import Emulator, SystemConfig
+from .types import TaskIntent
 from .worker import WorkerActor
-
-
-@dataclass
-class TaskIntent:
-    account_id: int
-    task_type: TaskType
-    enqueue_time: datetime = field(default_factory=datetime.utcnow)
-    payload: dict = field(default_factory=dict)
 
 
 class ExecutorService:

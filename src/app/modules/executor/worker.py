@@ -11,7 +11,7 @@ from ...core.logger import logger
 from ...core.constants import TaskType
 from ...db.base import SessionLocal
 from ...db.models import Emulator, GameAccount, SystemConfig, Task
-from .service import TaskIntent
+from .types import TaskIntent
 from .base import MockExecutor
 
 

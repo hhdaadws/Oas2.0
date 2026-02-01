@@ -28,7 +28,17 @@
       "Bash(git push:*)",
       "Bash(ssh-keygen:*)",
       "Read(//root/.ssh/**)",
-      "Bash(git remote set-url:*)"
+      "Bash(git remote set-url:*)",
+      "Bash(test:*)",
+      "Bash(PYTHONPATH=src uvicorn:*)",
+      "Bash(python:*)",
+      "Bash(git restore:*)",
+      "Bash(file:*)",
+      "Bash(python3:*)",
+      "Bash(while read f)",
+      "Bash(do if head -c 3 \"$f\")",
+      "Bash(iconv:*)",
+      "Bash(find:*)"
     ],
     "deny": [],
     "ask": []
