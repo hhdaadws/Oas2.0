@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import Optional
 
 from ...core.constants import TaskType
 
@@ -15,3 +16,4 @@ class TaskIntent:
     task_type: TaskType
     enqueue_time: datetime = field(default_factory=datetime.utcnow)
     payload: dict = field(default_factory=dict)
+    started_at: Optional[datetime] = None

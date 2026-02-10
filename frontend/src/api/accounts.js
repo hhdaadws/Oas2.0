@@ -85,3 +85,20 @@ export function deleteGameAccounts(ids) {
     data: { ids }
   })
 }
+
+// 获取阵容分组配置
+export function getLineupConfig(id) {
+  return request({
+    url: `/accounts/${id}/lineup-config`,
+    method: 'get'
+  })
+}
+
+// 更新阵容分组配置
+export function updateLineupConfig(id, data) {
+  return request({
+    url: `/accounts/${id}/lineup-config`,
+    method: 'put',
+    data
+  })
+}

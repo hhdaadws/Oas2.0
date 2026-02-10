@@ -3,6 +3,8 @@ Vision utilities: image loading/decoding and pixel helpers.
 """
 from __future__ import annotations
 
+import math
+import random
 from typing import Tuple, Union
 import os
 import numpy as np
@@ -10,6 +12,8 @@ import cv2  # type: ignore
 
 
 ImageLike = Union[str, bytes, np.ndarray]
+
+_IMAGE_PATH_CACHE: dict[str, np.ndarray] = {}
 
 
 def load_image(img: ImageLike) -> np.ndarray:
@@ -30,9 +34,12 @@ def load_image(img: ImageLike) -> np.ndarray:
     if isinstance(img, str):
         if not os.path.isfile(img):
             raise FileNotFoundError(f"Image file not found: {img}")
+        if img in _IMAGE_PATH_CACHE:
+            return _IMAGE_PATH_CACHE[img]
         mat = cv2.imread(img, cv2.IMREAD_COLOR)
         if mat is None:
             raise ValueError(f"Failed to load image from path: {img}")
+        _IMAGE_PATH_CACHE[img] = mat
         return mat
     raise TypeError(f"Unsupported image type: {type(img)}")
 
@@ -110,5 +117,15 @@ __all__ = [
     "to_gray",
     "pixel_at",
     "pixel_match",
+    "random_point_in_circle",
 ]
+
+
+def random_point_in_circle(cx: int, cy: int, radius: int) -> Tuple[int, int]:
+    """在以 (cx, cy) 为圆心、radius 为半径的圆内生成均匀分布的随机点。"""
+    angle = random.uniform(0, 2 * math.pi)
+    r = radius * math.sqrt(random.random())
+    x = max(0, int(cx + r * math.cos(angle)))
+    y = max(0, int(cy + r * math.sin(angle)))
+    return (x, y)
 

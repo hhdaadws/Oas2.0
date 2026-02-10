@@ -101,10 +101,26 @@
                   <el-icon><Crop /></el-icon>
                   生成预览
                 </el-button>
+                <el-button type="warning" :disabled="!selectedId" :loading="ocrLoading" @click="runOcr">
+                  OCR 识别
+                </el-button>
               </el-form-item>
             </el-form>
             <div class="roi-preview" v-if="roiPreviewUrl">
               <img :src="roiPreviewUrl" alt="roi" />
+            </div>
+            <div class="ocr-result" v-if="ocrResult">
+              <div class="roi-title" style="margin-top: 10px;">OCR 结果</div>
+              <div class="ocr-fulltext">{{ ocrResult.full_text || '(未识别到文字)' }}</div>
+              <el-table v-if="ocrResult.boxes && ocrResult.boxes.length" :data="ocrResult.boxes" size="small" stripe style="margin-top: 6px;">
+                <el-table-column prop="text" label="文字" />
+                <el-table-column label="置信度" width="80">
+                  <template #default="{ row }">{{ (row.confidence * 100).toFixed(1) }}%</template>
+                </el-table-column>
+                <el-table-column label="中心坐标" width="110">
+                  <template #default="{ row }">{{ row.center[0] }}, {{ row.center[1] }}</template>
+                </el-table-column>
+              </el-table>
             </div>
           </div>
         </div>
@@ -140,6 +156,8 @@ const selStart = ref({ x: 0, y: 0 })
 const selEnd = ref({ x: 0, y: 0 })
 const roi = ref({ x: 0, y: 0, w: 0, h: 0 })
 const roiPreviewUrl = ref('')
+const ocrResult = ref(null)
+const ocrLoading = ref(false)
 
 const goBack = () => router.push('/emulators')
 
@@ -174,7 +192,10 @@ const refreshScreenshot = async () => {
   loading.value = true
   try {
     const url = buildApiUrl(API_ENDPOINTS.emulatorScreenshot(selectedId.value)) + `?method=${shotMethod.value}`
-    const resp = await fetch(url)
+    const token = localStorage.getItem('yys_auth_token')
+    const resp = await fetch(url, {
+      headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+    })
     if (!resp.ok) {
       // 尝试读取错误详情
       const ct = resp.headers.get('content-type') || ''
@@ -304,6 +325,32 @@ const makeRoiPreview = async () => {
   roiPreviewUrl.value = canvas.toDataURL('image/png')
 }
 
+const runOcr = async () => {
+  if (!selectedId.value) return
+  ocrLoading.value = true
+  ocrResult.value = null
+  try {
+    const resp = await apiRequest(API_ENDPOINTS.emulatorOcr(selectedId.value), {
+      method: 'POST',
+      body: JSON.stringify({
+        x: roi.value.x,
+        y: roi.value.y,
+        w: roi.value.w,
+        h: roi.value.h,
+        method: shotMethod.value,
+      })
+    })
+    const data = await resp.json()
+    if (!resp.ok) throw new Error(data?.detail || 'OCR 识别失败')
+    ocrResult.value = data
+    ElMessage.success(`识别完成，共 ${data.boxes?.length || 0} 条结果`)
+  } catch (e) {
+    ElMessage.error(e.message || 'OCR 识别失败')
+  } finally {
+    ocrLoading.value = false
+  }
+}
+
 onMounted(async () => { await fetchEmulators(); await fetchSystem(); })
 </script>
 
@@ -330,4 +377,6 @@ onMounted(async () => { await fetchEmulators(); await fetchSystem(); })
 .roi-form { background: #fff; padding: 10px; border-radius: 4px; }
 .roi-title { margin-bottom: 6px; font-weight: 600; }
 .roi-preview img { max-width: 100%; border: 1px solid #e5e5e5; border-radius: 4px; }
+.ocr-result { margin-top: 8px; }
+.ocr-fulltext { background: #f5f7fa; padding: 8px; border-radius: 4px; font-size: 13px; word-break: break-all; user-select: text; }
 </style>

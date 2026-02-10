@@ -13,24 +13,33 @@ export const API_ENDPOINTS = {
   taskConfig: (id) => `/api/accounts/${id}/task-config`,
   restConfig: (id) => `/api/accounts/${id}/rest-config`,
   restPlan: (id) => `/api/accounts/${id}/rest-plan`,
-  
+  lineupConfig: (id) => `/api/accounts/${id}/lineup-config`,
+
   // 仪表盘相关
   dashboard: '/api/dashboard',
   realtimeStats: '/api/stats/realtime',
-  
+
   // 任务相关
   tasks: {
     queue: '/api/tasks/queue',
     history: '/api/tasks/history',
     stats: '/api/tasks/stats',
     logs: '/api/tasks/logs',
+    runtimeLogs: '/api/tasks/runtime-logs',
     scheduler: {
       status: '/api/tasks/scheduler/status',
       start: '/api/tasks/scheduler/start',
       stop: '/api/tasks/scheduler/stop'
     }
   },
-  
+
+  // 执行引擎
+  executor: {
+    queue: '/api/executor/queue',
+    running: '/api/executor/running',
+    metrics: '/api/executor/metrics'
+  },
+
   // 模拟器相关
   emulators: '/api/emulators/',
   emulatorUpdate: (id) => `/api/emulators/${id}`,
@@ -40,10 +49,12 @@ export const API_ENDPOINTS = {
   emulatorConnectAll: '/api/emulators/connect',
   emulatorRefresh: '/api/emulators/refresh',
   emulatorLaunch: (id) => `/api/emulators/${id}/launch`,
+  emulatorOcr: (id) => `/api/emulators/${id}/ocr`,
 
   // 系统设置
   system: {
-    settings: '/api/system/settings'
+    settings: '/api/system/settings',
+    captureBenchmark: '/api/system/capture/benchmark'
   }
 }
 
@@ -64,12 +75,14 @@ export const buildApiUrl = (endpoint) => {
  */
 export const apiRequest = async (endpoint, options = {}) => {
   const url = buildApiUrl(endpoint)
+  const token = localStorage.getItem('yys_auth_token')
   const defaultOptions = {
     headers: {
       'Content-Type': 'application/json',
+      ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
       ...options.headers
     }
   }
-  
+
   return fetch(url, { ...defaultOptions, ...options })
 }

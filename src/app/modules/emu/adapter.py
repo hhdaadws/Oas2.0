@@ -13,7 +13,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional
+
+from loguru import logger as _logger
 
 from .adb import Adb, AdbError
 from .ipc import IpcAdapter, IpcConfig, IpcNotConfigured
@@ -37,32 +40,61 @@ class EmulatorAdapter:
         self.cfg = cfg
         self.adb = Adb(cfg.adb_path)
         self.ipc = IpcAdapter(IpcConfig(cfg.ipc_dll_path) if cfg.ipc_dll_path else None)
-        self.mumu = MuMuManager(cfg.mumu_manager_path) if cfg.mumu_manager_path else None
+
+        manager_path = (cfg.mumu_manager_path or "").strip()
+        if manager_path and Path(manager_path).exists():
+            self.mumu = MuMuManager(manager_path)
+        else:
+            self.mumu = None
+            if manager_path:
+                _logger.warning(
+                    "MuMuManager 路径不可用，降级为 ADB 连接模式: {}",
+                    manager_path,
+                )
 
     # 运行状态保障（示例：若使用 MuMu，可确保实例已启动并连接）
     def ensure_running(self) -> bool:
+        launch_ok = False
+
         if self.mumu and self.cfg.instance_id is not None:
             try:
                 self.mumu.launch(self.cfg.instance_id)
-            except MuMuManagerError:
-                return False
-        # adb connect 尝试（可选）
-        try:
-            self.adb.connect(self.cfg.adb_addr)
-        except AdbError:
-            return False
-        return True
+                launch_ok = True
+            except MuMuManagerError as exc:
+                _logger.warning("MuMu 启动失败，继续尝试 ADB 连接: {}", exc)
+
+        retry_count = 3 if launch_ok else 2
+        for _ in range(retry_count):
+            try:
+                if self.adb.connect(self.cfg.adb_addr):
+                    return True
+                if self.cfg.adb_addr in self.adb.devices():
+                    return True
+            except AdbError:
+                pass
+
+        return False
 
     # 启动应用
-    def start_app(self, mode: str = "adb_monkey", activity: Optional[str] = None) -> None:
+    def start_app(
+        self, mode: str = "adb_monkey", activity: Optional[str] = None
+    ) -> None:
         if mode == "adb_monkey":
-            self.adb.start_app_monkey(self.cfg.adb_addr, self.cfg.pkg_name, fallback_activity=self.cfg.activity_name)
+            self.adb.start_app_monkey(
+                self.cfg.adb_addr,
+                self.cfg.pkg_name,
+                fallback_activity=self.cfg.activity_name,
+            )
         elif mode == "adb_intent":
             act = activity or self.cfg.activity_name
-            self.adb.start_app_intent(self.cfg.adb_addr, self.cfg.pkg_name, activity=act)
+            self.adb.start_app_intent(
+                self.cfg.adb_addr, self.cfg.pkg_name, activity=act
+            )
         elif mode == "am_start":
             act = activity or self.cfg.activity_name
-            self.adb.start_app_am_component(self.cfg.adb_addr, self.cfg.pkg_name, activity=act)
+            self.adb.start_app_am_component(
+                self.cfg.adb_addr, self.cfg.pkg_name, activity=act
+            )
         elif mode == "mumu":
             if not self.mumu or self.cfg.instance_id is None:
                 raise MuMuManagerError("未配置 MuMu 管理器或实例ID")
@@ -82,7 +114,9 @@ class EmulatorAdapter:
         if method == "adb":
             return self.adb.screencap(self.cfg.adb_addr)
         elif method == "ipc":
-            return self.ipc.screencap(nemu_folder=self.cfg.nemu_folder, instance_id=self.cfg.instance_id)
+            return self.ipc.screencap(
+                nemu_folder=self.cfg.nemu_folder, instance_id=self.cfg.instance_id
+            )
         else:
             raise ValueError("未知截图方式：%s" % method)
 
@@ -94,4 +128,59 @@ class EmulatorAdapter:
 
     def foreground(self) -> bool:
         # 预留：可通过 dumpsys activity/top 解析当前前台 activity
+        return True
+
+    def push_login_data(self, login_id: str, data_dir: str = "putonglogindata") -> bool:
+        """Push 账号登录数据到模拟器（shared_prefs + clientconfig）"""
+        PKG = "com.netease.onmyoji.wyzymnqsd_cps"
+        local_base = Path(data_dir) / login_id
+        addr = self.cfg.adb_addr
+
+        if not local_base.exists():
+            _logger.error("push_login_data: 本地数据目录不存在: {}", local_base)
+            return False
+
+        if not self.ensure_running():
+            _logger.error("push_login_data: 设备不可用，ADB 未连接: {}", addr)
+            return False
+
+        # 1. adb root
+        self.adb.root(addr)
+
+        # 2. 清理旧 shared_prefs
+        remote_prefs = f"/data/user/0/{PKG}/shared_prefs"
+        self.adb.shell(addr, f"rm -rf {remote_prefs}")
+
+        # 2.5 清理旧 clientconfig
+        remote_cc_del = f"/sdcard/Android/data/{PKG}/files/netease/onmyoji/Documents/clientconfig"
+        self.adb.shell(addr, f"rm -rf {remote_cc_del}")
+
+        # 3. 确保目标目录权限
+        self.adb.shell(addr, f"chmod 777 /data/user/0/{PKG}/")
+
+        # 4. push shared_prefs
+        local_prefs = local_base / "shared_prefs"
+        if local_prefs.exists():
+            ok, msg = self.adb.push(addr, str(local_prefs), remote_prefs)
+            if not ok:
+                _logger.error("push shared_prefs 失败: {}", msg)
+                return False
+            _logger.info("push shared_prefs 成功")
+        else:
+            _logger.warning("shared_prefs 目录不存在: {}", local_prefs)
+
+        # 5. push clientconfig
+        local_cc = local_base / "clientconfig"
+        remote_cc = (
+            f"/sdcard/Android/data/{PKG}/files/netease/onmyoji/Documents/clientconfig"
+        )
+        if local_cc.exists():
+            ok, msg = self.adb.push(addr, str(local_cc), remote_cc)
+            if not ok:
+                _logger.error("push clientconfig 失败: {}", msg)
+                return False
+            _logger.info("push clientconfig 成功")
+        else:
+            _logger.warning("clientconfig 文件不存在: {}", local_cc)
+
         return True

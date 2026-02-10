@@ -14,6 +14,40 @@
           </el-radio-group>
         </el-form-item>
 
+        <el-form-item label="截图方式">
+          <el-radio-group v-model="form.capture_method">
+            <el-radio label="adb">ADB 截图</el-radio>
+            <el-radio label="ipc">IPC 截图</el-radio>
+          </el-radio-group>
+        </el-form-item>
+
+        <el-form-item label="自动检测最优截图">
+          <el-space>
+            <el-select v-model="benchmark.emulator_id" placeholder="选择模拟器" style="width: 360px">
+              <el-option
+                v-for="emu in emulators"
+                :key="emu.id"
+                :label="`${emu.name} (${emu.adb_addr || '无ADB'})`"
+                :value="emu.id"
+              />
+            </el-select>
+            <el-input-number v-model="benchmark.rounds" :min="1" :max="20" :step="1" />
+            <el-button
+              type="primary"
+              plain
+              :disabled="!benchmark.emulator_id"
+              :loading="benchmarkLoading"
+              @click="runCaptureBenchmark"
+            >
+              自动检测
+            </el-button>
+          </el-space>
+          <div v-if="benchmarkResult" style="margin-top: 8px; color: #606266;">
+            最优方式：<b>{{ benchmarkResult.best_method }}</b>
+            （已自动写入系统配置）
+          </div>
+        </el-form-item>
+
         <el-form-item label="ADB 路径">
           <el-input v-model="form.adb_path" placeholder="例如 C:\\Android\\platform-tools\\adb.exe 或 adb" />
         </el-form-item>
@@ -63,10 +97,25 @@ const form = reactive({
   nemu_folder: '',
   pkg_name: '',
   launch_mode: 'adb_monkey',
+  capture_method: 'adb',
   ipc_dll_path: '',
   activity_name: '.MainActivity'
 })
 const loading = ref(false)
+const emulators = ref([])
+const benchmarkLoading = ref(false)
+const benchmark = reactive({ emulator_id: null, rounds: 5 })
+const benchmarkResult = ref(null)
+
+const fetchEmulators = async () => {
+  try {
+    const resp = await apiRequest(API_ENDPOINTS.emulators)
+    const data = await resp.json()
+    emulators.value = Array.isArray(data) ? data : []
+  } catch (e) {
+    emulators.value = []
+  }
+}
 
 const load = async () => {
   loading.value = true
@@ -97,7 +146,39 @@ const save = async () => {
   }
 }
 
-onMounted(load)
+const runCaptureBenchmark = async () => {
+  if (!benchmark.emulator_id) {
+    ElMessage.warning('请先选择模拟器')
+    return
+  }
+  benchmarkLoading.value = true
+  try {
+    const resp = await apiRequest(API_ENDPOINTS.system.captureBenchmark, {
+      method: 'POST',
+      body: JSON.stringify({
+        emulator_id: benchmark.emulator_id,
+        rounds: benchmark.rounds
+      })
+    })
+    const data = await resp.json()
+    if (!resp.ok) {
+      throw new Error(data?.detail || data?.message || '检测失败')
+    }
+    benchmarkResult.value = data
+    if (data.best_method) {
+      form.capture_method = data.best_method
+    }
+    ElMessage.success(data.message || '自动检测完成')
+  } catch (e) {
+    ElMessage.error(e.message || '自动检测失败')
+  } finally {
+    benchmarkLoading.value = false
+  }
+}
+
+onMounted(async () => {
+  await Promise.all([load(), fetchEmulators()])
+})
 </script>
 
 <style scoped>

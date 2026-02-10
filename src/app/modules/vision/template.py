@@ -14,10 +14,11 @@ from typing import List, Optional, Tuple
 import cv2  # type: ignore
 import numpy as np
 
-from .utils import ImageLike, load_image
+from .utils import ImageLike, load_image, to_gray
 
 
 DEFAULT_THRESHOLD = 0.85
+_GRAY_TEMPLATE_CACHE: dict[str, np.ndarray] = {}
 
 
 @dataclass
@@ -59,8 +60,14 @@ def match_template(
         Match or None if best score is below threshold.
     """
     thr = DEFAULT_THRESHOLD if threshold is None else float(threshold)
-    img = load_image(image)
-    tpl = load_image(template)
+    img = to_gray(load_image(image))
+    if isinstance(template, str):
+        tpl = _GRAY_TEMPLATE_CACHE.get(template)
+        if tpl is None:
+            tpl = to_gray(load_image(template))
+            _GRAY_TEMPLATE_CACHE[template] = tpl
+    else:
+        tpl = to_gray(load_image(template))
     _ensure_sizes(img, tpl)
 
     res = cv2.matchTemplate(img, tpl, method)
@@ -92,8 +99,14 @@ def find_all_templates(
     Returns matches sorted by score (desc).
     """
     thr = DEFAULT_THRESHOLD if threshold is None else float(threshold)
-    img = load_image(image)
-    tpl = load_image(template)
+    img = to_gray(load_image(image))
+    if isinstance(template, str):
+        tpl = _GRAY_TEMPLATE_CACHE.get(template)
+        if tpl is None:
+            tpl = to_gray(load_image(template))
+            _GRAY_TEMPLATE_CACHE[template] = tpl
+    else:
+        tpl = to_gray(load_image(template))
     _ensure_sizes(img, tpl)
 
     res = cv2.matchTemplate(img, tpl, method)

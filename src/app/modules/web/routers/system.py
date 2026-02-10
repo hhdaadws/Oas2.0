@@ -1,6 +1,7 @@
 """
 系统配置 API
 """
+import time
 from typing import Optional, Dict
 
 from fastapi import APIRouter, HTTPException, Depends
@@ -22,6 +23,7 @@ class SystemSettings(BaseModel):
     nemu_folder: str
     pkg_name: str
     launch_mode: str
+    capture_method: str
     ipc_dll_path: str
     activity_name: str
     python_path: Optional[str] = None
@@ -33,9 +35,15 @@ class SystemSettingsUpdate(BaseModel):
     nemu_folder: Optional[str] = None
     pkg_name: Optional[str] = None
     launch_mode: Optional[str] = None  # adb|ipc|mumu
+    capture_method: Optional[str] = None  # adb|ipc
     ipc_dll_path: Optional[str] = None
     activity_name: Optional[str] = None
     python_path: Optional[str] = None
+
+
+class CaptureBenchmarkRequest(BaseModel):
+    emulator_id: int
+    rounds: int = 5
 
 
 def _serialize_settings() -> Dict[str, str]:
@@ -45,6 +53,7 @@ def _serialize_settings() -> Dict[str, str]:
         "nemu_folder": settings.nemu_folder,
         "pkg_name": settings.pkg_name,
         "launch_mode": settings.launch_mode,
+        "capture_method": settings.capture_method,
         "ipc_dll_path": settings.ipc_dll_path,
         "activity_name": settings.activity_name,
         "python_path": None,
@@ -62,6 +71,7 @@ async def get_settings(db: Session = Depends(get_db)) -> SystemSettings:
             nemu_folder=row.nemu_folder or settings.nemu_folder,
             pkg_name=row.pkg_name or settings.pkg_name,
             launch_mode=row.launch_mode or settings.launch_mode,
+            capture_method=(row.capture_method or settings.capture_method or "adb"),
             ipc_dll_path=row.ipc_dll_path or settings.ipc_dll_path,
             activity_name=row.activity_name or settings.activity_name,
             python_path=row.python_path or None,
@@ -97,6 +107,10 @@ async def update_settings(body: SystemSettingsUpdate, db: Session = Depends(get_
         if body.launch_mode not in {"adb_monkey", "adb_intent", "am_start"}:
             raise HTTPException(status_code=400, detail="launch_mode 必须是 adb_monkey|adb_intent|am_start 之一")
         apply["launch_mode"] = body.launch_mode
+    if body.capture_method is not None:
+        if body.capture_method not in {"adb", "ipc"}:
+            raise HTTPException(status_code=400, detail="capture_method 必须是 adb|ipc 之一")
+        apply["capture_method"] = body.capture_method
     if body.ipc_dll_path is not None:
         apply["ipc_dll_path"] = body.ipc_dll_path
     if body.activity_name is not None:
@@ -117,8 +131,91 @@ async def update_settings(body: SystemSettingsUpdate, db: Session = Depends(get_
             "nemu_folder": row.nemu_folder,
             "pkg_name": row.pkg_name,
             "launch_mode": row.launch_mode,
+            "capture_method": row.capture_method,
             "ipc_dll_path": row.ipc_dll_path,
             "activity_name": row.activity_name,
             "python_path": row.python_path,
         },
+    }
+
+
+@router.post("/capture/benchmark")
+async def benchmark_capture_method(body: CaptureBenchmarkRequest, db: Session = Depends(get_db)):
+    """检测选中模拟器截图延迟并自动选择最优方式（全局）。"""
+    from ....db.models import Emulator
+    from ...emu.adapter import AdapterConfig, EmulatorAdapter
+
+    emulator = db.query(Emulator).filter(Emulator.id == body.emulator_id).first()
+    if not emulator:
+        raise HTTPException(status_code=404, detail="模拟器不存在")
+    if not emulator.adb_addr:
+        raise HTTPException(status_code=400, detail="模拟器未配置 ADB 地址")
+
+    rounds = max(1, min(20, int(body.rounds or 5)))
+    syscfg = db.query(SystemConfig).order_by(SystemConfig.id.asc()).first()
+
+    cfg = AdapterConfig(
+        adb_path=(syscfg.adb_path if syscfg and syscfg.adb_path else settings.adb_path),
+        adb_addr=emulator.adb_addr,
+        pkg_name=(syscfg.pkg_name if syscfg and syscfg.pkg_name else settings.pkg_name),
+        ipc_dll_path=(syscfg.ipc_dll_path if syscfg and syscfg.ipc_dll_path else settings.ipc_dll_path),
+        mumu_manager_path=(syscfg.mumu_manager_path if syscfg and syscfg.mumu_manager_path else settings.mumu_manager_path),
+        nemu_folder=(syscfg.nemu_folder if syscfg and syscfg.nemu_folder else settings.nemu_folder),
+        instance_id=getattr(emulator, "instance_id", None),
+        activity_name=(syscfg.activity_name if syscfg and syscfg.activity_name else settings.activity_name),
+    )
+    adapter = EmulatorAdapter(cfg)
+
+    candidates = ["adb"]
+    if cfg.ipc_dll_path and cfg.nemu_folder and cfg.instance_id is not None:
+        candidates.append("ipc")
+
+    metrics = {}
+    for method in candidates:
+        latencies = []
+        errors = []
+        for _ in range(rounds):
+            t0 = time.perf_counter()
+            try:
+                data = adapter.capture(method=method)
+                if not data:
+                    raise RuntimeError("empty image")
+                elapsed_ms = (time.perf_counter() - t0) * 1000.0
+                latencies.append(elapsed_ms)
+            except Exception as e:
+                errors.append(str(e))
+
+        sorted_l = sorted(latencies)
+        p50 = sorted_l[int(0.5 * (len(sorted_l) - 1))] if sorted_l else None
+        p95 = sorted_l[int(0.95 * (len(sorted_l) - 1))] if sorted_l else None
+        metrics[method] = {
+            "success": len(latencies),
+            "failed": len(errors),
+            "success_rate": (len(latencies) / rounds) if rounds else 0.0,
+            "p50_ms": round(p50, 2) if p50 is not None else None,
+            "p95_ms": round(p95, 2) if p95 is not None else None,
+            "errors": errors[:3],
+        }
+
+    ranked = sorted(
+        candidates,
+        key=lambda m: (
+            -(metrics[m]["success_rate"]),
+            metrics[m]["p50_ms"] if metrics[m]["p50_ms"] is not None else 10**9,
+        ),
+    )
+    best_method = ranked[0] if ranked else "adb"
+
+    row = db.query(SystemConfig).order_by(SystemConfig.id.asc()).first()
+    if not row:
+        row = SystemConfig()
+        db.add(row)
+    row.capture_method = best_method
+    db.commit()
+
+    return {
+        "message": f"截图方式自动检测完成，已设置为 {best_method}",
+        "best_method": best_method,
+        "rounds": rounds,
+        "metrics": metrics,
     }

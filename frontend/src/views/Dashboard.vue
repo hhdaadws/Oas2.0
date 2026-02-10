@@ -3,14 +3,14 @@
     <el-card class="scheduler-control" style="margin-bottom: 20px">
       <div style="display: flex; align-items: center; justify-content: space-between">
         <div style="display: flex; align-items: center">
-          <span style="margin-right: 10px">调度器状态：</span>
+          <span style="margin-right: 10px">执行引擎状态：</span>
           <el-tag :type="schedulerRunning ? 'success' : 'danger'">
             {{ schedulerRunning ? '运行中' : '已停止' }}
           </el-tag>
         </div>
         <div>
-          <el-button v-if="!schedulerRunning" type="success" @click="startScheduler">启动调度器</el-button>
-          <el-button v-else type="danger" @click="stopScheduler">停止调度器</el-button>
+          <el-button v-if="!schedulerRunning" type="success" @click="startScheduler">启动执行引擎</el-button>
+          <el-button v-else type="danger" @click="stopScheduler">停止执行引擎</el-button>
         </div>
       </div>
     </el-card>
@@ -38,48 +38,117 @@
       </el-col>
     </el-row>
 
-    <el-card class="running-tasks">
-      <template #header>
-        <div class="card-header">
-          <span>实时任务执行列表</span>
-          <el-button link @click="refreshData">
-            <el-icon><Refresh /></el-icon>
-            刷新
-          </el-button>
-        </div>
-      </template>
+    <el-row :gutter="20" class="runtime-panels">
+      <el-col :span="12">
+        <el-card class="running-tasks">
+          <template #header>
+            <div class="card-header">
+              <span>实时任务执行列表</span>
+              <el-button link @click="refreshData">
+                <el-icon><Refresh /></el-icon>
+                刷新
+              </el-button>
+            </div>
+          </template>
 
-      <el-table :data="runningTasks" stripe>
-        <el-table-column prop="account_login_id" label="账号" width="200" />
-        <el-table-column prop="task_type" label="任务类型" width="120" />
-        <el-table-column label="状态" width="100">
-          <template #default>
-            <el-tag type="primary">运行中</el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column prop="started_at" label="开始时间" width="180">
-          <template #default="{ row }">
-            {{ formatTime(row.started_at) }}
-          </template>
-        </el-table-column>
-        <el-table-column label="执行时长">
-          <template #default="{ row }">
-            {{ formatDuration(row.duration) }}
-          </template>
-        </el-table-column>
-      </el-table>
+          <el-table :data="runningTasks" stripe height="400">
+            <el-table-column prop="account_login_id" label="账号" width="140" />
+            <el-table-column prop="task_type" label="任务类型" width="110" />
+            <el-table-column prop="emulator_name" label="模拟器" width="120">
+              <template #default="{ row }">
+                {{ row.emulator_name || '-' }}
+              </template>
+            </el-table-column>
+            <el-table-column label="状态" width="90">
+              <template #default>
+                <el-tag type="primary">运行中</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="started_at" label="开始时间" min-width="150">
+              <template #default="{ row }">
+                {{ formatTime(row.started_at) }}
+              </template>
+            </el-table-column>
+          </el-table>
 
-      <el-empty v-if="!runningTasks.length" description="当前没有正在执行的任务" />
-    </el-card>
+          <el-empty v-if="!runningTasks.length" description="当前没有正在执行的任务" />
+        </el-card>
+      </el-col>
+
+      <el-col :span="12">
+        <el-card class="runtime-logs-card">
+          <template #header>
+            <div class="card-header">
+              <span>运行时详细日志</span>
+              <div>
+                <el-select
+                  v-model="runtimeLogFilter.level"
+                  placeholder="级别"
+                  clearable
+                  size="small"
+                  style="width: 110px; margin-right: 8px"
+                  @change="handleRuntimeFilterChange"
+                >
+                  <el-option label="INFO" value="INFO" />
+                  <el-option label="WARNING" value="WARNING" />
+                  <el-option label="ERROR" value="ERROR" />
+                </el-select>
+                <el-select
+                  v-model="runtimeLogFilter.emulator_id"
+                  placeholder="模拟器"
+                  clearable
+                  size="small"
+                  style="width: 120px; margin-right: 8px"
+                  @change="handleRuntimeFilterChange"
+                >
+                  <el-option label="全部" :value="null" />
+                  <el-option
+                    v-for="eid in runtimeEmulatorOptions"
+                    :key="eid"
+                    :label="`模拟器 ${eid}`"
+                    :value="eid"
+                  />
+                </el-select>
+                <el-button link @click="fetchRuntimeLogs(true)">
+                  <el-icon><Refresh /></el-icon>
+                  刷新
+                </el-button>
+              </div>
+            </div>
+          </template>
+
+          <el-table :data="runtimeLogs" stripe height="400">
+            <el-table-column prop="timestamp" label="时间" width="180">
+              <template #default="{ row }">
+                {{ formatTime(row.timestamp) }}
+              </template>
+            </el-table-column>
+            <el-table-column label="模块" width="180" show-overflow-tooltip>
+              <template #default="{ row }">
+                {{ formatModuleName(row.module) }}
+              </template>
+            </el-table-column>
+            <el-table-column prop="message" label="执行步骤" min-width="260" show-overflow-tooltip />
+            <el-table-column label="模拟器" width="80">
+              <template #default="{ row }">
+                {{ row.emulator_id ?? '-' }}
+              </template>
+            </el-table-column>
+          </el-table>
+
+          <el-empty v-if="!runtimeLogs.length" description="暂无运行时详细日志" />
+        </el-card>
+      </el-col>
+    </el-row>
 
     <el-card class="queue-preview">
       <template #header>
         <div class="card-header">
-          <span>任务队列预览（前10个）</span>
+          <span>计划任务预览（按下次执行时间排序）</span>
         </div>
       </template>
 
-      <el-table :data="queuePreview" stripe>
+      <el-table :data="scheduledPreview" stripe>
         <el-table-column prop="account_login_id" label="账号" width="200" />
         <el-table-column prop="task_type" label="任务类型" width="120" />
         <el-table-column prop="priority" label="优先级" width="100">
@@ -87,14 +156,14 @@
             <el-tag :type="getPriorityType(row.priority)">{{ row.priority }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="enqueue_time" label="入队时间">
+        <el-table-column prop="next_time" label="下次执行时间">
           <template #default="{ row }">
-            {{ formatTime(row.enqueue_time) }}
+            {{ row.next_time || '-' }}
           </template>
         </el-table-column>
       </el-table>
 
-      <el-empty v-if="!queuePreview.length" description="任务队列为空" />
+      <el-empty v-if="!scheduledPreview.length" description="暂无计划任务" />
     </el-card>
 
     <el-card class="system-logs" style="margin-top: 20px">
@@ -158,7 +227,11 @@ import { getAccounts } from '@/api/accounts'
 const stats = ref({ active_accounts: 0, running_accounts: 0, queue_size: 0, coop_active_accounts: 0 })
 const runningTasks = ref([])
 const queuePreview = ref([])
-const schedulerRunning = ref(true)
+const scheduledPreview = ref([])
+const schedulerRunning = ref(false)
+const runtimeLogs = ref([])
+const runtimeLogFilter = reactive({ level: '', emulator_id: null })
+const runtimeEmulatorOptions = ref([])
 
 // 日志相关
 const systemLogs = ref([])
@@ -167,7 +240,10 @@ const accountOptions = ref([])
 const accountLoginMap = ref({})
 const LOG_LIMIT = 30
 
-let refreshTimer = null
+const runtimeLogCursor = ref(null)
+
+let coreRefreshTimer = null
+let runtimeLogTimer = null
 
 const fetchData = async () => {
   try {
@@ -177,6 +253,7 @@ const fetchData = async () => {
     stats.value.coop_active_accounts = dashboardData.coop_active_accounts || 0
     runningTasks.value = dashboardData.running_tasks || []
     queuePreview.value = dashboardData.queue_preview || []
+    scheduledPreview.value = dashboardData.scheduled_preview || []
 
     const realtimeData = await getRealtimeStats()
     stats.value.queue_size = realtimeData.tasks.queue
@@ -191,9 +268,9 @@ const checkSchedulerStatus = async () => {
   try {
     const response = await apiRequest(API_ENDPOINTS.tasks.scheduler.status)
     const data = await response.json()
-    schedulerRunning.value = data.running
+    schedulerRunning.value = Boolean(data.running)
   } catch (error) {
-    console.error('获取调度器状态失败:', error)
+    console.error('获取执行引擎状态失败:', error)
   }
 }
 
@@ -201,9 +278,9 @@ const startScheduler = async () => {
   try {
     await apiRequest(API_ENDPOINTS.tasks.scheduler.start, { method: 'POST' })
     schedulerRunning.value = true
-    ElMessage.success('调度器已启动')
+    ElMessage.success('执行引擎已启动（feeder + executor）')
   } catch (error) {
-    ElMessage.error('启动调度器失败')
+    ElMessage.error('启动执行引擎失败')
   }
 }
 
@@ -211,15 +288,72 @@ const stopScheduler = async () => {
   try {
     await apiRequest(API_ENDPOINTS.tasks.scheduler.stop, { method: 'POST' })
     schedulerRunning.value = false
-    ElMessage.success('调度器已停止')
+    ElMessage.success('执行引擎已停止（feeder + executor）')
   } catch (error) {
-    ElMessage.error('停止调度器失败')
+    ElMessage.error('停止执行引擎失败')
   }
 }
 
 const refreshData = () => {
   fetchData()
   ElMessage.success('数据已刷新')
+}
+
+const mergeRuntimeLogs = (currentLogs, incomingLogs, maxItems = 80) => {
+  const seen = new Set()
+  const merged = []
+
+  for (const item of [...currentLogs, ...incomingLogs]) {
+    const key = `${item.timestamp_epoch || ''}|${item.module || ''}|${item.message || ''}|${item.emulator_id || ''}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    merged.push(item)
+  }
+
+  merged.sort((a, b) => (a.timestamp_epoch || 0) - (b.timestamp_epoch || 0))
+  return merged.slice(-maxItems)
+}
+
+const handleRuntimeFilterChange = () => {
+  fetchRuntimeLogs(true)
+}
+
+const fetchRuntimeLogs = async (reset = false) => {
+  try {
+    if (reset) {
+      runtimeLogCursor.value = null
+      runtimeLogs.value = []
+    }
+
+    const params = new URLSearchParams()
+    params.set('limit', '80')
+    if (runtimeLogFilter.level) params.set('level', runtimeLogFilter.level)
+    if (runtimeLogFilter.emulator_id !== null && runtimeLogFilter.emulator_id !== undefined) {
+      params.set('emulator_id', String(runtimeLogFilter.emulator_id))
+    }
+    if (runtimeLogCursor.value) {
+      params.set('cursor', runtimeLogCursor.value)
+    }
+
+    const response = await apiRequest(`${API_ENDPOINTS.tasks.runtimeLogs}?${params}`)
+    const data = await response.json()
+    const incoming = data.logs || []
+
+    runtimeLogs.value = mergeRuntimeLogs(runtimeLogs.value, incoming, 80)
+
+    if (data.next_cursor) {
+      runtimeLogCursor.value = data.next_cursor
+    }
+
+    const emulatorSet = new Set(
+      runtimeLogs.value
+        .map((x) => x.emulator_id)
+        .filter((x) => x !== null && x !== undefined)
+    )
+    runtimeEmulatorOptions.value = Array.from(emulatorSet).sort((a, b) => a - b)
+  } catch (error) {
+    console.error('Failed to fetch runtime logs:', error)
+  }
 }
 
 const formatTime = (time) => {
@@ -232,6 +366,11 @@ const formatDuration = (seconds) => {
   const minutes = Math.floor(seconds / 60)
   const secs = Math.floor(seconds % 60)
   return `${minutes}分${secs}秒`
+}
+
+const formatModuleName = (name) => {
+  if (!name) return '-'
+  return name.replace('app.modules.', '')
 }
 
 const getPriorityType = (priority) => {
@@ -294,11 +433,14 @@ onMounted(async () => {
   await fetchAccountsForLogs()
   await fetchData()
   await fetchLogs()
-  refreshTimer = setInterval(fetchData, 5000)
+  await fetchRuntimeLogs(true)
+  coreRefreshTimer = setInterval(fetchData, 5000)
+  runtimeLogTimer = setInterval(() => fetchRuntimeLogs(false), 15000)
 })
 
 onUnmounted(() => {
-  if (refreshTimer) clearInterval(refreshTimer)
+  if (coreRefreshTimer) clearInterval(coreRefreshTimer)
+  if (runtimeLogTimer) clearInterval(runtimeLogTimer)
 })
 </script>
 
@@ -308,6 +450,8 @@ onUnmounted(() => {
     margin-bottom: 20px;
   }
   .running-tasks,
+  .runtime-logs-card,
+  .runtime-panels,
   .queue-preview {
     margin-bottom: 20px;
   }

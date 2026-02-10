@@ -31,10 +31,15 @@ class GameAccount(Base):
     zone = Column(String(50), nullable=False)
     level = Column(Integer, default=1)
     stamina = Column(Integer, default=0)
+    gouyu = Column(Integer, default=0)       # 勾玉
+    lanpiao = Column(Integer, default=0)     # 蓝票
+    gold = Column(Integer, default=0)        # 金币
     progress = Column(String(20), default="init")  # init|ok
     status = Column(Integer, default=1)  # 1=可执行|2=失效
     current_task = Column(String(50), nullable=True)
     task_config = Column(JSON, default=dict)  # 任务配置
+    lineup_config = Column(JSON, default=dict)  # 阵容分组配置
+    remark = Column(String(500), nullable=True, default="")  # 备注
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
@@ -261,6 +266,7 @@ class SystemConfig(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     launch_mode = Column(String(20), default="adb_monkey")  # adb_monkey|adb_intent
+    capture_method = Column(String(20), default="adb")  # adb|ipc
     adb_path = Column(String(255), default="adb")
     ipc_dll_path = Column(String(500), nullable=True)
     mumu_manager_path = Column(String(500), nullable=True)

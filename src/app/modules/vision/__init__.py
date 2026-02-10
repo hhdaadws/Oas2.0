@@ -10,6 +10,7 @@ from .utils import (
     to_gray,
     pixel_at,
     pixel_match,
+    random_point_in_circle,
 )
 
 __all__ = [
@@ -22,4 +23,5 @@ __all__ = [
     "to_gray",
     "pixel_at",
     "pixel_match",
+    "random_point_in_circle",
 ]

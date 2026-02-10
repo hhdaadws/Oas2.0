@@ -1,0 +1,16 @@
+# Oas2.0 project overview
+- Purpose: automation/orchestration platform for game account task execution and scheduling.
+- Main runtime chain (2026-02 guideline): ExecutorService + feeder is primary; simple_scheduler is legacy fallback/diagnostic only.
+- Stack:
+  - Backend: Python + FastAPI + SQLAlchemy + Pydantic.
+  - Frontend: Vue 3 + Vite.
+  - Desktop shell: Electron.
+  - DB: SQLite (`data.db`) in local development.
+- Entry points:
+  - Backend app module: `src/app/main.py`.
+  - Frontend source: `frontend/src`.
+  - Electron main: `desktop/main.js`.
+- Important domain notes:
+  - Task config updates must merge defaults + existing + incoming patch.
+  - Scheduler enable checks should use strict `enabled is True` semantics to avoid accidental task activation.
+  - Dashboard queue/running info should prefer executor service APIs with fallback only when empty.

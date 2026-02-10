@@ -326,3 +326,49 @@ async def ipc_diagnose(emulator_id: int, db: Session = Depends(get_db)):
         diag["import_error"] = str(e)
 
     return diag
+
+
+class OcrRequest(BaseModel):
+    x: int = 0
+    y: int = 0
+    w: int = 0
+    h: int = 0
+    method: str = "adb"
+
+
+@router.post("/{emulator_id}/ocr")
+async def emulator_ocr(emulator_id: int, body: OcrRequest, db: Session = Depends(get_db)):
+    """对模拟器当前画面（可选区域）执行 OCR 识别。"""
+    emu = _get_emulator_or_404(db, emulator_id)
+    syscfg = db.query(SystemConfig).first()
+
+    cfg = AdapterConfig(
+        adb_path=(syscfg.adb_path if syscfg and syscfg.adb_path else settings.adb_path),
+        adb_addr=emu.adb_addr,
+        pkg_name=(syscfg.pkg_name if syscfg and syscfg.pkg_name else settings.pkg_name),
+        ipc_dll_path=(syscfg.ipc_dll_path if syscfg and syscfg.ipc_dll_path else ""),
+        mumu_manager_path=(syscfg.mumu_manager_path if syscfg and syscfg.mumu_manager_path else ""),
+        nemu_folder=(syscfg.nemu_folder if syscfg and syscfg.nemu_folder else ""),
+        instance_id=getattr(emu, "instance_id", None),
+        activity_name=(syscfg.activity_name if syscfg and syscfg.activity_name else settings.activity_name),
+    )
+    adapter = EmulatorAdapter(cfg)
+    screenshot = adapter.capture(method=body.method)
+
+    roi = (body.x, body.y, body.w, body.h) if body.w > 0 and body.h > 0 else None
+
+    from ...ocr import ocr
+    result = ocr(screenshot, roi=roi)
+
+    return {
+        "full_text": result.text,
+        "boxes": [
+            {
+                "text": b.text,
+                "confidence": round(b.confidence, 4),
+                "center": list(b.center),
+                "box": b.box,
+            }
+            for b in result.boxes
+        ],
+    }

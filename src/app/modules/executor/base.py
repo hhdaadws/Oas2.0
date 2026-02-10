@@ -11,13 +11,45 @@ from ...db.models import Task, GameAccount
 
 class BaseExecutor(ABC):
     """执行器抽象基类"""
-    
+
     def __init__(self, worker_id: int, emulator_id: int):
         self.worker_id = worker_id
         self.emulator_id = emulator_id
         self.current_task: Optional[Task] = None
         self.current_account: Optional[GameAccount] = None
         self.logger = logger.bind(worker_id=worker_id)
+        # 批次上下文：由 Worker 传入，用于同账号连续任务复用
+        self.shared_adapter: Optional[Any] = None
+        self.shared_ui: Optional[Any] = None
+        self.skip_cleanup: bool = False
+        # 弹窗处理器（懒初始化）
+        self._popup_handler: Optional[Any] = None
+
+    @property
+    def popup_handler(self) -> Optional[Any]:
+        """获取弹窗处理器。
+
+        优先从 shared_ui 获取（UIManager 自带的 popup_handler），
+        否则从 shared_adapter 构建新实例。
+        """
+        if self._popup_handler is not None:
+            return self._popup_handler
+        # 尝试从 UIManager 获取
+        if self.shared_ui and hasattr(self.shared_ui, 'popup_handler'):
+            self._popup_handler = self.shared_ui.popup_handler
+            return self._popup_handler
+        # 从 adapter 构建
+        if self.shared_adapter:
+            from ..ui.popup_handler import PopupHandler
+            capture_method = "adb"
+            if self.shared_ui and hasattr(self.shared_ui, 'capture_method'):
+                capture_method = self.shared_ui.capture_method
+            self._popup_handler = PopupHandler(
+                self.shared_adapter,
+                capture_method=capture_method,
+            )
+            return self._popup_handler
+        return None
     
     @abstractmethod
     async def prepare(self, task: Task, account: GameAccount) -> bool:

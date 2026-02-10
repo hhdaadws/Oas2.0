@@ -195,7 +195,7 @@ class SimpleScheduler:
         """检查时间触发的任务"""
         # 寄养任务
         foster_config = config.get("寄养", {})
-        if (foster_config.get("enabled", True) and 
+        if (self._is_task_enabled(foster_config) and 
             foster_config.get("next_time") and 
             is_time_reached(foster_config["next_time"])):
             await self._execute_account_task(account, TaskType.FOSTER, db)
@@ -203,15 +203,23 @@ class SimpleScheduler:
         
         # 委托任务
         delegate_config = config.get("委托", {})
-        if (delegate_config.get("enabled", True) and 
+        if (self._is_task_enabled(delegate_config) and 
             delegate_config.get("next_time") and 
             is_time_reached(delegate_config["next_time"])):
             await self._execute_account_task(account, TaskType.DELEGATE, db)
             return
+
+        # 弥助任务
+        mizhu_config = config.get("弥助", {})
+        if (self._is_task_enabled(mizhu_config) and
+            mizhu_config.get("next_time") and
+            is_time_reached(mizhu_config["next_time"])):
+            await self._execute_account_task(account, TaskType.DELEGATE_HELP, db)
+            return
         
         # 勾协任务
         coop_config = config.get("勾协", {})
-        if (coop_config.get("enabled", True) and 
+        if (self._is_task_enabled(coop_config) and 
             coop_config.get("next_time") and 
             is_time_reached(coop_config["next_time"])):
             await self._execute_account_task(account, TaskType.COOP, db)
@@ -219,7 +227,7 @@ class SimpleScheduler:
         
         # 加好友任务
         friend_config = config.get("加好友", {})
-        if (friend_config.get("enabled", True) and 
+        if (self._is_task_enabled(friend_config) and 
             friend_config.get("next_time") and 
             is_time_reached(friend_config["next_time"])):
             await self._execute_account_task(account, TaskType.ADD_FRIEND, db)
@@ -229,7 +237,7 @@ class SimpleScheduler:
         """检查条件触发的任务（优先级：结界卡合成 > 探索突破）"""
         # 结界卡合成任务（探索次数）- 优先级更高
         card_config = config.get("结界卡合成", {})
-        if card_config.get("enabled", True):
+        if self._is_task_enabled(card_config):
             explore_count = card_config.get("explore_count", 0)
             if explore_count >= 40:
                 await self._execute_account_task(account, TaskType.CARD_SYNTHESIS, db)
@@ -237,11 +245,17 @@ class SimpleScheduler:
         
         # 探索突破任务（体力阈值）
         explore_config = config.get("探索突破", {})
-        if explore_config.get("enabled", True):
+        if self._is_task_enabled(explore_config):
             threshold = explore_config.get("stamina_threshold", 1000)
             if account.stamina >= threshold:
                 await self._execute_account_task(account, TaskType.EXPLORE, db)
                 return
+
+    def _is_task_enabled(self, task_cfg: dict) -> bool:
+        """任务启用判定：只有显式 True 才视为开启。"""
+        if not isinstance(task_cfg, dict):
+            return False
+        return task_cfg.get("enabled") is True
     
     async def _execute_account_task(self, account: GameAccount, task_type: TaskType, db):
         """执行账号的指定任务"""
@@ -256,6 +270,7 @@ class SimpleScheduler:
             task_name_map = {
                 TaskType.FOSTER: "寄养",
                 TaskType.DELEGATE: "委托", 
+                TaskType.DELEGATE_HELP: "弥助",
                 TaskType.COOP: "勾协",
                 TaskType.EXPLORE: "探索突破",
                 TaskType.CARD_SYNTHESIS: "结界卡合成",
@@ -344,6 +359,11 @@ class SimpleScheduler:
             # 委托：下一个固定时间点
             next_time = get_next_fixed_time(current_time, ["12:00", "18:00"])
             config["委托"]["next_time"] = next_time
+
+        elif task_type == TaskType.DELEGATE_HELP:
+            # 弥助：下一个固定时间点
+            next_time = get_next_fixed_time(current_time, ["00:00", "06:00", "12:00", "18:00"])
+            config["弥助"]["next_time"] = next_time
             
         elif task_type == TaskType.COOP:
             # 勾协：下一个固定时间点
@@ -414,7 +434,7 @@ class SimpleScheduler:
                 
                 # 检查哪些任务即将执行（30分钟内）
                 for task_name, task_config in config.items():
-                    if not task_config.get("enabled", True):
+                    if not self._is_task_enabled(task_config):
                         continue
                     
                     next_time = task_config.get("next_time")
@@ -439,6 +459,7 @@ class SimpleScheduler:
             "加好友": 90,
             "勾协": 80,
             "委托": 70,
+            "弥助": 65,
             "寄养": 60,
             "探索突破": 50,
             "结界卡合成": 40

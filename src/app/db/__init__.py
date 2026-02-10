@@ -13,6 +13,9 @@ def init_db():
     Base.metadata.create_all(bind=engine)
     _migrate_login_id_unique_constraint()
     _migrate_system_config_columns()
+    _migrate_lineup_config_column()
+    _migrate_remark_column()
+    _migrate_asset_columns()
     _ensure_coop_schema()
 
 
@@ -115,7 +118,7 @@ def _migrate_system_config_columns():
             if not cols:
                 return
             missing = set()
-            for name in ("nemu_folder", "activity_name", "python_path"):
+            for name in ("nemu_folder", "activity_name", "python_path", "capture_method"):
                 if name not in cols:
                     missing.add(name)
 
@@ -126,11 +129,71 @@ def _migrate_system_config_columns():
                     conn.exec_driver_sql("ALTER TABLE system_config ADD COLUMN activity_name VARCHAR(200) DEFAULT '.MainActivity'")
                 elif name == "python_path":
                     conn.exec_driver_sql("ALTER TABLE system_config ADD COLUMN python_path VARCHAR(1000)")
+                elif name == "capture_method":
+                    conn.exec_driver_sql("ALTER TABLE system_config ADD COLUMN capture_method VARCHAR(20) DEFAULT 'adb'")
     except Exception as e:
         try:
             from ..core.logger import logger
 
             logger.error(f"system_config 列迁移失败: {e}")
+        except Exception:
+            pass
+
+
+def _migrate_lineup_config_column():
+    """确保 game_accounts 表包含 lineup_config 列。"""
+    try:
+        if engine.url.get_backend_name() != 'sqlite':
+            return
+        with engine.begin() as conn:
+            cols = [r[1] for r in conn.exec_driver_sql("PRAGMA table_info('game_accounts')").fetchall()]
+            if not cols or 'lineup_config' in cols:
+                return
+            conn.exec_driver_sql("ALTER TABLE game_accounts ADD COLUMN lineup_config JSON DEFAULT '{}'")
+    except Exception as e:
+        try:
+            from ..core.logger import logger
+            logger.error(f"lineup_config 列迁移失败: {e}")
+        except Exception:
+            pass
+
+
+def _migrate_remark_column():
+    """确保 game_accounts 表包含 remark 列。"""
+    try:
+        if engine.url.get_backend_name() != 'sqlite':
+            return
+        with engine.begin() as conn:
+            cols = [r[1] for r in conn.exec_driver_sql("PRAGMA table_info('game_accounts')").fetchall()]
+            if not cols or 'remark' in cols:
+                return
+            conn.exec_driver_sql("ALTER TABLE game_accounts ADD COLUMN remark VARCHAR(500) DEFAULT ''")
+    except Exception as e:
+        try:
+            from ..core.logger import logger
+            logger.error(f"remark 列迁移失败: {e}")
+        except Exception:
+            pass
+
+
+def _migrate_asset_columns():
+    """确保 game_accounts 表包含 gouyu、lanpiao、gold 列。"""
+    try:
+        if engine.url.get_backend_name() != 'sqlite':
+            return
+        with engine.begin() as conn:
+            cols = [r[1] for r in conn.exec_driver_sql("PRAGMA table_info('game_accounts')").fetchall()]
+            if not cols:
+                return
+            for col_name in ("gouyu", "lanpiao", "gold"):
+                if col_name not in cols:
+                    conn.exec_driver_sql(
+                        f"ALTER TABLE game_accounts ADD COLUMN {col_name} INTEGER DEFAULT 0"
+                    )
+    except Exception as e:
+        try:
+            from ..core.logger import logger
+            logger.error(f"资产列迁移失败: {e}")
         except Exception:
             pass
 

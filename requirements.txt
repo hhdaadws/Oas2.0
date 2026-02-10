@@ -1,45 +1,53 @@
-# Web框架
+# Web
 fastapi==0.104.1
 uvicorn[standard]==0.24.0
 python-multipart==0.0.6
 
-# 数据库
+# Database
 sqlalchemy==2.0.23
 alembic==1.12.1
 
-# 配置和验证
+# Config
 pydantic==2.5.0
 pydantic-settings==2.1.0
 python-dotenv==1.0.0
 
-# 调度器
+# Scheduler
 apscheduler==3.10.4
 
-# 日志
+# Logging
 loguru==0.7.2
 
-# 重试
+# Retry
 tenacity==8.2.3
 
-# 异步
+# Async
 aiofiles==23.2.1
 httpx==0.25.2
 
 # WebSocket
 python-socketio==5.10.0
 
-# 时间处理
+# Time
 python-dateutil==2.8.2
 
-# 测试
+# Test
 pytest==7.4.3
 pytest-asyncio==0.21.1
 pytest-cov==4.1.0
 
-# 开发工具
+# Dev
 black==23.11.0
 flake8==6.1.0
 
-# IPC截图依赖（用于 MuMu IPC 客户端图像编码）
+# Auth
+pyotp==2.9.0
+PyJWT==2.8.0
+
+# IPC screenshot (MuMu IPC)
 numpy>=1.24
 opencv-python>=4.8
+
+# OCR
+paddlepaddle>=3.0
+paddleocr>=3.0

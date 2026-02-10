@@ -26,6 +26,7 @@ class UIDef:
     templates: List[TemplateDef] = field(default_factory=list)
     pixels: List[PixelDef] = field(default_factory=list)
     threshold: Optional[float] = None
+    tag: Optional[str] = None  # 用于界面识别的主模板名称，其余模板仅用于锚点提取
 
 
 class UIRegistry:

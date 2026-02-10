@@ -221,3 +221,34 @@ class Adb:
         cp = self._run(["-s", addr, "shell", "am", "force-stop", pkg], timeout=timeout)
         if cp.returncode != 0:
             raise AdbError((cp.stderr or b"").decode(errors="ignore"))
+
+    def root(self, addr: str, timeout: float = 10.0) -> bool:
+        """执行 adb root 获取权限"""
+        cp = self._run(["-s", addr, "root"], timeout=timeout)
+        out = (cp.stdout or b"").decode(errors="ignore").lower()
+        # root 成功会输出 "restarting adbd as root" 或 "adbd is already running as root"
+        return cp.returncode == 0 or "root" in out
+
+    def push(self, addr: str, local_path: str, remote_path: str, timeout: float = 60.0) -> tuple[bool, str]:
+        """推送本地文件/文件夹到设备"""
+        cp = self._run(["-s", addr, "push", local_path, remote_path], timeout=timeout)
+        out = (cp.stdout or b"").decode(errors="ignore")
+        err = (cp.stderr or b"").decode(errors="ignore")
+        if cp.returncode == 0:
+            return True, out
+        return False, err or out
+
+    def shell(self, addr: str, cmd: str, timeout: float = 10.0) -> tuple[int, str]:
+        """执行 adb shell 命令，返回 (returncode, output)"""
+        cp = self._run(["-s", addr, "shell", cmd], timeout=timeout)
+        out = (cp.stdout or b"").decode(errors="ignore")
+        return cp.returncode, out
+
+    def pull(self, addr: str, remote_path: str, local_path: str, timeout: float = 60.0) -> tuple[bool, str]:
+        """从设备拉取文件/文件夹到本地"""
+        cp = self._run(["-s", addr, "pull", remote_path, local_path], timeout=timeout)
+        out = (cp.stdout or b"").decode(errors="ignore")
+        err = (cp.stderr or b"").decode(errors="ignore")
+        if cp.returncode == 0:
+            return True, out
+        return False, err or out

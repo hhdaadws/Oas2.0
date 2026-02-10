@@ -2,6 +2,7 @@
 日志配置模块
 """
 import sys
+import os
 from pathlib import Path
 from loguru import logger
 from .config import settings
@@ -9,6 +10,17 @@ from .config import settings
 
 def setup_logger():
     """配置日志系统"""
+    # 强制标准输出使用 UTF-8，避免 Windows 控制台乱码
+    os.environ.setdefault("PYTHONIOENCODING", "utf-8")
+    os.environ.setdefault("PYTHONUTF8", "1")
+    try:
+        if hasattr(sys.stdout, "reconfigure"):
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        if hasattr(sys.stderr, "reconfigure"):
+            sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
     # 移除默认处理器
     logger.remove()
     

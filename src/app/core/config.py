@@ -1,19 +1,31 @@
 """
 核心配置模块
 """
+import secrets as _secrets
 from typing import List, Optional
 from pydantic_settings import BaseSettings
 from pydantic import Field
 
 
+# TOTP 密钥（固定，仅开发者知晓）
+TOTP_SECRET = "JBSWY3DPEHPK3PXP"
+
+# JWT 签名密钥（每次启动随机生成，重启后旧 token 失效）
+JWT_SECRET = _secrets.token_hex(32)
+
+# JWT 过期时间（小时）
+JWT_EXPIRE_HOURS = 24
+
+
 class Settings(BaseSettings):
     """系统配置"""
-    
+
     # 数据库
     database_url: str = Field(default="sqlite:///./data.db", env="DATABASE_URL")
     
     # OCR
     paddle_ocr_lang: str = Field(default="ch", env="PADDLE_OCR_LANG")
+    ocr_model_dir: str = Field(default="C:/data/ocr_model", env="OCR_MODEL_DIR")
     
     # 模拟器/启动配置
     mumu_manager_path: str = Field(default="", env="MUMU_MANAGER_PATH")
@@ -27,6 +39,8 @@ class Settings(BaseSettings):
     nemu_folder: str = Field(default="", env="NEMU_FOLDER")
     # ADB intent 启动时的 Activity 名称
     activity_name: str = Field(default=".MainActivity", env="ACTIVITY_NAME")
+    # 运行链路截图方式
+    capture_method: str = Field(default="adb", env="CAPTURE_METHOD")
     
     # 调度
     coop_times: str = Field(default="18:00,21:00", env="COOP_TIMES")

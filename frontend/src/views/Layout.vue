@@ -62,6 +62,7 @@ const menuRoutes = [
   { path: '/accounts', meta: { title: '账号管理', icon: 'User' } },
   { path: '/coop', meta: { title: '勾协管理', icon: 'Connection' } },
   { path: '/emulators', meta: { title: '模拟器配置', icon: 'Monitor' } },
+  { path: '/account-pull', meta: { title: '账号抓取', icon: 'Download' } },
   { path: '/settings', meta: { title: '系统配置', icon: 'Setting' } }
 ]
 

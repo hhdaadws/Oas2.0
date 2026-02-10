@@ -1,0 +1,12 @@
+# Suggested commands (Windows)
+- Backend setup: `python -m venv .venv && .venv\Scripts\pip install -r requirements.txt`
+- Backend dev run: `.venv\Scripts\python -m uvicorn app.main:app --app-dir src --reload --host 0.0.0.0 --port 9001`
+- Backend helper start: `powershell -ExecutionPolicy Bypass -File scripts/start-backend.ps1`
+- Frontend dev: `cd frontend && npm install && npm run dev`
+- Frontend build: `cd frontend && npm run build`
+- Desktop run: `cd desktop && npm install && npm run start`
+- One-click start: `start.bat`
+- Formatting/lint: `black src` and `flake8 src`
+- Tests: `.venv\Scripts\pytest`
+- Coverage: `.venv\Scripts\pytest --cov=src --cov-report=term-missing`
+- Utility commands on Windows PowerShell: `Get-ChildItem`, `Get-Content -Encoding UTF8`, `Select-String`, `cd`, `git status`, `git diff`.
