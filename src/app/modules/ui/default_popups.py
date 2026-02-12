@@ -49,5 +49,19 @@ def register_default_popups(reg: Optional[PopupRegistry] = None) -> None:
     """
     r = reg or popup_registry
 
-    # 后续在此添加具体弹窗定义
-    # r.register(PopupDef(...))
+    r.register(PopupDef(
+        id="popup_1",
+        label="通用弹窗",
+        detect_template=TemplateDef(
+            name="popup_1",
+            path="assets/ui/templates/popup_1.png",
+        ),
+        dismiss_actions=[
+            DismissAction(
+                type=DismissType.TAP_TEMPLATE,
+                template_path="assets/ui/templates/exit.png",
+                post_delay_ms=1000,
+            ),
+        ],
+        priority=50,
+    ))

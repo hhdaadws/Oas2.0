@@ -30,12 +30,22 @@ def _discover_templates(prefix: str) -> list[TemplateDef]:
 
 tansuo_templates = _discover_templates("tansuo")
 shangdian_templates = _discover_templates("shangdian")
+liao_templates = _discover_templates("liao")
+shishen_templates = _discover_templates("shishen")
+zhaohuan_templates = _discover_templates("zhaohuan")
 
 # 游戏启动后出现 "进入" 按钮的界面
 registry.register(UIDef(
     id="ENTER",
     tag="enter",
     templates=[TemplateDef(name="enter", path="assets/ui/templates/enter.png")],
+))
+
+# 账号失效界面（登录数据过期时出现，替代 ENTER）
+registry.register(UIDef(
+    id="SHIXIAO",
+    tag="shixiao",
+    templates=[TemplateDef(name="shixiao", path="assets/ui/templates/shixiao.png")],
 ))
 
 # 庭院界面（家城），tag=jiacheng 用于识别；shangdian/tansuo 仅用于导航锚点
@@ -46,6 +56,10 @@ registry.register(UIDef(
         TemplateDef(name="jiacheng", path="assets/ui/templates/jiacheng.png"),
         *shangdian_templates,
         *tansuo_templates,
+        *liao_templates,
+        TemplateDef(name="youjian", path="assets/ui/templates/youjian.png"),
+        *shishen_templates,
+        *zhaohuan_templates,
     ],
 ))
 
@@ -59,11 +73,14 @@ registry.register(UIDef(
     ],
 ))
 
-# 委派页面：tag=tag_weipai 用于识别
+# 委派页面：tag=tag_weipai 用于识别；back 用于返回探索的导航锚点
 registry.register(UIDef(
     id="WEIPAI",
     tag="tag_weipai",
-    templates=[TemplateDef(name="tag_weipai", path="assets/ui/templates/tag_weipai.png")],
+    templates=[
+        TemplateDef(name="tag_weipai", path="assets/ui/templates/tag_weipai.png"),
+        TemplateDef(name="back", path="assets/ui/templates/back.png"),
+    ],
 ))
 
 # 商店界面：tag=libaowu 用于识别；back 用于返回庭院的导航锚点
@@ -72,6 +89,77 @@ registry.register(UIDef(
     tag="libaowu",
     templates=[
         TemplateDef(name="libaowu", path="assets/ui/templates/libaowu.png"),
+        TemplateDef(name="back", path="assets/ui/templates/back.png"),
+    ],
+))
+
+# 寮界面：tag=liaoxinxi 用于识别；liaojinbi_1/exit_1 用于导航锚点
+registry.register(UIDef(
+    id="LIAO",
+    tag="liaoxinxi",
+    templates=[
+        TemplateDef(name="liaoxinxi", path="assets/ui/templates/liaoxinxi.png"),
+        TemplateDef(name="liaojinbi_1", path="assets/ui/templates/liaojinbi_1.png"),
+        TemplateDef(name="exit_1", path="assets/ui/templates/exit_1.png"),
+    ],
+))
+
+# 寮信息界面：tag=shenshe 用于识别；xinxi 用于返回寮界面
+registry.register(UIDef(
+    id="LIAO_XINXI",
+    tag="shenshe",
+    templates=[
+        TemplateDef(name="shenshe", path="assets/ui/templates/shenshe.png"),
+        TemplateDef(name="xinxi", path="assets/ui/templates/xinxi.png"),
+    ],
+))
+
+# 寮活动界面：tag=gongxunshangdian 用于识别；exit_1 用于返回寮界面
+registry.register(UIDef(
+    id="LIAO_HUODONG",
+    tag="gongxunshangdian",
+    templates=[
+        TemplateDef(name="gongxunshangdian", path="assets/ui/templates/gongxunshangdian.png"),
+        TemplateDef(name="exit_1", path="assets/ui/templates/exit_1.png"),
+    ],
+))
+
+# 寮商店界面：tag=gongxunlibao 用于识别；exit 用于返回寮活动界面
+registry.register(UIDef(
+    id="LIAO_SHANGDIAN",
+    tag="gongxunlibao",
+    templates=[
+        TemplateDef(name="gongxunlibao", path="assets/ui/templates/gongxunlibao.png"),
+        TemplateDef(name="exit", path="assets/ui/templates/exit.png"),
+    ],
+))
+
+# 邮箱界面：tag=youxiang 用于识别；exit 用于返回庭院的导航锚点
+registry.register(UIDef(
+    id="YOUXIANG",
+    tag="youxiang",
+    templates=[
+        TemplateDef(name="youxiang", path="assets/ui/templates/youxiang.png"),
+        TemplateDef(name="exit", path="assets/ui/templates/exit.png"),
+    ],
+))
+
+# 式神界面：tag=tag_shishen_1 用于识别；back 用于返回庭院的导航锚点
+registry.register(UIDef(
+    id="SHISHEN",
+    tag="tag_shishen_1",
+    templates=[
+        TemplateDef(name="tag_shishen_1", path="assets/ui/templates/tag_shishen_1.png"),
+        TemplateDef(name="back", path="assets/ui/templates/back.png"),
+    ],
+))
+
+# 召唤界面：tag=tag_zhaohuan 用于识别；back 用于返回庭院的导航锚点
+registry.register(UIDef(
+    id="ZHAOHUAN",
+    tag="tag_zhaohuan",
+    templates=[
+        TemplateDef(name="tag_zhaohuan", path="assets/ui/templates/tag_zhaohuan.png"),
         TemplateDef(name="back", path="assets/ui/templates/back.png"),
     ],
 ))

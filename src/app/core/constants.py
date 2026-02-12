@@ -32,6 +32,9 @@ class TaskType(str, Enum):
     FENGMO = "逢魔"
     DIGUI = "地鬼"
     DAOGUAN = "道馆"
+    LIAO_SHOP = "寮商店"
+    LIAO_COIN = "领取寮金币"
+    DAILY_SUMMON = "每日一抽"
     REST = "休息"
 
 
@@ -80,6 +83,9 @@ TASK_PRIORITY = {
     TaskType.DIGUI: 46,
     TaskType.DAOGUAN: 44,
     TaskType.CARD_SYNTHESIS: 40,
+    TaskType.LIAO_COIN: 43,
+    TaskType.LIAO_SHOP: 42,
+    TaskType.DAILY_SUMMON: 38,
     TaskType.CLIMB_TOWER: 35,
     TaskType.REST: 20,
 }
@@ -136,6 +142,18 @@ DEFAULT_TASK_CONFIG = {
         "next_time": "2020-01-01 00:00"
     },
     "道馆": {
+        "enabled": True,
+        "next_time": "2020-01-01 00:00"
+    },
+    "寮商店": {
+        "enabled": True,
+        "next_time": "2020-01-01 00:00"
+    },
+    "领取寮金币": {
+        "enabled": True,
+        "next_time": "2020-01-01 00:00"
+    },
+    "每日一抽": {
         "enabled": True,
         "next_time": "2020-01-01 00:00"
     },

@@ -27,13 +27,25 @@
           <template #header>
             <div class="tree-header">
               <span>账号列表</span>
-              <el-input
-                v-model="searchText"
-                placeholder="搜索 账号ID/备注"
-                clearable
-                size="small"
-                style="max-width: 220px"
-              />
+              <div style="display: flex; gap: 8px; align-items: center;">
+                <el-select
+                  v-model="statusFilter"
+                  placeholder="状态"
+                  clearable
+                  size="small"
+                  style="width: 100px"
+                >
+                  <el-option label="正常" :value="1" />
+                  <el-option label="失效" :value="2" />
+                </el-select>
+                <el-input
+                  v-model="searchText"
+                  placeholder="搜索 账号ID/备注"
+                  clearable
+                  size="small"
+                  style="max-width: 220px"
+                />
+              </div>
             </div>
           </template>
 
@@ -150,7 +162,7 @@
               <el-input-number
                 v-model="selectedAccount.stamina"
                 :min="0"
-                :max="9999"
+                :max="99999"
                 size="small"
                 @change="updateAccountInfo"
               />
@@ -266,7 +278,7 @@
                 v-if="taskConfig.探索突破.enabled"
                 v-model="taskConfig.探索突破.stamina_threshold"
                 :min="100"
-                :max="9999"
+                :max="99999"
                 placeholder="体力阈值"
                 style="margin-left: 10px; width: 150px"
                 @change="updateTaskConfigData"
@@ -403,6 +415,54 @@
                 @change="updateTaskConfigData"
               />
             </el-form-item>
+            <el-form-item label="寮商店">
+              <el-switch
+                v-model="taskConfig.寮商店.enabled"
+                @change="updateTaskConfigData"
+              />
+              <el-date-picker
+                v-if="taskConfig.寮商店.enabled"
+                v-model="taskConfig.寮商店.next_time"
+                type="datetime"
+                placeholder="下次执行时间"
+                format="YYYY-MM-DD HH:mm"
+                value-format="YYYY-MM-DD HH:mm"
+                style="margin-left: 10px; width: 200px"
+                @change="updateTaskConfigData"
+              />
+            </el-form-item>
+            <el-form-item label="领取寮金币">
+              <el-switch
+                v-model="taskConfig.领取寮金币.enabled"
+                @change="updateTaskConfigData"
+              />
+              <el-date-picker
+                v-if="taskConfig.领取寮金币.enabled"
+                v-model="taskConfig.领取寮金币.next_time"
+                type="datetime"
+                placeholder="下次执行时间"
+                format="YYYY-MM-DD HH:mm"
+                value-format="YYYY-MM-DD HH:mm"
+                style="margin-left: 10px; width: 200px"
+                @change="updateTaskConfigData"
+              />
+            </el-form-item>
+            <el-form-item label="每日一抽">
+              <el-switch
+                v-model="taskConfig.每日一抽.enabled"
+                @change="updateTaskConfigData"
+              />
+              <el-date-picker
+                v-if="taskConfig.每日一抽.enabled"
+                v-model="taskConfig.每日一抽.next_time"
+                type="datetime"
+                placeholder="下次执行时间"
+                format="YYYY-MM-DD HH:mm"
+                value-format="YYYY-MM-DD HH:mm"
+                style="margin-left: 10px; width: 200px"
+                @change="updateTaskConfigData"
+              />
+            </el-form-item>
             <el-form-item label="签到">
               <el-switch
                 v-model="taskConfig.签到.enabled"
@@ -514,7 +574,7 @@
           <el-input-number v-model="gameForm.level" :min="1" :max="999" />
         </el-form-item>
         <el-form-item label="体力">
-          <el-input-number v-model="gameForm.stamina" :min="0" :max="9999" />
+          <el-input-number v-model="gameForm.stamina" :min="0" :max="99999" />
         </el-form-item>
       </el-form>
       <template #footer>
@@ -575,6 +635,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 // 数据
 const accountTree = ref([])
 const searchText = ref('')
+const statusFilter = ref('')
 const selectedAccount = ref(null)
 const accountTreeRef = ref(null)
 const selectedGameIds = ref([])
@@ -592,6 +653,9 @@ const taskConfig = reactive({
   逢魔: { enabled: true, next_time: "2020-01-01 00:00" },
   地鬼: { enabled: true, next_time: "2020-01-01 00:00" },
   道馆: { enabled: true, next_time: "2020-01-01 00:00" },
+  寮商店: { enabled: true, next_time: "2020-01-01 00:00" },
+  领取寮金币: { enabled: true, next_time: "2020-01-01 00:00" },
+  每日一抽: { enabled: true, next_time: "2020-01-01 00:00" },
   签到: { enabled: false, status: '未签到', signed_date: null }
 })
 const restConfig = reactive({
@@ -631,16 +695,24 @@ const treeProps = {
   label: 'label'
 }
 
-// 过滤后的树数据（按 login_id 模糊匹配）
+// 过滤后的树数据（按 login_id 模糊匹配 + 状态筛选）
 const filteredAccountTree = computed(() => {
   const q = (searchText.value || '').trim().toLowerCase()
-  if (!q) return accountTree.value
+  const sf = statusFilter.value
 
   const matchNode = (node) => {
-    const loginMatch = String(node.login_id ?? '').toLowerCase().includes(q)
-    const remarkMatch = String(node.remark ?? '').toLowerCase().includes(q)
-    return loginMatch || remarkMatch
+    // 状态筛选
+    if (sf && node.status !== sf) return false
+    // 关键字搜索
+    if (q) {
+      const loginMatch = String(node.login_id ?? '').toLowerCase().includes(q)
+      const remarkMatch = String(node.remark ?? '').toLowerCase().includes(q)
+      if (!loginMatch && !remarkMatch) return false
+    }
+    return true
   }
+
+  if (!q && !sf) return accountTree.value
 
   const result = []
   for (const node of accountTree.value) {
@@ -821,6 +893,24 @@ const handleNodeClick = async (data) => {
       next_time: savedConfig.道馆?.next_time ?? "2020-01-01 00:00"
     }
 
+    // 寮商店：支持next_time，默认2020年
+    taskConfig.寮商店 = {
+      enabled: savedConfig.寮商店?.enabled === true,
+      next_time: savedConfig.寮商店?.next_time ?? "2020-01-01 00:00"
+    }
+
+    // 领取寮金币：支持next_time，默认2020年
+    taskConfig.领取寮金币 = {
+      enabled: savedConfig.领取寮金币?.enabled === true,
+      next_time: savedConfig.领取寮金币?.next_time ?? "2020-01-01 00:00"
+    }
+
+    // 每日一抽：支持next_time，默认2020年
+    taskConfig.每日一抽 = {
+      enabled: savedConfig.每日一抽?.enabled === true,
+      next_time: savedConfig.每日一抽?.next_time ?? "2020-01-01 00:00"
+    }
+
     // 签到：非独立任务，默认未启用
     taskConfig.签到 = {
       enabled: savedConfig.签到?.enabled === true,
@@ -933,6 +1023,18 @@ const updateTaskConfigData = async () => {
       "道馆": {
         enabled: taskConfig["道馆"].enabled,
         next_time: taskConfig["道馆"].next_time
+      },
+      "寮商店": {
+        enabled: taskConfig["寮商店"].enabled,
+        next_time: taskConfig["寮商店"].next_time
+      },
+      "领取寮金币": {
+        enabled: taskConfig["领取寮金币"].enabled,
+        next_time: taskConfig["领取寮金币"].next_time
+      },
+      "每日一抽": {
+        enabled: taskConfig["每日一抽"].enabled,
+        next_time: taskConfig["每日一抽"].next_time
       },
       "签到": {
         enabled: taskConfig["签到"].enabled,

@@ -117,14 +117,17 @@ async def perform_signin(
 ) -> bool:
     """在庭院中执行实际的签到 UI 操作。
 
-    轮询检测签到弹窗（最多 poll_timeout 秒），找到后执行对应点击流程。
-    返回 True 表示签到成功，False 表示超时未检测到签到弹窗（已签过或无弹窗）。
+    轮询检测签到弹窗，支持多个签到弹窗依次处理。
+    每完成一个签到流程后重置超时计时器，继续等待下一个弹窗。
+    当连续 poll_timeout 秒内没有新弹窗出现时，认为签到全部完成。
+    返回 True 表示至少完成一个签到，False 表示超时未检测到任何签到弹窗。
     """
     from ..vision.template import match_template
     from ..vision.utils import random_point_in_circle
 
     addr = adapter.cfg.adb_addr
     elapsed = 0.0
+    completed_count = 0
 
     while elapsed < poll_timeout:
         screenshot = adapter.capture(capture_method)
@@ -175,7 +178,12 @@ async def perform_signin(
                         break
                 await asyncio.sleep(1.0)
 
-            return True
+            completed_count += 1
+            if log:
+                log.info(f"[签到] 第 {completed_count} 个签到流程完成，继续等待下一个签到弹窗...")
+            await asyncio.sleep(2.0)
+            elapsed = 0.0
+            continue
 
         # Flow B: 检测 qiandao_x.png
         m1 = None
@@ -202,14 +210,25 @@ async def perform_signin(
             adapter.adb.tap(addr, rx, ry)
             if log:
                 log.info(f"[签到] 随机点击 ({rx}, {ry}) 关闭奖励弹窗")
-            return True
+
+            completed_count += 1
+            if log:
+                log.info(f"[签到] 第 {completed_count} 个签到流程完成，继续等待下一个签到弹窗...")
+            await asyncio.sleep(2.0)
+            elapsed = 0.0
+            continue
 
         await asyncio.sleep(poll_interval)
         elapsed += poll_interval
 
-    if log:
-        log.info("[签到] 超时未检测到签到弹窗，跳过")
-    return False
+    if completed_count > 0:
+        if log:
+            log.info(f"[签到] 所有签到弹窗处理完毕，共完成 {completed_count} 个签到流程")
+        return True
+    else:
+        if log:
+            log.info("[签到] 超时未检测到签到弹窗，跳过")
+        return False
 
 
 def try_signin_if_needed(account: GameAccount, *, log: Any = None) -> bool:

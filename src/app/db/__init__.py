@@ -17,6 +17,7 @@ def init_db():
     _migrate_remark_column()
     _migrate_asset_columns()
     _ensure_coop_schema()
+    _ensure_performance_indexes()
 
 
 def _migrate_login_id_unique_constraint():
@@ -238,6 +239,30 @@ def _ensure_coop_schema():
         try:
             from ..core.logger import logger
             logger.error(f"勾协表结构校验/重建失败: {e}")
+        except Exception:
+            pass
+
+
+def _ensure_performance_indexes():
+    """Ensure high-frequency query indexes exist for legacy databases."""
+    try:
+        if engine.url.get_backend_name() != 'sqlite':
+            return
+        with engine.begin() as conn:
+            statements = [
+                "CREATE INDEX IF NOT EXISTS ix_task_runs_started_at ON task_runs (started_at);",
+                "CREATE INDEX IF NOT EXISTS ix_task_runs_status ON task_runs (status);",
+                "CREATE INDEX IF NOT EXISTS ix_game_accounts_email_fk ON game_accounts (email_fk);",
+                "CREATE INDEX IF NOT EXISTS ix_game_accounts_status ON game_accounts (status);",
+                "CREATE INDEX IF NOT EXISTS ix_game_accounts_progress ON game_accounts (progress);",
+                "CREATE INDEX IF NOT EXISTS ix_game_accounts_status_progress ON game_accounts (status, progress);",
+            ]
+            for statement in statements:
+                conn.exec_driver_sql(statement)
+    except Exception as e:
+        try:
+            from ..core.logger import logger
+            logger.error(f"failed to ensure performance indexes: {e}")
         except Exception:
             pass
 

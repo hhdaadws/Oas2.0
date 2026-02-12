@@ -294,6 +294,9 @@ class Feeder:
         self._check_time_task(intents, account, cfg, "逢魔", TaskType.FENGMO)
         self._check_time_task(intents, account, cfg, "地鬼", TaskType.DIGUI)
         self._check_time_task(intents, account, cfg, "道馆", TaskType.DAOGUAN)
+        self._check_time_task(intents, account, cfg, "寮商店", TaskType.LIAO_SHOP)
+        self._check_time_task(intents, account, cfg, "领取寮金币", TaskType.LIAO_COIN)
+        self._check_time_task(intents, account, cfg, "每日一抽", TaskType.DAILY_SUMMON)
 
         card = cfg.get("结界卡合成", {})
         if card.get("enabled") is True and card.get("explore_count", 0) >= 40:

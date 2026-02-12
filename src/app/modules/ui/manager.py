@@ -21,6 +21,11 @@ ENTER_TAP_X = 487
 ENTER_TAP_Y = 447
 
 
+class AccountExpiredException(Exception):
+    """账号登录数据已失效（检测到 shixiao 界面）"""
+    pass
+
+
 class UIManager(UIManagerProtocol):
     def __init__(
         self,
@@ -143,6 +148,10 @@ class UIManager(UIManagerProtocol):
                 logger.info("launch_game: 检测到 ENTER 界面，点击固定坐标 ({}, {})", ENTER_TAP_X, ENTER_TAP_Y)
                 self.adapter.tap(ENTER_TAP_X, ENTER_TAP_Y)
 
+            if result.ui == "SHIXIAO":
+                logger.warning("launch_game: 检测到账号失效界面(shixiao)")
+                raise AccountExpiredException("检测到账号失效界面")
+
         logger.warning("launch_game: 超时 ({:.0f}s) 未进入庭院", timeout)
         return False
 
@@ -218,6 +227,10 @@ class UIManager(UIManagerProtocol):
             cur = self.detect_ui()
             logger.info("ensure_game_ready: 当前 UI={} score={:.3f}", cur.ui, cur.score)
 
+            if cur.ui == "SHIXIAO":
+                logger.warning("ensure_game_ready: 检测到账号失效界面(shixiao)")
+                raise AccountExpiredException("检测到账号失效界面")
+
             if cur.ui in {"ENTER", "TINGYUAN"}:
                 ok = await self.go_to_tingyuan(timeout=min(timeout, 45.0), poll_interval=poll_interval)
                 if ok:
@@ -228,6 +241,8 @@ class UIManager(UIManagerProtocol):
                 if ok:
                     logger.info("ensure_game_ready: UI 跳转到庭院成功")
                     return True
+        except AccountExpiredException:
+            raise
         except Exception as e:
             logger.warning("ensure_game_ready: UI 检测/跳转失败，准备重启: {}", e)
 
@@ -278,6 +293,13 @@ class UIManager(UIManagerProtocol):
 
         # 等待指定模板出现，确认界面完全加载
         if asset_def.wait_template:
+            # 先点击固定坐标展开菜单（如庭院右下角展开按钮）
+            if asset_def.pre_tap:
+                tx, ty = asset_def.pre_tap
+                self.adapter.adb.tap(self.adapter.cfg.adb_addr, tx, ty)
+                logger.debug("read_asset: 点击 ({}, {}) 展开菜单", tx, ty)
+                await asyncio.sleep(1.0)
+
             from ..executor.helpers import wait_for_template
             m = await wait_for_template(
                 self.adapter,

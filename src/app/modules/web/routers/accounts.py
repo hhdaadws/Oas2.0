@@ -83,6 +83,9 @@ class TaskConfigUpdate(BaseModel):
     signin: Optional[Dict[str, Any]] = Field(
         default=None, alias="签到"
     )  # {enabled: bool, status: "已签到|未签到", signed_date: "YYYY-MM-DD"|null}
+    liao_shop: Optional[Dict[str, Any]] = Field(default=None, alias="寮商店")
+    liao_coin: Optional[Dict[str, Any]] = Field(default=None, alias="领取寮金币")
+    daily_summon: Optional[Dict[str, Any]] = Field(default=None, alias="每日一抽")
 
 
 class RestConfigUpdate(BaseModel):

@@ -27,15 +27,15 @@ class GameAccount(Base):
     # login_id: -1 代表当前尚未生成平台登录数据，仅可通过邮箱触发起号
     # 不再强制唯一，以便同一邮箱在不同区服初始化阶段均为 -1
     login_id = Column(String(255), nullable=False, index=True)
-    email_fk = Column(String(255), ForeignKey("emails.email"), nullable=True)
+    email_fk = Column(String(255), ForeignKey("emails.email"), nullable=True, index=True)
     zone = Column(String(50), nullable=False)
     level = Column(Integer, default=1)
     stamina = Column(Integer, default=0)
     gouyu = Column(Integer, default=0)       # 勾玉
     lanpiao = Column(Integer, default=0)     # 蓝票
     gold = Column(Integer, default=0)        # 金币
-    progress = Column(String(20), default="init")  # init|ok
-    status = Column(Integer, default=1)  # 1=可执行|2=失效
+    progress = Column(String(20), default="init", index=True)  # init|ok
+    status = Column(Integer, default=1, index=True)  # 1=active|2=invalid
     current_task = Column(String(50), nullable=True)
     task_config = Column(JSON, default=dict)  # 任务配置
     lineup_config = Column(JSON, default=dict)  # 阵容分组配置
@@ -228,9 +228,9 @@ class TaskRun(Base):
     task_id = Column(Integer, ForeignKey("tasks.id"), nullable=False, index=True)
     worker_id = Column(Integer, ForeignKey("workers.id"), nullable=False)
     emulator_id = Column(Integer, ForeignKey("emulators.id"), nullable=False)
-    started_at = Column(DateTime, default=datetime.utcnow)
+    started_at = Column(DateTime, default=datetime.utcnow, index=True)
     finished_at = Column(DateTime, nullable=True)
-    status = Column(String(20), nullable=False)
+    status = Column(String(20), nullable=False, index=True)
     error_code = Column(String(50), nullable=True)
     artifacts = Column(JSON, default=dict)
     

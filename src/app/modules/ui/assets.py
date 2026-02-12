@@ -26,15 +26,30 @@ class AssetDef:
     parser: Callable[[str], Optional[int]]
     db_field: str                          # GameAccount 对应字段名
     label: str                             # 显示名称
-    wait_template: Optional[str] = None   # OCR 前等待此模板出现，确认界面就绪
+    pre_tap: Optional[Tuple[int, int]] = None  # 等待模板前先点击此坐标（如展开菜单）
+    wait_template: Optional[str] = None        # OCR 前等待此模板出现，确认界面就绪
 
 
 def parse_number(text: str) -> Optional[int]:
     """从 OCR 文本中解析整数。
 
+    支持中文单位（亿、万）：如 ``2.99亿`` → 299000000，``1.9万`` → 19000。
     处理常见 OCR 误识别：去除空格/逗号，修正 O→0、l→1 等。
     """
     cleaned = text.strip()
+
+    # 1. 尝试匹配中文单位格式：数字(可含小数点) + 亿/万
+    cn_match = re.search(r"(\d+\.?\d*)\s*(亿|万)", cleaned)
+    if cn_match:
+        num_str = cn_match.group(1)
+        unit = cn_match.group(2)
+        multiplier = 100_000_000 if unit == "亿" else 10_000
+        try:
+            return int(float(num_str) * multiplier)
+        except (ValueError, OverflowError):
+            pass
+
+    # 2. 纯数字提取（原有逻辑）
     cleaned = cleaned.replace(",", "").replace(".", "").replace(" ", "")
     cleaned = cleaned.replace("O", "0").replace("o", "0")
     cleaned = cleaned.replace("l", "1").replace("I", "1")
@@ -52,19 +67,22 @@ ASSET_REGISTRY: Dict[AssetType, AssetDef] = {
     AssetType.STAMINA: AssetDef(
         asset_type=AssetType.STAMINA,
         screen="TINGYUAN",
-        roi=(533, 15, 66, 24),
+        roi=(667, 15, 68, 24),
         parser=parse_number,
         db_field="stamina",
         label="体力",
+        pre_tap=(921, 490),
         wait_template="assets/ui/templates/shangdian_1.png",
     ),
     AssetType.GOUYU: AssetDef(
         asset_type=AssetType.GOUYU,
         screen="TINGYUAN",
-        roi=(0, 0, 0, 0),  # TODO: 确定勾玉显示 ROI
+        roi=(533, 15, 66, 24),
         parser=parse_number,
         db_field="gouyu",
         label="勾玉",
+        pre_tap=(921, 490),
+        wait_template="assets/ui/templates/shangdian_1.png",
     ),
     AssetType.LANPIAO: AssetDef(
         asset_type=AssetType.LANPIAO,
@@ -77,10 +95,12 @@ ASSET_REGISTRY: Dict[AssetType, AssetDef] = {
     AssetType.GOLD: AssetDef(
         asset_type=AssetType.GOLD,
         screen="TINGYUAN",
-        roi=(0, 0, 0, 0),  # TODO: 确定金币显示 ROI
+        roi=(400, 15, 64, 24),
         parser=parse_number,
         db_field="gold",
         label="金币",
+        pre_tap=(921, 490),
+        wait_template="assets/ui/templates/shangdian_1.png",
     ),
 }
 

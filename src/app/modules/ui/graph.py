@@ -55,31 +55,40 @@ async def apply_edge(adapter, edge: Edge, detect_result: Any | None = None, dete
             x, y = act.args
             adapter.tap(int(x), int(y))
         elif t == "tap_anchor":
-            # args: (anchor_prefix,) or (anchor_prefix, fallback_x, fallback_y)
+            # args: (anchor_prefix,)
+            #    or (anchor_prefix, fallback_x, fallback_y)
+            #    or (anchor_prefix, fallback_x, fallback_y, max_retries)
             if not act.args:
                 continue
             anchor_prefix = str(act.args[0]).lower()
             fallback_x = int(act.args[1]) if len(act.args) >= 3 else None
             fallback_y = int(act.args[2]) if len(act.args) >= 3 else None
+            max_retries = int(act.args[3]) if len(act.args) >= 4 else 0
+            retry_delay = int(act.args[4]) / 1000.0 if len(act.args) >= 5 else 1.5
 
-            anchors = {}
-            if detect_result and isinstance(getattr(detect_result, "debug", None), dict):
-                anchors = detect_result.debug.get("anchors") or {}
+            for attempt in range(max_retries + 1):
+                anchors = {}
+                if detect_result and isinstance(getattr(detect_result, "debug", None), dict):
+                    anchors = detect_result.debug.get("anchors") or {}
 
-            chosen = None
-            if isinstance(anchors, dict):
-                for key, value in anchors.items():
-                    key_lower = str(key).lower()
-                    if key_lower.startswith(anchor_prefix):
-                        chosen = value
-                        break
+                chosen = None
+                if isinstance(anchors, dict):
+                    for key, value in anchors.items():
+                        if str(key).lower().startswith(anchor_prefix):
+                            chosen = value
+                            break
 
-            if chosen and isinstance(chosen, dict):
-                x = int(chosen.get("x", 0))
-                y = int(chosen.get("y", 0))
-                adapter.tap(x, y)
-            elif fallback_x is not None and fallback_y is not None:
-                adapter.tap(fallback_x, fallback_y)
+                if chosen and isinstance(chosen, dict):
+                    adapter.tap(int(chosen.get("x", 0)), int(chosen.get("y", 0)))
+                    break
+                elif attempt < max_retries and fallback_x is not None and fallback_y is not None:
+                    # 锚点未找到，点击 fallback 坐标后重新检测
+                    adapter.tap(fallback_x, fallback_y)
+                    await asyncio.sleep(retry_delay)
+                    if detect_fn is not None:
+                        detect_result = detect_fn()
+                elif fallback_x is not None and fallback_y is not None:
+                    adapter.tap(fallback_x, fallback_y)
         elif t == "swipe":
             x1, y1, x2, y2, dur = act.args
             adapter.swipe(int(x1), int(y1), int(x2), int(y2), int(dur))

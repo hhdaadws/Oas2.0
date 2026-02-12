@@ -7,7 +7,7 @@ from typing import Optional
 from pathlib import Path
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
-from sqlalchemy import desc
+from sqlalchemy import desc, func
 from datetime import datetime, timedelta
 
 from ....db.base import get_db
@@ -49,7 +49,15 @@ async def get_task_history(
     """
     获取执行历史
     """
-    query = db.query(TaskRun).join(Task)
+    query = (
+        db.query(
+            TaskRun,
+            Task,
+            GameAccount.login_id.label("account_login_id"),
+        )
+        .join(Task, TaskRun.task_id == Task.id)
+        .outerjoin(GameAccount, GameAccount.id == Task.account_id)
+    )
 
     # 应用过滤条件
     if account_id:
@@ -75,18 +83,13 @@ async def get_task_history(
 
     # 构建返回数据
     result = []
-    for run in task_runs:
-        task = run.task
-        account = (
-            db.query(GameAccount).filter(GameAccount.id == task.account_id).first()
-        )
-
+    for run, task, account_login_id in task_runs:
         result.append(
             {
                 "run_id": run.id,
                 "task_id": task.id,
                 "account_id": task.account_id,
-                "account_login_id": account.login_id if account else None,
+                "account_login_id": account_login_id,
                 "task_type": task.type,
                 "started_at": run.started_at.isoformat() if run.started_at else None,
                 "finished_at": run.finished_at.isoformat() if run.finished_at else None,
@@ -111,13 +114,20 @@ async def get_task_stats(db: Session = Depends(get_db)):
     """
     today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
 
-    today_runs = db.query(TaskRun).filter(TaskRun.started_at >= today_start).all()
+    status_rows = (
+        db.query(TaskRun.status, func.count(TaskRun.id))
+        .filter(TaskRun.started_at >= today_start)
+        .group_by(TaskRun.status)
+        .all()
+    )
+    status_map = {status: count for status, count in status_rows}
+    total = sum(status_map.values())
 
     today_stats = {
-        "total": len(today_runs),
-        "succeeded": len([r for r in today_runs if r.status == TaskStatus.SUCCEEDED]),
-        "failed": len([r for r in today_runs if r.status == TaskStatus.FAILED]),
-        "running": len([r for r in today_runs if r.status == TaskStatus.RUNNING]),
+        "total": total,
+        "succeeded": int(status_map.get(TaskStatus.SUCCEEDED, 0)),
+        "failed": int(status_map.get(TaskStatus.FAILED, 0)),
+        "running": int(status_map.get(TaskStatus.RUNNING, 0)),
     }
 
     if today_stats["total"] > 0:

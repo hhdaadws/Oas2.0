@@ -12,6 +12,14 @@ from .utils import (
     pixel_match,
     random_point_in_circle,
 )
+from .grid_detect import (
+    GridPosition,
+    CellInfo,
+    find_template_in_grid,
+    find_shishen_tihuan_positions,
+    detect_right_column_cells,
+    nms_by_distance,
+)
 
 __all__ = [
     "DEFAULT_THRESHOLD",
@@ -24,4 +32,10 @@ __all__ = [
     "pixel_at",
     "pixel_match",
     "random_point_in_circle",
+    "GridPosition",
+    "CellInfo",
+    "find_template_in_grid",
+    "find_shishen_tihuan_positions",
+    "detect_right_column_cells",
+    "nms_by_distance",
 ]

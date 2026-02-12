@@ -3,6 +3,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
 from typing import Any, Dict, Optional
 
@@ -163,6 +164,9 @@ class DelegateHelpExecutor(BaseExecutor):
 
         self.logger.info("[弥助] 已到达委派界面，开始弥助操作")
 
+        # 领取已完成委派奖励（如有）
+        await self._collect_completed_rewards()
+
         # --- 弥助操作逻辑 ---
         from .helpers import click_template
 
@@ -172,15 +176,23 @@ class DelegateHelpExecutor(BaseExecutor):
             "assets/ui/templates/mizhu.png",
             verify_gone=True, max_clicks=3,
             log=self.logger, label="弥助按钮",
+            popup_handler=self.ui.popup_handler,
         )
         if not clicked:
-            self.logger.info("[弥助] 未检测到弥助按钮，跳过")
+            self.logger.info("[弥助] 未检测到弥助按钮，跳过本次执行，等待下一个时间窗口")
+            self._update_next_time()
+            return {
+                "status": TaskStatus.SKIPPED,
+                "reason": "未检测到弥助按钮",
+                "timestamp": datetime.utcnow().isoformat(),
+            }
 
         # 步骤2: 等待并点击跳过按钮
         await click_template(
             self.adapter, self.ui.capture_method,
             "assets/ui/templates/tiaoguo.png",
             log=self.logger, label="跳过",
+            popup_handler=self.ui.popup_handler,
         )
 
         # 步骤3: 等待并点击委派确认
@@ -188,6 +200,7 @@ class DelegateHelpExecutor(BaseExecutor):
             self.adapter, self.ui.capture_method,
             "assets/ui/templates/weipai_sure.png",
             log=self.logger, label="委派确认",
+            popup_handler=self.ui.popup_handler,
         )
 
         # 步骤4: 等待并点击一键选择
@@ -195,6 +208,7 @@ class DelegateHelpExecutor(BaseExecutor):
             self.adapter, self.ui.capture_method,
             "assets/ui/templates/yijianxuanze.png",
             log=self.logger, label="一键选择",
+            popup_handler=self.ui.popup_handler,
         )
 
         # 步骤5: 等待并点击出发
@@ -202,6 +216,7 @@ class DelegateHelpExecutor(BaseExecutor):
             self.adapter, self.ui.capture_method,
             "assets/ui/templates/chufa.png",
             log=self.logger, label="出发",
+            popup_handler=self.ui.popup_handler,
         )
 
         self.logger.info("[弥助] 弥助操作完成")
@@ -235,6 +250,83 @@ class DelegateHelpExecutor(BaseExecutor):
                     self.logger.info(f"[弥助] next_time 更新为 {next_time}")
         except Exception as e:
             self.logger.error(f"[弥助] 更新 next_time 失败: {e}")
+
+    async def _collect_completed_rewards(self) -> None:
+        """检测并领取已完成的委派任务奖励"""
+        from ..vision.template import match_template
+        from ..vision.utils import random_point_in_circle
+
+        screenshot = self.adapter.capture(self.ui.capture_method)
+        if screenshot is None:
+            return
+
+        # 弹窗检测
+        if self.ui:
+            if await self.ui.popup_handler.check_and_dismiss(screenshot) > 0:
+                screenshot = self.adapter.capture(self.ui.capture_method)
+                if screenshot is None:
+                    return
+
+        result = match_template(screenshot, "assets/ui/templates/wancheng.png")
+        if not result:
+            self.logger.info("[弥助] 未检测到已完成委派，跳过奖励领取")
+            return
+
+        # 点击 wancheng 中心下方 20px
+        cx, cy = result.center
+        self.adapter.adb.tap(self.adapter.cfg.adb_addr, cx, cy + 20)
+        self.logger.info(f"[弥助] 检测到已完成委派，点击 ({cx}, {cy + 20})")
+        await asyncio.sleep(1.5)
+
+        # 循环点击屏幕中间偏下，等待 wanchengrenwu.png 出现（对话结束标志）
+        for _ in range(20):
+            screenshot = self.adapter.capture(self.ui.capture_method)
+            if screenshot is not None:
+                # 弹窗检测
+                if self.ui and await self.ui.popup_handler.check_and_dismiss(screenshot) > 0:
+                    screenshot = self.adapter.capture(self.ui.capture_method)
+                if screenshot is not None:
+                    wancheng_renwu = match_template(screenshot, "assets/ui/templates/wanchengrenwu.png")
+                if wancheng_renwu:
+                    self.logger.info("[弥助] 检测到完成任务弹窗，对话结束")
+                    break
+            rx, ry = random_point_in_circle(480, 400, 60)
+            self.adapter.adb.tap(self.adapter.cfg.adb_addr, rx, ry)
+            await asyncio.sleep(1.0)
+
+        # 点击 wanchengrenwu
+        screenshot = self.adapter.capture(self.ui.capture_method)
+        if screenshot is not None:
+            # 弹窗检测
+            if self.ui and await self.ui.popup_handler.check_and_dismiss(screenshot) > 0:
+                screenshot = self.adapter.capture(self.ui.capture_method)
+        if screenshot is not None:
+            wr = match_template(screenshot, "assets/ui/templates/wanchengrenwu.png")
+            if wr:
+                wrx, wry = wr.center
+                self.adapter.adb.tap(self.adapter.cfg.adb_addr, wrx, wry)
+                self.logger.info(f"[弥助] 点击完成任务按钮 ({wrx}, {wry})")
+                await asyncio.sleep(1.5)
+
+        # 等待 jiangli.png 出现并关闭奖励弹窗
+        for _ in range(10):
+            screenshot = self.adapter.capture(self.ui.capture_method)
+            if screenshot is not None:
+                # 弹窗检测
+                if self.ui and await self.ui.popup_handler.check_and_dismiss(screenshot) > 0:
+                    screenshot = self.adapter.capture(self.ui.capture_method)
+                if screenshot is not None:
+                    jiangli = match_template(screenshot, "assets/ui/templates/jiangli.png")
+                if jiangli:
+                    self.logger.info("[弥助] 检测到奖励弹窗")
+                    break
+            await asyncio.sleep(1.0)
+
+        await asyncio.sleep(0.5)
+        close_x, close_y = random_point_in_circle(20, 20, 20)
+        self.adapter.adb.tap(self.adapter.cfg.adb_addr, close_x, close_y)
+        self.logger.info(f"[弥助] 点击 ({close_x}, {close_y}) 关闭奖励弹窗")
+        await asyncio.sleep(1.0)
 
     async def cleanup(self) -> None:
         """停止游戏（批次中非最后一个任务跳过）"""

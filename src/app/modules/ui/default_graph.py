@@ -25,16 +25,22 @@ def build_default_graph() -> UIGraph:
         )
     )
 
-    # 庭院 -> 商店：先展开菜单（如果 haoyou 未出现），然后点击 shangdian
+    # 委派 -> 探索：点击返回按钮（back.png）
+    graph.add_edge(
+        Edge(
+            src="WEIPAI",
+            dst="TANSUO",
+            actions=[Action(type="tap_anchor", args=("back",)), Action(type="sleep", args=(800,))],
+        )
+    )
+
+    # 庭院 -> 商店：点击 shangdian 锚点（未出现则点击 921,490 展开侧边栏后重试）
     graph.add_edge(
         Edge(
             src="TINGYUAN",
             dst="SHANGDIAN",
             actions=[
-                Action(type="tap", args=(921, 490)),
-                Action(type="sleep", args=(3000,)),
-                Action(type="re_detect"),
-                Action(type="tap_anchor", args=("shangdian",)),
+                Action(type="tap_anchor", args=("shangdian", 921, 490, 3, 2500)),
                 Action(type="sleep", args=(2000,)),
             ],
         )
@@ -56,6 +62,174 @@ def build_default_graph() -> UIGraph:
     graph.add_edge(
         Edge(
             src="TANSUO",
+            dst="TINGYUAN",
+            actions=[
+                Action(type="tap_anchor", args=("back",)),
+                Action(type="sleep", args=(2000,)),
+            ],
+        )
+    )
+
+    # 庭院 -> 寮界面：点击 liao 锚点（未出现则点击 921,490 展开侧边栏后重试）
+    graph.add_edge(
+        Edge(
+            src="TINGYUAN",
+            dst="LIAO",
+            actions=[
+                Action(type="tap_anchor", args=("liao", 921, 490, 3, 2500)),
+                Action(type="sleep", args=(2000,)),
+            ],
+        )
+    )
+
+    # 寮界面 -> 寮信息：点击寮消息
+    graph.add_edge(
+        Edge(
+            src="LIAO",
+            dst="LIAO_XINXI",
+            actions=[
+                Action(type="tap_anchor", args=("liaoxinxi",)),
+                Action(type="sleep", args=(2000,)),
+            ],
+        )
+    )
+
+    # 寮信息 -> 寮活动：点击神社
+    graph.add_edge(
+        Edge(
+            src="LIAO_XINXI",
+            dst="LIAO_HUODONG",
+            actions=[
+                Action(type="tap_anchor", args=("shenshe",)),
+                Action(type="sleep", args=(2000,)),
+            ],
+        )
+    )
+
+    # 寮信息 -> 寮界面：点击 xinxi 返回
+    graph.add_edge(
+        Edge(
+            src="LIAO_XINXI",
+            dst="LIAO",
+            actions=[
+                Action(type="tap_anchor", args=("xinxi",)),
+                Action(type="sleep", args=(2000,)),
+            ],
+        )
+    )
+
+    # 寮活动 -> 寮商店：点击功勋商店
+    graph.add_edge(
+        Edge(
+            src="LIAO_HUODONG",
+            dst="LIAO_SHANGDIAN",
+            actions=[
+                Action(type="tap_anchor", args=("gongxunshangdian",)),
+                Action(type="sleep", args=(2000,)),
+            ],
+        )
+    )
+
+    # 寮商店 -> 寮活动：点击 exit.png 返回
+    graph.add_edge(
+        Edge(
+            src="LIAO_SHANGDIAN",
+            dst="LIAO_HUODONG",
+            actions=[
+                Action(type="tap_anchor", args=("exit",)),
+                Action(type="sleep", args=(2000,)),
+            ],
+        )
+    )
+
+    # 寮活动 -> 寮界面：点击 exit_1.png 返回
+    graph.add_edge(
+        Edge(
+            src="LIAO_HUODONG",
+            dst="LIAO",
+            actions=[
+                Action(type="tap_anchor", args=("exit_1",)),
+                Action(type="sleep", args=(2000,)),
+            ],
+        )
+    )
+
+    # 寮界面 -> 庭院：点击 exit_1.png 返回
+    graph.add_edge(
+        Edge(
+            src="LIAO",
+            dst="TINGYUAN",
+            actions=[
+                Action(type="tap_anchor", args=("exit_1",)),
+                Action(type="sleep", args=(2000,)),
+            ],
+        )
+    )
+
+    # 庭院 -> 邮箱：点击 youjian 图标
+    graph.add_edge(
+        Edge(
+            src="TINGYUAN",
+            dst="YOUXIANG",
+            actions=[
+                Action(type="tap_anchor", args=("youjian",)),
+                Action(type="sleep", args=(2000,)),
+            ],
+        )
+    )
+
+    # 邮箱 -> 庭院：点击 exit 返回
+    graph.add_edge(
+        Edge(
+            src="YOUXIANG",
+            dst="TINGYUAN",
+            actions=[
+                Action(type="tap_anchor", args=("exit",)),
+                Action(type="sleep", args=(2000,)),
+            ],
+        )
+    )
+
+    # 庭院 -> 式神：点击 shishen 锚点（未出现则点击 921,490 展开侧边栏后重试）
+    graph.add_edge(
+        Edge(
+            src="TINGYUAN",
+            dst="SHISHEN",
+            actions=[
+                Action(type="tap_anchor", args=("shishen", 921, 490, 3, 2500)),
+                Action(type="sleep", args=(2000,)),
+            ],
+        )
+    )
+
+    # 式神 -> 庭院：点击返回按钮（back.png）
+    graph.add_edge(
+        Edge(
+            src="SHISHEN",
+            dst="TINGYUAN",
+            actions=[
+                Action(type="tap_anchor", args=("back",)),
+                Action(type="sleep", args=(2000,)),
+            ],
+        )
+    )
+
+    # 庭院 -> 召唤：点击 zhaohuan 锚点
+    graph.add_edge(
+        Edge(
+            src="TINGYUAN",
+            dst="ZHAOHUAN",
+            actions=[
+                Action(type="tap_anchor", args=("zhaohuan",)),
+                Action(type="sleep", args=(2000,)),
+            ],
+        )
+    )
+
+    # 召唤 -> 庭院：点击返回按钮（back.png）
+    graph.add_edge(
+        Edge(
+            src="ZHAOHUAN",
             dst="TINGYUAN",
             actions=[
                 Action(type="tap_anchor", args=("back",)),

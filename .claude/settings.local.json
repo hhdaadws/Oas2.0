@@ -71,7 +71,22 @@
       "Bash(dir:*)",
       "Bash(cmd /c dir \"e:\\\\new_oas\\\\Oas2.0\\\\venv\\\\Lib\\\\site-packages\")",
       "Bash(findstr:*)",
-      "Bash(git status:*)"
+      "Bash(git status:*)",
+      "Bash(fsutil volume diskfree C:)",
+      "Bash(cmd /c \"dir C:\"\")",
+      "Bash(cmd /c \"del /q C:\\\\Users\\\\ASUS\\\\AppData\\\\Local\\\\Temp\\\\*.tmp\")",
+      "Bash(cmd /c \"del /q C:\\\\Users\\\\ASUS\\\\AppData\\\\Local\\\\Temp\\\\wct*.tmp\")",
+      "Bash(cmd /c \"del /q C:\\\\Users\\\\ASUS\\\\AppData\\\\Local\\\\Temp\\\\*.node\")",
+      "Bash(venvScriptspytest tests/ -k \"signin or collect_login_gift\" -v)",
+      "Bash(cmd /c \"venv\\\\Scripts\\\\pytest tests\\\\ -k \"\"signin or collect_login_gift\"\" -v\")",
+      "Bash(ls -la \"e:\\\\new_oas\\\\Oas2.0\\\\assets\\\\ui\\\\templates\"\" 2>/dev/null || echo \"Directory listing failed \")",
+      "Bash(wmic logicaldisk where \"DeviceID=''C:''\" get FreeSpace,Size /format:list)",
+      "Bash($env:PYTHONPATH=\"src\")",
+      "Bash(venvScriptspython -c \"\nfrom app.modules.vision.grid_detect import find_shishen_tihuan_positions, find_template_in_grid\n\n# 详细输出\npositions = find_template_in_grid\\(''d007126c-38b0-4128-a0f5-49625a5147f3.png'', ''assets/ui/templates/shishen_tihuan.png''\\)\nfor p in positions:\n    m = p.match\n    print\\(f''Row {p.row}: x={m.x}, y={m.y}, center={m.center}, score={m.score:.4f}''\\)\n\n# 便捷函数\nrows = find_shishen_tihuan_positions\\(''d007126c-38b0-4128-a0f5-49625a5147f3.png''\\)\nprint\\(f''\\\\nshishen_tihuan 出现在第 {rows} 行''\\)\n\")",
+      "Bash(venvScriptspython -c \"from app.modules.vision.grid_detect import find_shishen_tihuan_positions, find_template_in_grid; positions = find_template_in_grid\\(''d007126c-38b0-4128-a0f5-49625a5147f3.png'', ''assets/ui/templates/shishen_tihuan.png''\\); [print\\(f''Row {p.row}: x={p.match.x}, y={p.match.y}, center={p.match.center}, score={p.match.score:.4f}''\\) for p in positions]; rows = find_shishen_tihuan_positions\\(''d007126c-38b0-4128-a0f5-49625a5147f3.png''\\); print\\(f''shishen_tihuan appears at rows: {rows}''\\)\")",
+      "Bash(venvScriptspython.exe -c \"from app.modules.vision.grid_detect import find_shishen_tihuan_positions, find_template_in_grid; positions = find_template_in_grid\\(''d007126c-38b0-4128-a0f5-49625a5147f3.png'', ''assets/ui/templates/shishen_tihuan.png''\\); [print\\(f''Row {p.row}: x={p.match.x}, y={p.match.y}, center={p.match.center}, score={p.match.score:.4f}''\\) for p in positions]; rows = find_shishen_tihuan_positions\\(''d007126c-38b0-4128-a0f5-49625a5147f3.png''\\); print\\(f''shishen_tihuan appears at rows: {rows}''\\)\")",
+      "Bash(ls:*)",
+      "Bash(PYTHONPATH=src venv/Scripts/python.exe:*)"
     ],
     "deny": [],
     "ask": []

@@ -10,7 +10,7 @@ from typing import Awaitable, Callable, List, Optional
 
 from sqlalchemy.orm.attributes import flag_modified
 
-from ...core.constants import TaskStatus, TaskType
+from ...core.constants import AccountStatus, TaskStatus, TaskType
 from ...core.logger import logger
 from ...core.timeutils import (
     add_hours_to_beijing_time,
@@ -20,13 +20,23 @@ from ...core.timeutils import (
 )
 from ...db.base import SessionLocal
 from ...db.models import Emulator, GameAccount, SystemConfig, Task
+from ..ui.manager import AccountExpiredException
 from .base import MockExecutor
 from .collect_login_gift import CollectLoginGiftExecutor
+from .collect_mail import CollectMailExecutor
 from .delegate_help import DelegateHelpExecutor
+from .liao_shop import LiaoShopExecutor
+from .liao_coin import LiaoCoinExecutor
 from .types import TaskIntent
 
 # 各任务类型的 next_time 更新策略（已有自己 _update_next_time 的执行器不在此列）
-_EXECUTOR_HAS_OWN_UPDATE = {TaskType.DELEGATE_HELP, TaskType.COLLECT_LOGIN_GIFT}
+_EXECUTOR_HAS_OWN_UPDATE = {
+    TaskType.DELEGATE_HELP,
+    TaskType.COLLECT_LOGIN_GIFT,
+    TaskType.COLLECT_MAIL,
+    TaskType.LIAO_SHOP,
+    TaskType.LIAO_COIN,
+}
 
 # 弥助固定时间点
 _MIZHU_FIXED_TIMES = ["00:00", "06:00", "12:00", "18:00"]
@@ -111,18 +121,23 @@ class WorkerActor:
                         if ok:
                             # 任务成功后统一更新 next_time
                             self._update_next_time_for_intent(intent, account_id)
-                            # 提取 adapter/ui 供后续任务复用
-                            if not shared_adapter and hasattr(self, '_last_executor_adapter'):
-                                shared_adapter = self._last_executor_adapter
-                            if not shared_ui and hasattr(self, '_last_executor_ui'):
-                                shared_ui = self._last_executor_ui
                         else:
                             batch_success = False
+                        # 无论成功失败，都提取 adapter/ui 供后续任务复用
+                        if not shared_adapter and hasattr(self, '_last_executor_adapter'):
+                            shared_adapter = self._last_executor_adapter
+                        if not shared_ui and hasattr(self, '_last_executor_ui'):
+                            shared_ui = self._last_executor_ui
                     except asyncio.TimeoutError:
                         batch_success = False
                         self._log.error(
                             f"Intent timeout: account={intent.account_id}, task={intent.task_type}, timeout={self._intent_timeout_sec}s"
                         )
+                    except AccountExpiredException:
+                        batch_success = False
+                        self._log.warning(f"账号失效: account={intent.account_id}")
+                        self._mark_account_invalid(intent.account_id)
+                        break  # 中断批次剩余任务
                     except Exception as exc:
                         batch_success = False
                         self._log.error(f"Intent error: {exc}")
@@ -136,6 +151,18 @@ class WorkerActor:
             self._log.info(f"批次执行完毕: account={account_id}, success={batch_success}")
 
         self._log.info("WorkerActor stopped")
+
+    def _mark_account_invalid(self, account_id: int) -> None:
+        """将账号状态标记为失效"""
+        try:
+            with SessionLocal() as db:
+                account = db.query(GameAccount).filter(GameAccount.id == account_id).first()
+                if account:
+                    account.status = AccountStatus.INVALID
+                    db.commit()
+                    self._log.info(f"账号已标记为失效: account={account_id}")
+        except Exception as e:
+            self._log.error(f"标记账号失效失败: account={account_id}, error={e}")
 
     async def _run_intent(
         self,
@@ -162,6 +189,27 @@ class WorkerActor:
             )
         elif intent.task_type == TaskType.COLLECT_LOGIN_GIFT:
             executor = CollectLoginGiftExecutor(
+                worker_id=self.emulator.id,
+                emulator_id=self.emulator.id,
+                emulator_row=self.emulator,
+                system_config=self.syscfg,
+            )
+        elif intent.task_type == TaskType.LIAO_SHOP:
+            executor = LiaoShopExecutor(
+                worker_id=self.emulator.id,
+                emulator_id=self.emulator.id,
+                emulator_row=self.emulator,
+                system_config=self.syscfg,
+            )
+        elif intent.task_type == TaskType.LIAO_COIN:
+            executor = LiaoCoinExecutor(
+                worker_id=self.emulator.id,
+                emulator_id=self.emulator.id,
+                emulator_row=self.emulator,
+                system_config=self.syscfg,
+            )
+        elif intent.task_type == TaskType.COLLECT_MAIL:
+            executor = CollectMailExecutor(
                 worker_id=self.emulator.id,
                 emulator_id=self.emulator.id,
                 emulator_row=self.emulator,
@@ -235,11 +283,11 @@ class WorkerActor:
 
         if task_type in (
             TaskType.ADD_FRIEND,
-            TaskType.COLLECT_MAIL,
             TaskType.CLIMB_TOWER,
             TaskType.FENGMO,
             TaskType.DIGUI,
             TaskType.DAOGUAN,
+            TaskType.DAILY_SUMMON,
         ):
             # 每日任务: 明天 00:01
             tomorrow = now_beijing().date() + timedelta(days=1)

@@ -204,6 +204,16 @@ class CollectLoginGiftExecutor(BaseExecutor):
                 "timestamp": datetime.utcnow().isoformat(),
             }
 
+        # 弹窗检测
+        if await self.ui.popup_handler.check_and_dismiss(screenshot) > 0:
+            screenshot = self.adapter.capture(self.ui.capture_method)
+            if screenshot is None:
+                return {
+                    "status": TaskStatus.FAILED,
+                    "error": "截图失败",
+                    "timestamp": datetime.utcnow().isoformat(),
+                }
+
         result = match_template(screenshot, "assets/ui/templates/richang.png")
         if result:
             rx, ry = result.center
@@ -222,7 +232,10 @@ class CollectLoginGiftExecutor(BaseExecutor):
         # 检测领取按钮 (lingqu.png)
         self.logger.info("[领取登录礼包] 检测领取按钮")
         screenshot2 = self.adapter.capture(self.ui.capture_method)
-        lingqu_result = match_template(screenshot2, "assets/ui/templates/lingqu.png")
+        # 弹窗检测
+        if screenshot2 is not None and await self.ui.popup_handler.check_and_dismiss(screenshot2) > 0:
+            screenshot2 = self.adapter.capture(self.ui.capture_method)
+        lingqu_result = match_template(screenshot2, "assets/ui/templates/lingqu.png") if screenshot2 else None
 
         if not lingqu_result:
             # 没有领取按钮 → 今天已经领取过了
@@ -244,7 +257,10 @@ class CollectLoginGiftExecutor(BaseExecutor):
         # 检测奖励弹窗 (jiangli.png)
         self.logger.info("[领取登录礼包] 检测奖励弹窗")
         screenshot3 = self.adapter.capture(self.ui.capture_method)
-        jiangli_result = match_template(screenshot3, "assets/ui/templates/jiangli.png")
+        # 弹窗检测
+        if screenshot3 is not None and await self.ui.popup_handler.check_and_dismiss(screenshot3) > 0:
+            screenshot3 = self.adapter.capture(self.ui.capture_method)
+        jiangli_result = match_template(screenshot3, "assets/ui/templates/jiangli.png") if screenshot3 else None
 
         if jiangli_result:
             self.logger.info("[领取登录礼包] 检测到奖励弹窗，点击关闭")

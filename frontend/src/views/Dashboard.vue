@@ -244,35 +244,59 @@ const runtimeLogCursor = ref(null)
 
 let coreRefreshTimer = null
 let runtimeLogTimer = null
+let isFetchingData = false
+let pendingFetchData = false
+
+const fetchSchedulerStatus = async () => {
+  const response = await apiRequest(API_ENDPOINTS.tasks.scheduler.status)
+  if (!response.ok) {
+    throw new Error(`scheduler status request failed: ${response.status}`)
+  }
+  return response.json()
+}
 
 const fetchData = async () => {
+  if (isFetchingData) {
+    pendingFetchData = true
+    return
+  }
+
+  isFetchingData = true
   try {
-    const dashboardData = await getDashboard()
+    const [dashboardData, realtimeData, schedulerData] = await Promise.all([
+      getDashboard(),
+      getRealtimeStats(),
+      fetchSchedulerStatus()
+    ])
+
     stats.value.active_accounts = dashboardData.active_accounts
     stats.value.running_accounts = dashboardData.running_accounts
     stats.value.coop_active_accounts = dashboardData.coop_active_accounts || 0
+    stats.value.queue_size = realtimeData?.tasks?.queue ?? 0
     runningTasks.value = dashboardData.running_tasks || []
     queuePreview.value = dashboardData.queue_preview || []
     scheduledPreview.value = dashboardData.scheduled_preview || []
-
-    const realtimeData = await getRealtimeStats()
-    stats.value.queue_size = realtimeData.tasks.queue
-
-    await checkSchedulerStatus()
+    schedulerRunning.value = Boolean(schedulerData.running)
   } catch (error) {
-    console.error('获取数据失败:', error)
+    console.error('Failed to fetch dashboard data:', error)
+  } finally {
+    isFetchingData = false
+    if (pendingFetchData) {
+      pendingFetchData = false
+      void fetchData()
+    }
   }
 }
 
 const checkSchedulerStatus = async () => {
   try {
-    const response = await apiRequest(API_ENDPOINTS.tasks.scheduler.status)
-    const data = await response.json()
+    const data = await fetchSchedulerStatus()
     schedulerRunning.value = Boolean(data.running)
   } catch (error) {
-    console.error('获取执行引擎状态失败:', error)
+    console.error('Failed to fetch scheduler status:', error)
   }
 }
+
 
 const startScheduler = async () => {
   try {
