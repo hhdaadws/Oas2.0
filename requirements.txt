@@ -51,3 +51,6 @@ opencv-python>=4.8
 # OCR
 paddlepaddle>=3.0
 paddleocr>=3.0
+
+# YAML
+PyYAML>=6.0

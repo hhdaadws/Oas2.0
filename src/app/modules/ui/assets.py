@@ -15,6 +15,8 @@ class AssetType(str, Enum):
     GOUYU = "gouyu"            # 勾玉
     LANPIAO = "lanpiao"        # 蓝票
     GOLD = "gold"              # 金币
+    GONGXUN = "gongxun"        # 功勋
+    XUNZHANG = "xunzhang"      # 勋章
 
 
 @dataclass
@@ -37,6 +39,10 @@ def parse_number(text: str) -> Optional[int]:
     处理常见 OCR 误识别：去除空格/逗号，修正 O→0、l→1 等。
     """
     cleaned = text.strip()
+
+    # 0. 修正常见中文单位 OCR 误识别
+    cleaned = cleaned.replace("方", "万")   # "万" 常被误识别为 "方"
+    cleaned = cleaned.replace("忆", "亿")   # "亿" 可能被误识别为 "忆"
 
     # 1. 尝试匹配中文单位格式：数字(可含小数点) + 亿/万
     cn_match = re.search(r"(\d+\.?\d*)\s*(亿|万)", cleaned)
@@ -101,6 +107,22 @@ ASSET_REGISTRY: Dict[AssetType, AssetDef] = {
         label="金币",
         pre_tap=(921, 490),
         wait_template="assets/ui/templates/shangdian_1.png",
+    ),
+    AssetType.GONGXUN: AssetDef(
+        asset_type=AssetType.GONGXUN,
+        screen="LIAO_SHANGDIAN",
+        roi=(709, 15, 84, 24),
+        parser=parse_number,
+        db_field="gongxun",
+        label="功勋",
+    ),
+    AssetType.XUNZHANG: AssetDef(
+        asset_type=AssetType.XUNZHANG,
+        screen="SHANGDIAN",
+        roi=(441, 15, 70, 42),
+        parser=parse_number,
+        db_field="xunzhang",
+        label="勋章",
     ),
 }
 

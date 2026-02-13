@@ -1,0 +1,10 @@
+<?xml version='1.0' encoding='utf-8' standalone='yes' ?>
+<map>
+    <int name="RECORD_0" value="64494" />
+    <int name="RECORD_1" value="7222" />
+    <int name="RECORD_4" value="11222" />
+    <int name="RECORD_2" value="64258" />
+    <int name="RECORD_3" value="64268" />
+    <int name="CNT" value="5" />
+    <int name="PTR" value="4" />
+</map>

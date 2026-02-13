@@ -70,6 +70,54 @@ def build_default_graph() -> UIGraph:
         )
     )
 
+    # 探索 -> 地鬼：点击 digui 锚点
+    graph.add_edge(
+        Edge(
+            src="TANSUO",
+            dst="DIGUI",
+            actions=[
+                Action(type="tap_anchor", args=("digui",)),
+                Action(type="sleep", args=(1500,)),
+            ],
+        )
+    )
+
+    # 地鬼 -> 探索：点击返回按钮（back.png）
+    graph.add_edge(
+        Edge(
+            src="DIGUI",
+            dst="TANSUO",
+            actions=[
+                Action(type="tap_anchor", args=("back",)),
+                Action(type="sleep", args=(1500,)),
+            ],
+        )
+    )
+
+    # 探索 -> 秘闻：点击 miwen 锚点
+    graph.add_edge(
+        Edge(
+            src="TANSUO",
+            dst="MIWEN",
+            actions=[
+                Action(type="tap_anchor", args=("miwen",)),
+                Action(type="sleep", args=(1500,)),
+            ],
+        )
+    )
+
+    # 秘闻 -> 探索：点击返回按钮（back.png）
+    graph.add_edge(
+        Edge(
+            src="MIWEN",
+            dst="TANSUO",
+            actions=[
+                Action(type="tap_anchor", args=("back",)),
+                Action(type="sleep", args=(1500,)),
+            ],
+        )
+    )
+
     # 庭院 -> 寮界面：点击 liao 锚点（未出现则点击 921,490 展开侧边栏后重试）
     graph.add_edge(
         Edge(
@@ -142,25 +190,25 @@ def build_default_graph() -> UIGraph:
         )
     )
 
-    # 寮活动 -> 寮界面：点击 exit_1.png 返回
+    # 寮活动 -> 寮界面：点击 back.png 返回
     graph.add_edge(
         Edge(
             src="LIAO_HUODONG",
             dst="LIAO",
             actions=[
-                Action(type="tap_anchor", args=("exit_1",)),
+                Action(type="tap_anchor", args=("back",)),
                 Action(type="sleep", args=(2000,)),
             ],
         )
     )
 
-    # 寮界面 -> 庭院：点击 exit_1.png 返回
+    # 寮界面 -> 庭院：点击 back.png 返回
     graph.add_edge(
         Edge(
             src="LIAO",
             dst="TINGYUAN",
             actions=[
-                Action(type="tap_anchor", args=("exit_1",)),
+                Action(type="tap_anchor", args=("back",)),
                 Action(type="sleep", args=(2000,)),
             ],
         )
@@ -230,6 +278,78 @@ def build_default_graph() -> UIGraph:
     graph.add_edge(
         Edge(
             src="ZHAOHUAN",
+            dst="TINGYUAN",
+            actions=[
+                Action(type="tap_anchor", args=("back",)),
+                Action(type="sleep", args=(2000,)),
+            ],
+        )
+    )
+
+    # 庭院 -> 好友：点击 haoyou 锚点（未出现则点击 921,490 展开侧边栏后重试）
+    graph.add_edge(
+        Edge(
+            src="TINGYUAN",
+            dst="HAOYOU",
+            actions=[
+                Action(type="tap_anchor", args=("haoyou", 921, 490, 3, 2500)),
+                Action(type="sleep", args=(2000,)),
+            ],
+        )
+    )
+
+    # 好友 -> 庭院：点击 exit 返回
+    graph.add_edge(
+        Edge(
+            src="HAOYOU",
+            dst="TINGYUAN",
+            actions=[
+                Action(type="tap_anchor", args=("exit",)),
+                Action(type="sleep", args=(2000,)),
+            ],
+        )
+    )
+
+    # 庭院 -> 悬赏：点击 xuanshang 锚点
+    graph.add_edge(
+        Edge(
+            src="TINGYUAN",
+            dst="XUANSHANG",
+            actions=[
+                Action(type="tap_anchor", args=("xuanshang",)),
+                Action(type="sleep", args=(2000,)),
+            ],
+        )
+    )
+
+    # 悬赏 -> 庭院：点击 exit 返回
+    graph.add_edge(
+        Edge(
+            src="XUANSHANG",
+            dst="TINGYUAN",
+            actions=[
+                Action(type="tap_anchor", args=("exit",)),
+                Action(type="sleep", args=(2000,)),
+            ],
+        )
+    )
+
+    # 庭院 -> 新手任务：点击 xinshou 锚点
+    graph.add_edge(
+        Edge(
+            src="TINGYUAN",
+            dst="XINSHOU",
+            actions=[
+                Action(type="tap_anchor", args=("xinshou",)),
+                Action(type="sleep", args=(1500,)),
+            ],
+        )
+    )
+
+    # 新手任务 -> 庭院：点击返回按钮（back.png）
+    graph.add_edge(
+        Edge(
+            src="XINSHOU",
             dst="TINGYUAN",
             actions=[
                 Action(type="tap_anchor", args=("back",)),

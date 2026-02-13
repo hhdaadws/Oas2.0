@@ -225,32 +225,24 @@ class ExecutorService:
             if success:
                 self._metrics["batch_succeeded"] += 1
             else:
-                if batch.retry_count < self._max_batch_retry:
-                    batch.retry_count += 1
-                    batch.state = "queued"
-                    batch.enqueue_at = datetime.utcnow()
-                    self._pending.insert(0, batch)
-                    self._queued_accounts.add(account_id)
-                    for intent in batch.intents:
-                        self._queued_keys.add((intent.account_id, intent.task_type))
-                    self._metrics["dispatch_retry"] += 1
-                else:
-                    self._metrics["batch_failed"] += 1
-                    self._failed_batches.append(
-                        {
-                            "account_id": account_id,
-                            "task_types": [
-                                it.task_type.value
-                                if isinstance(it.task_type, TaskType)
-                                else str(it.task_type)
-                                for it in batch.intents
-                            ],
-                            "failed_at": datetime.utcnow().isoformat(),
-                            "retry_count": batch.retry_count,
-                        }
-                    )
-                    if len(self._failed_batches) > 200:
-                        self._failed_batches = self._failed_batches[-200:]
+                # 失败批次不再立即重入队，由 worker 的 _update_next_time_on_failure
+                # 延后各任务的 next_time，Feeder 会在延迟到期后自然重新调度
+                self._metrics["batch_failed"] += 1
+                self._failed_batches.append(
+                    {
+                        "account_id": account_id,
+                        "task_types": [
+                            it.task_type.value
+                            if isinstance(it.task_type, TaskType)
+                            else str(it.task_type)
+                            for it in batch.intents
+                        ],
+                        "failed_at": datetime.utcnow().isoformat(),
+                        "retry_count": batch.retry_count,
+                    }
+                )
+                if len(self._failed_batches) > 200:
+                    self._failed_batches = self._failed_batches[-200:]
 
             if self._pending:
                 self._have_items.set()

@@ -54,7 +54,8 @@ export const API_ENDPOINTS = {
   // 系统设置
   system: {
     settings: '/api/system/settings',
-    captureBenchmark: '/api/system/capture/benchmark'
+    captureBenchmark: '/api/system/capture/benchmark',
+    failDelays: '/api/system/fail-delays'
   }
 }
 

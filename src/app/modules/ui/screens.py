@@ -60,16 +60,21 @@ registry.register(UIDef(
         TemplateDef(name="youjian", path="assets/ui/templates/youjian.png"),
         *shishen_templates,
         *zhaohuan_templates,
+        TemplateDef(name="haoyou", path="assets/ui/templates/haoyou.png"),
+        TemplateDef(name="xuanshang", path="assets/ui/templates/xuanshang.png"),
+        TemplateDef(name="xinshou", path="assets/ui/templates/xinshou.png"),
     ],
 ))
 
-# 探索页面：tag=weipai 用于识别；back 用于返回庭院的导航锚点
+# 探索页面：tag=weipai 用于识别；back 用于返回庭院的导航锚点；digui 用于导航到地鬼
 registry.register(UIDef(
     id="TANSUO",
     tag="weipai",
     templates=[
         TemplateDef(name="weipai", path="assets/ui/templates/weipai.png"),
         TemplateDef(name="back", path="assets/ui/templates/back.png"),
+        TemplateDef(name="digui", path="assets/ui/templates/digui.png"),
+        TemplateDef(name="miwen", path="assets/ui/templates/miwen.png"),
     ],
 ))
 
@@ -93,14 +98,14 @@ registry.register(UIDef(
     ],
 ))
 
-# 寮界面：tag=liaoxinxi 用于识别；liaojinbi_1/exit_1 用于导航锚点
+# 寮界面：tag=liaoxinxi 用于识别；liaojinbi_1/back 用于导航锚点
 registry.register(UIDef(
     id="LIAO",
     tag="liaoxinxi",
     templates=[
         TemplateDef(name="liaoxinxi", path="assets/ui/templates/liaoxinxi.png"),
         TemplateDef(name="liaojinbi_1", path="assets/ui/templates/liaojinbi_1.png"),
-        TemplateDef(name="exit_1", path="assets/ui/templates/exit_1.png"),
+        TemplateDef(name="back", path="assets/ui/templates/back.png"),
     ],
 ))
 
@@ -114,13 +119,13 @@ registry.register(UIDef(
     ],
 ))
 
-# 寮活动界面：tag=gongxunshangdian 用于识别；exit_1 用于返回寮界面
+# 寮活动界面：tag=gongxunshangdian 用于识别；back 用于返回寮界面
 registry.register(UIDef(
     id="LIAO_HUODONG",
     tag="gongxunshangdian",
     templates=[
         TemplateDef(name="gongxunshangdian", path="assets/ui/templates/gongxunshangdian.png"),
-        TemplateDef(name="exit_1", path="assets/ui/templates/exit_1.png"),
+        TemplateDef(name="back", path="assets/ui/templates/back.png"),
     ],
 ))
 
@@ -160,6 +165,58 @@ registry.register(UIDef(
     tag="tag_zhaohuan",
     templates=[
         TemplateDef(name="tag_zhaohuan", path="assets/ui/templates/tag_zhaohuan.png"),
+        TemplateDef(name="back", path="assets/ui/templates/back.png"),
+    ],
+))
+
+# 好友界面：tag=tag_haoyou 用于识别；exit 用于返回庭院的导航锚点
+registry.register(UIDef(
+    id="HAOYOU",
+    tag="tag_haoyou",
+    templates=[
+        TemplateDef(name="tag_haoyou", path="assets/ui/templates/tag_haoyou.png"),
+        TemplateDef(name="exit", path="assets/ui/templates/exit.png"),
+    ],
+))
+
+# 地鬼界面：tag=tag_digui 用于识别；back 用于返回探索的导航锚点
+registry.register(UIDef(
+    id="DIGUI",
+    tag="tag_digui",
+    templates=[
+        TemplateDef(name="tag_digui", path="assets/ui/templates/tag_digui.png"),
+        TemplateDef(name="back", path="assets/ui/templates/back.png"),
+    ],
+))
+
+# 秘闻界面：tag=tag_miwen 用于识别；back 用于返回探索的导航锚点
+registry.register(UIDef(
+    id="MIWEN",
+    tag="tag_miwen",
+    templates=[
+        TemplateDef(name="tag_miwen", path="assets/ui/templates/tag_miwen.png"),
+        TemplateDef(name="back", path="assets/ui/templates/back.png"),
+    ],
+))
+
+# 悬赏界面：tag=tag_xuanshang 用于识别；exit 用于返回庭院的导航锚点
+registry.register(UIDef(
+    id="XUANSHANG",
+    tag="tag_xuanshang",
+    templates=[
+        TemplateDef(name="tag_xuanshang", path="assets/ui/templates/tag_xuanshang.png"),
+        TemplateDef(name="yijianzhuizong", path="assets/ui/templates/yijianzhuizong.png"),
+        TemplateDef(name="exit", path="assets/ui/templates/exit.png"),
+    ],
+))
+
+# 新手任务界面：tag=tag_xinshou 用于识别；xinshou_yijianlingqu 用于一键领取锚点；back 用于返回庭院
+registry.register(UIDef(
+    id="XINSHOU",
+    tag="tag_xinshou",
+    templates=[
+        TemplateDef(name="tag_xinshou", path="assets/ui/templates/tag_xinshou.png"),
+        TemplateDef(name="xinshou_yijianlingqu", path="assets/ui/templates/xinshou_yijianlingqu.png"),
         TemplateDef(name="back", path="assets/ui/templates/back.png"),
     ],
 ))

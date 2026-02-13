@@ -7,10 +7,10 @@ from copy import deepcopy
 from typing import Dict
 
 # 支持阵容配置的任务列表
-LINEUP_SUPPORTED_TASKS = ["逢魔", "地鬼", "探索", "结界突破", "道馆"]
+LINEUP_SUPPORTED_TASKS = ["逢魔", "地鬼", "探索", "结界突破", "道馆", "秘闻"]
 
-# 默认阵容配置
-DEFAULT_LINEUP = {"group": 1, "position": 1}
+# 默认阵容配置（0 表示未选择/不切换）
+DEFAULT_LINEUP = {"group": 0, "position": 0}
 
 
 def get_default_lineup_config() -> Dict[str, Dict[str, int]]:

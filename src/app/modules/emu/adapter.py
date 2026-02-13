@@ -12,6 +12,7 @@
 """
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -36,10 +37,23 @@ class AdapterConfig:
 
 
 class EmulatorAdapter:
+    # 活动心跳注册表：adb_addr -> monotonic timestamp
+    # Worker 的 watchdog 通过此注册表检测任务是否卡死
+    _heartbeat: dict[str, float] = {}
+
+    @staticmethod
+    def touch_heartbeat(adb_addr: str) -> None:
+        EmulatorAdapter._heartbeat[adb_addr] = time.monotonic()
+
+    @staticmethod
+    def get_heartbeat(adb_addr: str) -> float:
+        return EmulatorAdapter._heartbeat.get(adb_addr, 0.0)
+
     def __init__(self, cfg: AdapterConfig) -> None:
         self.cfg = cfg
         self.adb = Adb(cfg.adb_path)
         self.ipc = IpcAdapter(IpcConfig(cfg.ipc_dll_path) if cfg.ipc_dll_path else None)
+        EmulatorAdapter._heartbeat[cfg.adb_addr] = time.monotonic()
 
         manager_path = (cfg.mumu_manager_path or "").strip()
         if manager_path and Path(manager_path).exists():
@@ -111,6 +125,7 @@ class EmulatorAdapter:
         self.adb.force_stop(self.cfg.adb_addr, self.cfg.pkg_name)
 
     def capture(self, method: str = "adb") -> bytes:
+        EmulatorAdapter._heartbeat[self.cfg.adb_addr] = time.monotonic()
         if method == "adb":
             return self.adb.screencap(self.cfg.adb_addr)
         elif method == "ipc":
@@ -121,6 +136,7 @@ class EmulatorAdapter:
             raise ValueError("未知截图方式：%s" % method)
 
     def tap(self, x: int, y: int) -> None:
+        EmulatorAdapter._heartbeat[self.cfg.adb_addr] = time.monotonic()
         self.adb.tap(self.cfg.adb_addr, x, y)
 
     def swipe(self, x1: int, y1: int, x2: int, y2: int, dur_ms: int = 300) -> None:

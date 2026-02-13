@@ -244,6 +244,7 @@ const runtimeLogCursor = ref(null)
 
 let coreRefreshTimer = null
 let runtimeLogTimer = null
+let logRefreshTimer = null
 let isFetchingData = false
 let pendingFetchData = false
 
@@ -460,11 +461,13 @@ onMounted(async () => {
   await fetchRuntimeLogs(true)
   coreRefreshTimer = setInterval(fetchData, 5000)
   runtimeLogTimer = setInterval(() => fetchRuntimeLogs(false), 15000)
+  logRefreshTimer = setInterval(fetchLogs, 15000)
 })
 
 onUnmounted(() => {
   if (coreRefreshTimer) clearInterval(coreRefreshTimer)
   if (runtimeLogTimer) clearInterval(runtimeLogTimer)
+  if (logRefreshTimer) clearInterval(logRefreshTimer)
 })
 </script>
 

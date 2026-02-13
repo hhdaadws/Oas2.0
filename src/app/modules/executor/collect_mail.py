@@ -18,6 +18,7 @@ from ...db.models import Emulator, GameAccount, SystemConfig, Task
 from ..emu.adapter import AdapterConfig, EmulatorAdapter
 from ..ui.manager import UIManager
 from .base import BaseExecutor
+from .helpers import click_template
 
 # 渠道包名
 PKG_NAME = "com.netease.onmyoji.wyzymnqsd_cps"
@@ -162,24 +163,56 @@ class CollectMailExecutor(BaseExecutor):
 
         await asyncio.sleep(2.0)
 
-        # 5. 检测奖励弹窗 (jiangli.png) 并关闭
+        # 5. 点击确定按钮 (youxiang_queding.png)
+        clicked_confirm = await click_template(
+            self.adapter,
+            self.ui.capture_method,
+            "assets/ui/templates/youxiang_queding.png",
+            timeout=5.0,
+            interval=1.0,
+            settle=0.5,
+            post_delay=2.0,
+            log=self.logger,
+            label="领取邮件_确定",
+            popup_handler=self.ui.popup_handler,
+        )
+        if not clicked_confirm:
+            self.logger.warning("[领取邮件] 未检测到确定按钮，继续尝试关闭奖励弹窗")
+
+        # 6. 检测奖励弹窗 (jiangli.png) 或退出按钮 (exit.png) 并处理
         screenshot2 = self.adapter.capture(self.ui.capture_method)
         if screenshot2 is not None:
             # 弹窗检测
             if await self.ui.popup_handler.check_and_dismiss(screenshot2) > 0:
                 screenshot2 = self.adapter.capture(self.ui.capture_method)
+
+        handled = False
         if screenshot2 is not None:
             jiangli_result = match_template(screenshot2, "assets/ui/templates/jiangli.png")
             if jiangli_result:
                 self.logger.info("[领取邮件] 检测到奖励弹窗，点击关闭")
-            else:
-                self.logger.warning("[领取邮件] 未检测到奖励弹窗，仍尝试点击关闭")
+                from ..vision.utils import random_point_in_circle
 
-        from ..vision.utils import random_point_in_circle
+                close_x, close_y = random_point_in_circle(20, 20, 20)
+                self.adapter.adb.tap(self.adapter.cfg.adb_addr, close_x, close_y)
+                self.logger.info(f"[领取邮件] 随机点击 ({close_x}, {close_y}) 关闭弹窗")
+                handled = True
 
-        close_x, close_y = random_point_in_circle(20, 20, 20)
-        self.adapter.adb.tap(self.adapter.cfg.adb_addr, close_x, close_y)
-        self.logger.info(f"[领取邮件] 随机点击 ({close_x}, {close_y}) 关闭弹窗")
+            if not handled:
+                exit_result = match_template(screenshot2, "assets/ui/templates/exit.png")
+                if exit_result:
+                    self.logger.info("[领取邮件] 检测到 exit 按钮，点击退出")
+                    ex, ey = exit_result.center
+                    self.adapter.adb.tap(self.adapter.cfg.adb_addr, ex, ey)
+                    self.logger.info(f"[领取邮件] 点击 exit: ({ex}, {ey})")
+                    handled = True
+
+        if not handled:
+            self.logger.warning("[领取邮件] 未检测到奖励弹窗或 exit 按钮，尝试随机点击关闭")
+            from ..vision.utils import random_point_in_circle
+
+            close_x, close_y = random_point_in_circle(20, 20, 20)
+            self.adapter.adb.tap(self.adapter.cfg.adb_addr, close_x, close_y)
 
         await asyncio.sleep(1.0)
 

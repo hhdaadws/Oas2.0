@@ -11,13 +11,14 @@ import random
 from datetime import datetime, time, timedelta
 from typing import Dict, List, Optional, Tuple
 
-from ...core.constants import DEFAULT_TASK_CONFIG, TASK_PRIORITY, TaskType
+from ...core.constants import DEFAULT_TASK_CONFIG, DEFAULT_INIT_TASK_CONFIG, TASK_PRIORITY, TaskType
 from ...core.logger import logger
 from ...core.timeutils import is_time_reached, now_beijing
 from ...db.base import SessionLocal
 from ...db.models import AccountRestConfig, GameAccount, RestPlan
 from ..executor.service import executor_service
 from ..executor.types import TaskIntent
+from ..executor.yaml_loader import yaml_task_loader
 from .signin import mark_task_config_modified, refresh_signin_status_if_new_day
 
 
@@ -155,7 +156,10 @@ class Feeder:
         with SessionLocal() as db:
             accounts = (
                 db.query(GameAccount)
-                .filter(GameAccount.status == 1, GameAccount.progress == "ok")
+                .filter(
+                    GameAccount.status == 1,
+                    GameAccount.progress.in_(["ok", "init"]),
+                )
                 .order_by(GameAccount.id.asc())
                 .all()
             )
@@ -164,6 +168,30 @@ class Feeder:
             need_commit = False
             for account in selected_accounts:
                 self._last_scan_by_account[account.id] = bj_now
+
+                # --- init 账号：使用起号任务库调度 ---
+                if account.progress == "init":
+                    cfg = account.task_config or DEFAULT_INIT_TASK_CONFIG.copy()
+
+                    if refresh_signin_status_if_new_day(account):
+                        mark_task_config_modified(account)
+                        need_commit = True
+
+                    intents = self._collect_init_tasks(account, cfg)
+                    if not intents:
+                        self._last_enqueued_signature.pop(account.id, None)
+                        continue
+
+                    signature = self._build_signature(account.id, cfg, intents)
+                    if self._is_signature_recent(account.id, signature, bj_now):
+                        skipped_by_signature += 1
+                        continue
+                    if executor_service.enqueue_batch(account.id, intents):
+                        self._last_enqueued_signature[account.id] = (signature, bj_now)
+                        enqueued_batches += 1
+                    continue
+
+                # --- ok 账号：正常调度逻辑 ---
                 cfg = account.task_config or DEFAULT_TASK_CONFIG.copy()
 
                 if refresh_signin_status_if_new_day(account):
@@ -278,11 +306,39 @@ class Feeder:
             return False
         return (now_dt - prev_ts).total_seconds() < self._signature_ttl_seconds
 
+    def _collect_init_tasks(self, account: GameAccount, cfg: Dict) -> List[TaskIntent]:
+        """收集 init 账号的待执行任务。
+
+        阶段 1（严格顺序）：领取奖励 → 租借式神，未完成时只生成当前步骤。
+        阶段 2（并行调度）：阶段 1 全部完成后，按优先级和 next_time 调度剩余任务。
+        """
+        # --- 阶段 1：一次性前置任务 ---
+        rent_cfg = cfg.get("起号_租借式神", {})
+        if rent_cfg.get("enabled") is True and not rent_cfg.get("completed", False):
+            return [TaskIntent(account_id=account.id, task_type=TaskType.INIT_RENT_SHIKIGAMI)]
+
+        # --- 阶段 2：重复任务（前置全部完成后） ---
+        intents: List[TaskIntent] = []
+
+        self._check_time_task(intents, account, cfg, "起号_领取奖励", TaskType.INIT_COLLECT_REWARD)
+        self._check_time_task(intents, account, cfg, "起号_新手任务", TaskType.INIT_NEWBIE_QUEST)
+        self._check_time_task(intents, account, cfg, "起号_经验副本", TaskType.INIT_EXP_DUNGEON)
+        self._check_time_task(intents, account, cfg, "探索突破", TaskType.EXPLORE)
+        self._check_time_task(intents, account, cfg, "地鬼", TaskType.DIGUI)
+        self._check_time_task(intents, account, cfg, "每周商店", TaskType.WEEKLY_SHOP)
+        self._check_time_task(intents, account, cfg, "寮商店", TaskType.LIAO_SHOP)
+        self._check_time_task(intents, account, cfg, "领取寮金币", TaskType.LIAO_COIN)
+        self._check_time_task(intents, account, cfg, "领取邮件", TaskType.COLLECT_MAIL)
+        self._check_time_task(intents, account, cfg, "加好友", TaskType.ADD_FRIEND)
+
+        intents.sort(key=lambda i: TASK_PRIORITY.get(i.task_type, 0), reverse=True)
+        return intents
+
     def _collect_ready_tasks(self, account: GameAccount, cfg: Dict) -> List[TaskIntent]:
         intents: List[TaskIntent] = []
 
         self._check_time_task(intents, account, cfg, "寄养", TaskType.FOSTER)
-        self._check_time_task(intents, account, cfg, "委托", TaskType.DELEGATE)
+        self._check_time_task(intents, account, cfg, "悬赏", TaskType.XUANSHANG)
         self._check_time_task(intents, account, cfg, "弥助", TaskType.DELEGATE_HELP)
         self._check_time_task(intents, account, cfg, "勾协", TaskType.COOP)
         self._check_time_task(intents, account, cfg, "加好友", TaskType.ADD_FRIEND)
@@ -290,13 +346,16 @@ class Feeder:
             intents, account, cfg, "领取登录礼包", TaskType.COLLECT_LOGIN_GIFT
         )
         self._check_time_task(intents, account, cfg, "领取邮件", TaskType.COLLECT_MAIL)
-        self._check_time_task(intents, account, cfg, "爬塔", TaskType.CLIMB_TOWER)
+        if yaml_task_loader.is_enabled("climb_tower"):
+            self._check_time_task(intents, account, cfg, "爬塔", TaskType.CLIMB_TOWER)
         self._check_time_task(intents, account, cfg, "逢魔", TaskType.FENGMO)
         self._check_time_task(intents, account, cfg, "地鬼", TaskType.DIGUI)
         self._check_time_task(intents, account, cfg, "道馆", TaskType.DAOGUAN)
         self._check_time_task(intents, account, cfg, "寮商店", TaskType.LIAO_SHOP)
         self._check_time_task(intents, account, cfg, "领取寮金币", TaskType.LIAO_COIN)
         self._check_time_task(intents, account, cfg, "每日一抽", TaskType.DAILY_SUMMON)
+        self._check_time_task(intents, account, cfg, "每周商店", TaskType.WEEKLY_SHOP)
+        self._check_time_task(intents, account, cfg, "秘闻", TaskType.MIWEN)
 
         card = cfg.get("结界卡合成", {})
         if card.get("enabled") is True and card.get("explore_count", 0) >= 40:

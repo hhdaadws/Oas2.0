@@ -77,9 +77,14 @@
               @pointerdown="startSelection"
               @pointermove="updateSelection"
               @pointerup="endSelection"
+              @mousemove="onMouseMove"
+              @mouseleave="onMouseLeave"
               class="emu-image"
               alt="screenshot"
             />
+            <div v-if="cursorPos" class="coord-label">
+              ({{ cursorPos.x }}, {{ cursorPos.y }})
+            </div>
             <div
               v-if="isSelecting || hasSelection"
               class="selection"
@@ -158,6 +163,7 @@ const roi = ref({ x: 0, y: 0, w: 0, h: 0 })
 const roiPreviewUrl = ref('')
 const ocrResult = ref(null)
 const ocrLoading = ref(false)
+const cursorPos = ref(null)
 
 const goBack = () => router.push('/emulators')
 
@@ -258,6 +264,19 @@ const startGame = async () => {
     ElMessage.error(e.message || '启动失败')
   }
 }
+
+// 鼠标坐标追踪（原图坐标）
+const onMouseMove = (evt) => {
+  if (!imgRef.value || !imgNatural.value.w) return
+  const rect = imgRef.value.getBoundingClientRect()
+  const scaleX = imgNatural.value.w / rect.width
+  const scaleY = imgNatural.value.h / rect.height
+  cursorPos.value = {
+    x: Math.round((evt.clientX - rect.left) * scaleX),
+    y: Math.round((evt.clientY - rect.top) * scaleY)
+  }
+}
+const onMouseLeave = () => { cursorPos.value = null }
 
 // 选区交互
 const startSelection = (evt) => {
@@ -373,6 +392,7 @@ onMounted(async () => { await fetchEmulators(); await fetchSystem(); })
   cursor: crosshair;
 }
 .selection { position: absolute; border: 2px dashed #409eff; background: rgba(64,158,255,0.15); pointer-events: none; }
+.coord-label { position: absolute; top: 4px; left: 4px; background: rgba(0,0,0,0.7); color: #fff; padding: 2px 8px; border-radius: 4px; font-size: 12px; font-family: monospace; pointer-events: none; z-index: 10; }
 .side-panel { width: 320px; }
 .roi-form { background: #fff; padding: 10px; border-radius: 4px; }
 .roi-title { margin-bottom: 6px; font-weight: 600; }

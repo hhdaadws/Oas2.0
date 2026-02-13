@@ -27,6 +27,8 @@ class SystemSettings(BaseModel):
     ipc_dll_path: str
     activity_name: str
     python_path: Optional[str] = None
+    pull_post_mode: str = "none"
+    pull_default_zone: str = "樱之华"
 
 
 class SystemSettingsUpdate(BaseModel):
@@ -39,6 +41,8 @@ class SystemSettingsUpdate(BaseModel):
     ipc_dll_path: Optional[str] = None
     activity_name: Optional[str] = None
     python_path: Optional[str] = None
+    pull_post_mode: Optional[str] = None  # none|auto|confirm
+    pull_default_zone: Optional[str] = None
 
 
 class CaptureBenchmarkRequest(BaseModel):
@@ -75,6 +79,8 @@ async def get_settings(db: Session = Depends(get_db)) -> SystemSettings:
             ipc_dll_path=row.ipc_dll_path or settings.ipc_dll_path,
             activity_name=row.activity_name or settings.activity_name,
             python_path=row.python_path or None,
+            pull_post_mode=row.pull_post_mode or "none",
+            pull_default_zone=row.pull_default_zone or "樱之华",
         )
     return SystemSettings(**_serialize_settings())
 
@@ -117,6 +123,12 @@ async def update_settings(body: SystemSettingsUpdate, db: Session = Depends(get_
         apply["activity_name"] = body.activity_name
     if body.python_path is not None:
         apply["python_path"] = body.python_path
+    if body.pull_post_mode is not None:
+        if body.pull_post_mode not in {"none", "auto", "confirm"}:
+            raise HTTPException(status_code=400, detail="pull_post_mode 必须是 none|auto|confirm 之一")
+        apply["pull_post_mode"] = body.pull_post_mode
+    if body.pull_default_zone is not None:
+        apply["pull_default_zone"] = body.pull_default_zone
 
     if not apply:
         return {"message": "未提供任何需要更新的配置"}
@@ -219,3 +231,50 @@ async def benchmark_capture_method(body: CaptureBenchmarkRequest, db: Session = 
         "rounds": rounds,
         "metrics": metrics,
     }
+
+
+# --------------- 全局默认失败延迟 ---------------
+
+class FailDelayConfig(BaseModel):
+    delays: Dict[str, int]  # {"寄养": 30, "悬赏": 60, ...}
+
+
+@router.get("/fail-delays")
+async def get_fail_delays(db: Session = Depends(get_db)):
+    """获取全局默认失败延迟配置。"""
+    from ....core.constants import TASK_TYPES_WITH_FAIL_DELAY, DEFAULT_TASK_CONFIG
+
+    row = db.query(SystemConfig).order_by(SystemConfig.id.asc()).first()
+    saved = (row.default_fail_delays or {}) if row else {}
+    result = {}
+    for task_name in TASK_TYPES_WITH_FAIL_DELAY:
+        if task_name in saved and isinstance(saved[task_name], (int, float)):
+            result[task_name] = int(saved[task_name])
+        else:
+            result[task_name] = DEFAULT_TASK_CONFIG.get(task_name, {}).get("fail_delay", 30)
+    return {"delays": result}
+
+
+@router.put("/fail-delays")
+async def update_fail_delays(body: FailDelayConfig, db: Session = Depends(get_db)):
+    """更新全局默认失败延迟配置。"""
+    from ....core.constants import TASK_TYPES_WITH_FAIL_DELAY
+
+    validated = {}
+    for task_name, delay in body.delays.items():
+        if task_name not in TASK_TYPES_WITH_FAIL_DELAY:
+            continue
+        if not isinstance(delay, (int, float)) or delay <= 0:
+            raise HTTPException(status_code=400, detail=f"{task_name} 的 fail_delay 必须为正整数")
+        validated[task_name] = int(delay)
+
+    row = db.query(SystemConfig).order_by(SystemConfig.id.asc()).first()
+    if not row:
+        row = SystemConfig()
+        db.add(row)
+    row.default_fail_delays = validated
+    db.commit()
+    db.refresh(row)
+
+    logger.info("全局默认失败延迟配置已更新")
+    return {"message": "保存成功", "delays": validated}

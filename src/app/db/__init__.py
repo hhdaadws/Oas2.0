@@ -17,6 +17,8 @@ def init_db():
     _migrate_remark_column()
     _migrate_asset_columns()
     _ensure_coop_schema()
+    _migrate_pull_settings_columns()
+    _migrate_default_fail_delays_column()
     _ensure_performance_indexes()
 
 
@@ -178,7 +180,7 @@ def _migrate_remark_column():
 
 
 def _migrate_asset_columns():
-    """确保 game_accounts 表包含 gouyu、lanpiao、gold 列。"""
+    """确保 game_accounts 表包含 gouyu、lanpiao、gold、gongxun 列。"""
     try:
         if engine.url.get_backend_name() != 'sqlite':
             return
@@ -186,7 +188,7 @@ def _migrate_asset_columns():
             cols = [r[1] for r in conn.exec_driver_sql("PRAGMA table_info('game_accounts')").fetchall()]
             if not cols:
                 return
-            for col_name in ("gouyu", "lanpiao", "gold"):
+            for col_name in ("gouyu", "lanpiao", "gold", "gongxun", "xunzhang"):
                 if col_name not in cols:
                     conn.exec_driver_sql(
                         f"ALTER TABLE game_accounts ADD COLUMN {col_name} INTEGER DEFAULT 0"
@@ -239,6 +241,51 @@ def _ensure_coop_schema():
         try:
             from ..core.logger import logger
             logger.error(f"勾协表结构校验/重建失败: {e}")
+        except Exception:
+            pass
+
+
+def _migrate_pull_settings_columns():
+    """确保 system_config 表包含 pull_post_mode 和 pull_default_zone 列。"""
+    try:
+        if engine.url.get_backend_name() != 'sqlite':
+            return
+        with engine.begin() as conn:
+            cols = [r[1] for r in conn.exec_driver_sql("PRAGMA table_info('system_config')").fetchall()]
+            if not cols:
+                return
+            if 'pull_post_mode' not in cols:
+                conn.exec_driver_sql(
+                    "ALTER TABLE system_config ADD COLUMN pull_post_mode VARCHAR(20) DEFAULT 'none'"
+                )
+            if 'pull_default_zone' not in cols:
+                conn.exec_driver_sql(
+                    "ALTER TABLE system_config ADD COLUMN pull_default_zone VARCHAR(50) DEFAULT '樱之华'"
+                )
+    except Exception as e:
+        try:
+            from ..core.logger import logger
+            logger.error(f"pull_settings 列迁移失败: {e}")
+        except Exception:
+            pass
+
+
+def _migrate_default_fail_delays_column():
+    """确保 system_config 表包含 default_fail_delays 列。"""
+    try:
+        if engine.url.get_backend_name() != 'sqlite':
+            return
+        with engine.begin() as conn:
+            cols = [r[1] for r in conn.exec_driver_sql("PRAGMA table_info('system_config')").fetchall()]
+            if not cols or 'default_fail_delays' in cols:
+                return
+            conn.exec_driver_sql(
+                "ALTER TABLE system_config ADD COLUMN default_fail_delays JSON"
+            )
+    except Exception as e:
+        try:
+            from ..core.logger import logger
+            logger.error(f"default_fail_delays 列迁移失败: {e}")
         except Exception:
             pass
 

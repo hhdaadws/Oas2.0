@@ -2,6 +2,7 @@
 任务调度器核心
 """
 import asyncio
+from copy import deepcopy
 from typing import Dict, List, Optional, Any
 from datetime import datetime, timedelta, time
 from ...core.timeutils import (
@@ -18,8 +19,9 @@ import random
 from ...core.logger import logger
 from ...core.config import settings
 from ...core.constants import (
-    TaskType, TaskStatus, TASK_PRIORITY, 
-    DEFAULT_TASK_CONFIG, GLOBAL_REST_START, GLOBAL_REST_END
+    TaskType, TaskStatus, TASK_PRIORITY,
+    DEFAULT_TASK_CONFIG, DEFAULT_INIT_TASK_CONFIG, GLOBAL_REST_START, GLOBAL_REST_END,
+    build_default_task_config
 )
 from ...db.base import SessionLocal
 from ...db.models import (
@@ -295,15 +297,7 @@ class TaskScheduler:
                                     if "加好友" not in config:
                                         config["加好友"] = {"enabled": True}
                                     config["加好友"]["next_time"] = next_time_str
-                                    
-                                elif task.type == TaskType.DELEGATE:
-                                    # 委托任务：基于完成时间确定下一个固定时间点12:00, 18:00
-                                    complete_time = format_beijing_time(now_beijing())
-                                    next_time_str = get_next_fixed_time(complete_time, ["12:00", "18:00"])
-                                    if "委托" not in config:
-                                        config["委托"] = {"enabled": True}
-                                    config["委托"]["next_time"] = next_time_str
-                                    
+
                                 elif task.type == TaskType.COOP:
                                     # 勾协任务：基于完成时间确定下一个固定时间点18:00, 21:00
                                     complete_time = format_beijing_time(now_beijing())
@@ -403,7 +397,7 @@ class TaskScheduler:
             self.logger.info(f"加载 {len(tasks)} 个待执行任务")
     
     async def _check_time_tasks(self):
-        """检查基于时间的任务（寄养、委托、勾协、加好友）"""
+        """检查基于时间的任务（寄养、勾协、加好友）"""
         current_time_str = format_beijing_time(now_beijing())
         
         with SessionLocal() as db:
@@ -439,31 +433,6 @@ class TaskScheduler:
                         db.commit()
                         self.queue.enqueue(task, account)
                         self.logger.info(f"创建寄养任务: 账号 {account.login_id}")
-
-                # 检查委托任务
-                delegate_config = config.get("委托", {})
-                if (delegate_config.get("enabled", True) and 
-                    delegate_config.get("next_time") and 
-                    is_time_reached(delegate_config["next_time"])):
-                    
-                    existing = db.query(Task).filter(
-                        Task.account_id == account.id,
-                        Task.type == TaskType.DELEGATE,
-                        Task.status.in_([TaskStatus.PENDING, TaskStatus.RUNNING])
-                    ).first()
-                    
-                    if not existing:
-                        task = Task(
-                            account_id=account.id,
-                            type=TaskType.DELEGATE,
-                            priority=TASK_PRIORITY[TaskType.DELEGATE],
-                            status=TaskStatus.PENDING,
-                            next_at=datetime.utcnow()
-                        )
-                        db.add(task)
-                        db.commit()
-                        self.queue.enqueue(task, account)
-                        self.logger.info(f"创建委托任务: 账号 {account.login_id}")
 
                 # 检查勾协任务
                 coop_config = config.get("勾协", {})
@@ -549,48 +518,6 @@ class TaskScheduler:
                     db.commit()
                     
                     self.queue.enqueue(task, account)
-    
-    async def _schedule_delegate_tasks(self):
-        """调度委托任务"""
-        created_count = 0
-        with SessionLocal() as db:
-            accounts = db.query(GameAccount).filter(
-                GameAccount.status == 1,
-                GameAccount.progress == "ok"
-            ).all()
-            
-            for account in accounts:
-                # 检查任务配置
-                config = account.task_config or DEFAULT_TASK_CONFIG
-                if not config.get("委托", {}).get("enabled", True):
-                    continue
-                
-                # 检查是否已有今日委托任务
-                existing = db.query(Task).filter(
-                    Task.account_id == account.id,
-                    Task.type == TaskType.DELEGATE,
-                    Task.created_at >= datetime.utcnow().replace(hour=0, minute=0, second=0)
-                ).first()
-                
-                if existing:
-                    continue
-                
-                # 创建任务
-                task = Task(
-                    account_id=account.id,
-                    type=TaskType.DELEGATE,
-                    priority=TASK_PRIORITY[TaskType.DELEGATE],
-                    status=TaskStatus.PENDING,
-                    next_at=datetime.utcnow()
-                )
-                db.add(task)
-                db.commit()
-                
-                # 立即加入队列
-                self.queue.enqueue(task, account)
-                created_count += 1
-            
-            self.logger.info(f"创建 {created_count} 个委托任务")
     
     async def _schedule_coop_tasks(self):
         """调度勾协任务"""
@@ -781,6 +708,13 @@ class TaskScheduler:
         
         return False
     
+    def _build_effective_task_config(self, db) -> dict:
+        """根据全局 fail_delay 配置生成有效的默认 task_config。"""
+        from ...db.models import SystemConfig
+        row = db.query(SystemConfig).order_by(SystemConfig.id.asc()).first()
+        fail_delays = (row.default_fail_delays or {}) if row else {}
+        return build_default_task_config(fail_delays)
+
     async def create_init_task(self, email: str):
         """
         创建起号任务
@@ -804,7 +738,7 @@ class TaskScheduler:
                     zone=zone,
                     progress="init",
                     status=1,
-                    task_config=DEFAULT_TASK_CONFIG
+                    task_config=deepcopy(DEFAULT_INIT_TASK_CONFIG)
                 )
                 db.add(account)
                 db.commit()

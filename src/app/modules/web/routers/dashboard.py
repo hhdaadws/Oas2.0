@@ -6,7 +6,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from ....core.constants import AccountStatus, DEFAULT_TASK_CONFIG, TASK_PRIORITY, TaskType
+from ....core.constants import AccountStatus, DEFAULT_TASK_CONFIG, DEFAULT_INIT_TASK_CONFIG, TASK_PRIORITY, TaskType
 from ....core.timeutils import format_beijing_time, now_beijing
 from ....db.base import get_db
 from ....db.models import CoopAccount, GameAccount, Log
@@ -20,7 +20,22 @@ router = APIRouter(prefix="/api", tags=["dashboard"])
 ENABLE_LEGACY_DASHBOARD_FALLBACK = False
 
 # 时间类任务（有 next_time 字段）
-_TIME_TASK_KEYS = ["寄养", "委托", "弥助", "勾协", "加好友", "领取登录礼包", "领取邮件", "爬塔"]
+_TIME_TASK_KEYS = [
+    "寄养", "悬赏", "弥助", "勾协", "加好友", "领取登录礼包", "领取邮件",
+    "爬塔", "逢魔", "地鬼", "道馆", "寮商店", "领取寮金币", "每日一抽",
+    "每周商店", "秘闻", "探索突破",
+]
+
+# 起号阶段：有 next_time 的时间类任务
+_INIT_TIME_TASK_KEYS = [
+    "起号_新手任务", "起号_经验副本",
+    "探索突破", "地鬼", "每周商店", "寮商店", "领取寮金币", "领取邮件", "加好友",
+]
+
+# 起号阶段：一次性任务（无 next_time，用 completed 标记）
+_INIT_ONETIME_TASK_KEYS = [
+    "起号_领取奖励", "起号_租借式神",
+]
 
 
 def _get_priority(task_key: str) -> int:
@@ -74,7 +89,7 @@ async def get_dashboard(db: Session = Depends(get_db)):
         priority_map = {
             "加好友": 90,
             "勾协": 80,
-            "委托": 70,
+            "悬赏": 70,
             "弥助": 65,
             "寄养": 60,
             "领取登录礼包": 55,
@@ -118,28 +133,63 @@ async def get_dashboard(db: Session = Depends(get_db)):
 
     # 计划任务预览：扫描所有活跃账号的 task_config，展示即将执行的任务
     account_map = {acc.id: acc.login_id for acc in active_accounts}
-    ok_accounts = (
+    preview_accounts = (
         db.query(GameAccount)
-        .filter(GameAccount.status == AccountStatus.ACTIVE, GameAccount.progress == "ok")
+        .filter(
+            GameAccount.status == AccountStatus.ACTIVE,
+            GameAccount.progress.in_(["ok", "init"]),
+        )
         .all()
     )
     scheduled_preview = []
-    for acc in ok_accounts:
-        cfg = acc.task_config or DEFAULT_TASK_CONFIG.copy()
-        for task_key in _TIME_TASK_KEYS:
-            task_cfg = cfg.get(task_key, {})
-            if task_cfg.get("enabled") is not True:
-                continue
-            next_time = task_cfg.get("next_time")
-            if not next_time:
-                continue
-            scheduled_preview.append({
-                "account_id": acc.id,
-                "account_login_id": acc.login_id,
-                "task_type": task_key,
-                "next_time": next_time,
-                "priority": _get_priority(task_key),
-            })
+    for acc in preview_accounts:
+        if acc.progress == "init":
+            cfg = acc.task_config or DEFAULT_INIT_TASK_CONFIG.copy()
+            # 一次性任务（enabled 且未完成 → 即时执行）
+            for task_key in _INIT_ONETIME_TASK_KEYS:
+                task_cfg = cfg.get(task_key, {})
+                if task_cfg.get("enabled") is not True:
+                    continue
+                if task_cfg.get("completed", False):
+                    continue
+                scheduled_preview.append({
+                    "account_id": acc.id,
+                    "account_login_id": acc.login_id,
+                    "task_type": task_key,
+                    "next_time": "即时",
+                    "priority": _get_priority(task_key),
+                })
+            # 时间类任务
+            for task_key in _INIT_TIME_TASK_KEYS:
+                task_cfg = cfg.get(task_key, {})
+                if task_cfg.get("enabled") is not True:
+                    continue
+                next_time = task_cfg.get("next_time")
+                if not next_time:
+                    continue
+                scheduled_preview.append({
+                    "account_id": acc.id,
+                    "account_login_id": acc.login_id,
+                    "task_type": task_key,
+                    "next_time": next_time,
+                    "priority": _get_priority(task_key),
+                })
+        else:
+            cfg = acc.task_config or DEFAULT_TASK_CONFIG.copy()
+            for task_key in _TIME_TASK_KEYS:
+                task_cfg = cfg.get(task_key, {})
+                if task_cfg.get("enabled") is not True:
+                    continue
+                next_time = task_cfg.get("next_time")
+                if not next_time:
+                    continue
+                scheduled_preview.append({
+                    "account_id": acc.id,
+                    "account_login_id": acc.login_id,
+                    "task_type": task_key,
+                    "next_time": next_time,
+                    "priority": _get_priority(task_key),
+                })
     # 按 next_time 排序，取前 20 个
     scheduled_preview.sort(key=lambda x: x.get("next_time", ""))
     scheduled_preview = scheduled_preview[:20]

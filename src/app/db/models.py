@@ -34,6 +34,8 @@ class GameAccount(Base):
     gouyu = Column(Integer, default=0)       # 勾玉
     lanpiao = Column(Integer, default=0)     # 蓝票
     gold = Column(Integer, default=0)        # 金币
+    gongxun = Column(Integer, default=0)     # 功勋
+    xunzhang = Column(Integer, default=0)    # 勋章
     progress = Column(String(20), default="init", index=True)  # init|ok
     status = Column(Integer, default=1, index=True)  # 1=active|2=invalid
     current_task = Column(String(50), nullable=True)
@@ -274,4 +276,7 @@ class SystemConfig(Base):
     pkg_name = Column(String(200), default="com.netease.onmyoji")
     activity_name = Column(String(200), default=".MainActivity")
     python_path = Column(String(1000), nullable=True)  # 额外的 Python 模块搜索路径（分号或逗号分隔）
+    pull_post_mode = Column(String(20), default="none")    # 抓取后建号模式: none|auto|confirm
+    pull_default_zone = Column(String(50), default="樱之华")  # 抓取后建号默认区服
+    default_fail_delays = Column(JSON, nullable=True)  # 全局默认失败延迟 {"寄养": 30, ...}
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

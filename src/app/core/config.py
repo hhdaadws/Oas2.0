@@ -2,6 +2,7 @@
 核心配置模块
 """
 import secrets as _secrets
+from pathlib import Path
 from typing import List, Optional
 from pydantic_settings import BaseSettings
 from pydantic import Field
@@ -9,9 +10,6 @@ from pydantic import Field
 
 # TOTP 密钥（固定，仅开发者知晓）
 TOTP_SECRET = "JBSWY3DPEHPK3PXP"
-
-# JWT 签名密钥（每次启动随机生成，重启后旧 token 失效）
-JWT_SECRET = _secrets.token_hex(32)
 
 # JWT 过期时间（小时）
 JWT_EXPIRE_HOURS = 24
@@ -22,6 +20,9 @@ class Settings(BaseSettings):
 
     # 数据库
     database_url: str = Field(default="sqlite:///./data.db", env="DATABASE_URL")
+
+    # JWT 签名密钥（持久化，重启后 token 仍有效）
+    jwt_secret: str = Field(default="", env="JWT_SECRET")
     
     # OCR
     paddle_ocr_lang: str = Field(default="ch", env="PADDLE_OCR_LANG")
@@ -45,7 +46,6 @@ class Settings(BaseSettings):
     # 调度
     coop_times: str = Field(default="18:00,21:00", env="COOP_TIMES")
     stamina_threshold: int = Field(default=1000, env="STAMINA_THRESHOLD")
-    delegate_time: str = Field(default="18:00", env="DELEGATE_TIME")
     
     # Web服务
     api_host: str = Field(default="0.0.0.0", env="API_HOST")
@@ -75,3 +75,17 @@ class Settings(BaseSettings):
 
 # 全局配置实例
 settings = Settings()
+
+
+def _ensure_jwt_secret() -> str:
+    """确保 JWT_SECRET 持久化：优先从 settings 读取，否则生成并写入 .env"""
+    if settings.jwt_secret:
+        return settings.jwt_secret
+    generated = _secrets.token_hex(32)
+    env_path = Path(".env")
+    with open(env_path, "a", encoding="utf-8") as f:
+        f.write(f"\nJWT_SECRET={generated}\n")
+    return generated
+
+
+JWT_SECRET = _ensure_jwt_secret()

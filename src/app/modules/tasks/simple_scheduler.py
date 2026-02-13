@@ -200,14 +200,6 @@ class SimpleScheduler:
             is_time_reached(foster_config["next_time"])):
             await self._execute_account_task(account, TaskType.FOSTER, db)
             return  # 一次只执行一个任务
-        
-        # 委托任务
-        delegate_config = config.get("委托", {})
-        if (self._is_task_enabled(delegate_config) and 
-            delegate_config.get("next_time") and 
-            is_time_reached(delegate_config["next_time"])):
-            await self._execute_account_task(account, TaskType.DELEGATE, db)
-            return
 
         # 弥助任务
         mizhu_config = config.get("弥助", {})
@@ -269,7 +261,6 @@ class SimpleScheduler:
             # 任务类型映射
             task_name_map = {
                 TaskType.FOSTER: "寄养",
-                TaskType.DELEGATE: "委托", 
                 TaskType.DELEGATE_HELP: "弥助",
                 TaskType.COOP: "勾协",
                 TaskType.EXPLORE: "探索突破",
@@ -354,11 +345,6 @@ class SimpleScheduler:
             # 加好友：+24小时
             next_time = add_hours_to_beijing_time(current_time, 24)
             config["加好友"]["next_time"] = next_time
-            
-        elif task_type == TaskType.DELEGATE:
-            # 委托：下一个固定时间点
-            next_time = get_next_fixed_time(current_time, ["12:00", "18:00"])
-            config["委托"]["next_time"] = next_time
 
         elif task_type == TaskType.DELEGATE_HELP:
             # 弥助：下一个固定时间点
@@ -458,7 +444,7 @@ class SimpleScheduler:
         priority_map = {
             "加好友": 90,
             "勾协": 80,
-            "委托": 70,
+            "悬赏": 70,
             "弥助": 65,
             "寄养": 60,
             "探索突破": 50,

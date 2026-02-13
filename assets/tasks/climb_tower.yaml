@@ -1,0 +1,85 @@
+# 爬塔任务配置 - YAML 驱动执行器
+# 修改后自动生效（运行时热重载），无需重启服务
+#
+# action 类型说明：
+#   click_template  - 等待模板出现后点击（对应 helpers.click_template）
+#   click_text      - OCR 识别文字后点击（对应 helpers.click_text）
+#   wait_for_template - 等待模板出现，不点击
+#   swipe           - 滑动操作，params: [x1, y1, x2, y2, duration_ms]
+#   tap             - 直接点击坐标，x/y
+#   sleep           - 等待，seconds
+
+# === 全局开关 ===
+# false 时所有账号的爬塔任务均不调度
+enabled: true
+
+# === 从庭院导航到爬塔界面 ===
+navigation:
+  steps:
+    - action: click_template
+      template: "assets/ui/templates/pata_entry.png"
+      timeout: 8.0
+      settle: 0.5
+      post_delay: 2.0
+      label: "庭院-点击爬塔入口"
+
+    # 如果需要多步导航，在此添加更多步骤，例如：
+    # - action: click_template
+    #   template: "assets/ui/templates/pata_floor.png"
+    #   timeout: 8.0
+    #   settle: 0.5
+    #   post_delay: 2.0
+    #   label: "选择楼层"
+
+  # 到达爬塔界面后的验证模板（确认导航成功）
+  verify_template: "assets/ui/templates/pata_tag.png"
+  verify_timeout: 8.0
+
+# === 门票 OCR 识别 ===
+# 到达爬塔界面后，OCR 读取门票数量来决定战斗次数
+ticket:
+  # OCR 区域 (x, y, w, h)，960x540 分辨率下的绝对坐标
+  roi: [800, 20, 80, 25]
+  # 可选关键词过滤（不填则直接解析 OCR 全文）
+  keyword: ""
+  # 战斗次数上限（防止 OCR 误读导致无限循环）
+  max_battles: 10
+  # OCR 失败时的默认门票数（null 表示直接失败）
+  fallback: null
+
+# === 战斗配置 ===
+battle:
+  # 每轮战斗前的操作步骤
+  pre_battle:
+    - action: click_template
+      template: "assets/ui/templates/pata_tiaozhan.png"
+      timeout: 8.0
+      settle: 0.5
+      post_delay: 1.5
+      label: "爬塔-点击挑战"
+
+  # 战斗确认按钮模板（传给 run_battle 的 confirm_template）
+  # 设为 null 则跳过确认步骤
+  confirm_template: "assets/ui/templates/pata_tiaozhan_sure.png"
+
+  # 战斗超时秒数
+  battle_timeout: 120.0
+
+  # 每轮战斗结束后的操作（用于返回爬塔列表界面）
+  post_battle:
+    - action: click_template
+      template: "assets/ui/templates/exit.png"
+      timeout: 8.0
+      settle: 0.5
+      post_delay: 1.5
+      label: "爬塔-返回列表"
+
+  # 最后一轮是否跳过 post_battle 步骤
+  skip_post_on_last: true
+
+# === 失败策略 ===
+on_failure:
+  # 战斗失败（DEFEAT）时是否继续后续轮次
+  continue_on_defeat: false
+  # 战斗超时（TIMEOUT）时是否继续
+  continue_on_timeout: false

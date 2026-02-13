@@ -21,7 +21,7 @@ from ....db.models import (
     CoopPool,
     Log,
 )
-from ....core.constants import DEFAULT_TASK_CONFIG, AccountStatus
+from ....core.constants import DEFAULT_TASK_CONFIG, DEFAULT_INIT_TASK_CONFIG, AccountStatus, build_default_task_config
 from ....core.logger import logger
 from ...tasks import scheduler
 from ...lineup import LINEUP_SUPPORTED_TASKS, merge_lineup_with_defaults
@@ -57,6 +57,8 @@ class AccountUpdate(BaseModel):
     gouyu: Optional[int] = None
     lanpiao: Optional[int] = None
     gold: Optional[int] = None
+    gongxun: Optional[int] = None
+    xunzhang: Optional[int] = None
     remark: Optional[str] = None
 
 
@@ -68,7 +70,7 @@ class TaskConfigUpdate(BaseModel):
     )
 
     foster: Optional[Dict[str, Any]] = Field(default=None, alias="寄养")
-    delegate: Optional[Dict[str, Any]] = Field(default=None, alias="委托")
+    xuanshang: Optional[Dict[str, Any]] = Field(default=None, alias="悬赏")
     delegate_help: Optional[Dict[str, Any]] = Field(default=None, alias="弥助")
     coop: Optional[Dict[str, Any]] = Field(default=None, alias="勾协")
     explore: Optional[Dict[str, Any]] = Field(default=None, alias="探索突破")
@@ -86,6 +88,13 @@ class TaskConfigUpdate(BaseModel):
     liao_shop: Optional[Dict[str, Any]] = Field(default=None, alias="寮商店")
     liao_coin: Optional[Dict[str, Any]] = Field(default=None, alias="领取寮金币")
     daily_summon: Optional[Dict[str, Any]] = Field(default=None, alias="每日一抽")
+    weekly_shop: Optional[Dict[str, Any]] = Field(default=None, alias="每周商店")
+    miwen: Optional[Dict[str, Any]] = Field(default=None, alias="秘闻")
+    # 起号任务字段
+    init_collect_reward: Optional[Dict[str, Any]] = Field(default=None, alias="起号_领取奖励")
+    init_rent_shikigami: Optional[Dict[str, Any]] = Field(default=None, alias="起号_租借式神")
+    init_newbie_quest: Optional[Dict[str, Any]] = Field(default=None, alias="起号_新手任务")
+    init_exp_dungeon: Optional[Dict[str, Any]] = Field(default=None, alias="起号_经验副本")
 
 
 class RestConfigUpdate(BaseModel):
@@ -96,12 +105,39 @@ class RestConfigUpdate(BaseModel):
     duration: Optional[int] = 2  # 小时数
 
 
-def _merge_task_config_with_defaults(task_config: Any) -> Dict[str, Any]:
-    """按“默认 + 现有配置”规则规范化任务配置。"""
-    merged_config = deepcopy(DEFAULT_TASK_CONFIG)
+def _get_global_fail_delays(db: Session) -> dict:
+    """从数据库读取全局默认 fail_delay 配置。"""
+    from ....db.models import SystemConfig
+    row = db.query(SystemConfig).order_by(SystemConfig.id.asc()).first()
+    return (row.default_fail_delays or {}) if row else {}
+
+
+def _merge_task_config_with_defaults(task_config: Any, fail_delays: dict = None, progress: str = "ok") -> Dict[str, Any]:
+    """按"默认 + 现有配置"规则规范化任务配置。
+
+    现有配置中已存在的任务保留原始 enabled 状态；
+    现有配置中不存在的新任务，补充默认结构但 enabled 设为 False。
+
+    Args:
+        task_config: 账号现有的 task_config。
+        fail_delays: 全局默认 fail_delay 配置，用于覆盖硬编码默认值。
+        progress: 账号进度状态（"init" 或 "ok"），决定使用哪套默认配置。
+    """
+    if progress == "init":
+        merged_config = deepcopy(DEFAULT_INIT_TASK_CONFIG)
+    else:
+        merged_config = build_default_task_config(fail_delays)
 
     if not isinstance(task_config, dict):
+        for value in merged_config.values():
+            if isinstance(value, dict):
+                value["enabled"] = False
         return merged_config
+
+    # 将不在现有配置中的任务默认禁用
+    for key in merged_config:
+        if key not in task_config and isinstance(merged_config[key], dict):
+            merged_config[key]["enabled"] = False
 
     for key, value in task_config.items():
         if isinstance(value, dict):
@@ -126,6 +162,7 @@ async def get_accounts(db: Session = Depends(get_db)):
 
     result = []
     need_commit = False
+    fail_delays = _get_global_fail_delays(db)
 
     for email in emails:
         email_data = {
@@ -142,7 +179,7 @@ async def get_accounts(db: Session = Depends(get_db)):
 
         for account in game_accounts:
             normalized_task_config = _merge_task_config_with_defaults(
-                account.task_config
+                account.task_config, fail_delays=fail_delays, progress=account.progress
             )
             if account.task_config != normalized_task_config:
                 account.task_config = normalized_task_config
@@ -160,6 +197,8 @@ async def get_accounts(db: Session = Depends(get_db)):
                     "gouyu": account.gouyu,
                     "lanpiao": account.lanpiao,
                     "gold": account.gold,
+                    "gongxun": account.gongxun,
+                    "xunzhang": account.xunzhang,
                     "status": account.status,
                     "progress": account.progress,
                     "current_task": account.current_task,
@@ -177,7 +216,7 @@ async def get_accounts(db: Session = Depends(get_db)):
     )
 
     for account in independent_accounts:
-        normalized_task_config = _merge_task_config_with_defaults(account.task_config)
+        normalized_task_config = _merge_task_config_with_defaults(account.task_config, fail_delays=fail_delays, progress=account.progress)
         if account.task_config != normalized_task_config:
             account.task_config = normalized_task_config
             account.updated_at = datetime.utcnow()
@@ -194,6 +233,8 @@ async def get_accounts(db: Session = Depends(get_db)):
                 "gouyu": account.gouyu,
                 "lanpiao": account.lanpiao,
                 "gold": account.gold,
+                "gongxun": account.gongxun,
+                "xunzhang": account.xunzhang,
                 "status": account.status,
                 "progress": account.progress,
                 "current_task": account.current_task,
@@ -256,7 +297,7 @@ async def create_game_account(
         stamina=account.stamina,
         progress="ok",  # ID账号默认已完成初始化
         status=AccountStatus.ACTIVE,
-        task_config=DEFAULT_TASK_CONFIG,
+        task_config=build_default_task_config(_get_global_fail_delays(db)),
     )
     db.add(game_account)
     db.commit()
@@ -289,7 +330,16 @@ async def update_account(
     if update.status is not None:
         account.status = update.status
     if update.progress is not None:
+        old_progress = account.progress
         account.progress = update.progress
+        # progress 发生变化时切换 task_config
+        if old_progress != account.progress:
+            if account.progress == "ok":
+                account.task_config = build_default_task_config(_get_global_fail_delays(db))
+            else:
+                account.task_config = deepcopy(DEFAULT_INIT_TASK_CONFIG)
+            from sqlalchemy.orm.attributes import flag_modified
+            flag_modified(account, "task_config")
     if update.level is not None:
         account.level = update.level
     if update.stamina is not None:
@@ -312,13 +362,17 @@ async def update_account(
         account.lanpiao = update.lanpiao
     if update.gold is not None:
         account.gold = update.gold
+    if update.gongxun is not None:
+        account.gongxun = update.gongxun
+    if update.xunzhang is not None:
+        account.xunzhang = update.xunzhang
 
     account.updated_at = datetime.utcnow()
     db.commit()
 
     logger.info(f"更新账号 {account.login_id} 信息")
 
-    return {"message": "账号更新成功"}
+    return {"message": "账号更新成功", "task_config": account.task_config}
 
 
 @router.put("/{account_id}/task-config")
@@ -332,7 +386,7 @@ async def update_task_config(
     if not account:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="账号不存在")
 
-    merged_config = _merge_task_config_with_defaults(account.task_config)
+    merged_config = _merge_task_config_with_defaults(account.task_config, fail_delays=_get_global_fail_delays(db), progress=account.progress)
 
     # Pydantic v2 推荐 model_dump；只取显式传入字段
     update_dict = config.model_dump(exclude_unset=True, by_alias=True)
@@ -515,10 +569,20 @@ async def update_init_status(data: Dict[str, Any], db: Session = Depends(get_db)
 
     # 更新账号状态
     account.status = status
+    old_progress = account.progress
     if status == AccountStatus.ACTIVE:
         account.progress = "ok"
     else:
         account.progress = "init"
+
+    # progress 发生变化时切换 task_config
+    if old_progress != account.progress:
+        if account.progress == "ok":
+            account.task_config = build_default_task_config(_get_global_fail_delays(db))
+        else:
+            account.task_config = deepcopy(DEFAULT_INIT_TASK_CONFIG)
+        from sqlalchemy.orm.attributes import flag_modified
+        flag_modified(account, "task_config")
 
     if zone:
         account.zone = zone

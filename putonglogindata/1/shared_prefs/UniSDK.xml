@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8' standalone='yes' ?>
+<map>
+    <string name="switcher_sdk_request_result_cache">{&quot;ngdevice&quot;: {&quot;default_value&quot;: 0, &quot;apply_value&quot;: 1, &quot;base64&quot;: &quot;e30=&quot;, &quot;query&quot;: {}, &quot;md5&quot;: &quot;99914b932bd37a50b983c5e7c90ae93b&quot;}}</string>
+    <string name="etag">&quot;7e-64388f9b0f100-gzip&quot;</string>
+    <string name="last_modified">Fri, 14 Nov 2025 07:30:44 GMT</string>
+    <boolean name="UniSDK_FirstOpen" value="false" />
+</map>

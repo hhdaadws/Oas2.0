@@ -83,11 +83,42 @@
         </el-alert>
       </el-form>
     </el-card>
+
+    <el-card style="margin-top: 16px">
+      <template #header>
+        <span>任务默认失败延迟（分钟）</span>
+      </template>
+      <el-alert type="info" :closable="false" show-icon style="margin-bottom: 16px">
+        <template #title>
+          配置各任务类型失败后的重试等待时间。新建账号将继承这些值，不影响已有账号。
+        </template>
+      </el-alert>
+      <el-form label-width="140px" class="config-form">
+        <el-form-item
+          v-for="taskName in failDelayTaskNames"
+          :key="taskName"
+          :label="taskName"
+        >
+          <el-input-number
+            v-model="failDelayForm[taskName]"
+            :min="1"
+            :max="1440"
+            :step="5"
+            style="width: 180px"
+          />
+          <span style="margin-left: 8px; color: #909399;">分钟</span>
+        </el-form-item>
+        <el-form-item>
+          <el-button @click="loadFailDelays" :loading="failDelayLoading">刷新</el-button>
+          <el-button type="primary" @click="saveFailDelays" :loading="failDelayLoading">保存</el-button>
+        </el-form-item>
+      </el-form>
+    </el-card>
   </div>
 </template>
 
 <script setup>
-import { reactive, ref, onMounted } from 'vue'
+import { reactive, ref, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { API_ENDPOINTS, apiRequest } from '@/config'
 
@@ -106,6 +137,11 @@ const emulators = ref([])
 const benchmarkLoading = ref(false)
 const benchmark = reactive({ emulator_id: null, rounds: 5 })
 const benchmarkResult = ref(null)
+
+// 失败延迟配置
+const failDelayForm = reactive({})
+const failDelayLoading = ref(false)
+const failDelayTaskNames = computed(() => Object.keys(failDelayForm))
 
 const fetchEmulators = async () => {
   try {
@@ -176,8 +212,42 @@ const runCaptureBenchmark = async () => {
   }
 }
 
+const loadFailDelays = async () => {
+  failDelayLoading.value = true
+  try {
+    const resp = await apiRequest(API_ENDPOINTS.system.failDelays)
+    const data = await resp.json()
+    // 清空现有数据再赋值
+    Object.keys(failDelayForm).forEach(k => delete failDelayForm[k])
+    Object.assign(failDelayForm, data.delays || {})
+  } catch (e) {
+    ElMessage.error('加载失败延迟配置失败')
+  } finally {
+    failDelayLoading.value = false
+  }
+}
+
+const saveFailDelays = async () => {
+  failDelayLoading.value = true
+  try {
+    const resp = await apiRequest(API_ENDPOINTS.system.failDelays, {
+      method: 'PUT',
+      body: JSON.stringify({ delays: { ...failDelayForm } })
+    })
+    if (!resp.ok) {
+      const data = await resp.json()
+      throw new Error(data?.detail || '保存失败')
+    }
+    ElMessage.success('失败延迟配置保存成功')
+  } catch (e) {
+    ElMessage.error(e.message || '保存失败')
+  } finally {
+    failDelayLoading.value = false
+  }
+}
+
 onMounted(async () => {
-  await Promise.all([load(), fetchEmulators()])
+  await Promise.all([load(), fetchEmulators(), loadFailDelays()])
 })
 </script>
 

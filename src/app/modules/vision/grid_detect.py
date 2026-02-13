@@ -31,6 +31,9 @@ RIGHT_COL_Y_END = 490     # 扫描结束 y
 RIGHT_COL_DARK_THRESHOLD = 100  # 分隔线平均亮度阈值
 RIGHT_COL_MIN_CELL_HEIGHT = 20  # 最小有效格子高度
 
+# ── 左侧竖向标签列布局常量（玩法推荐等界面） ──
+LEFT_COL_ROI = (0, 50, 150, 450)  # (x, y, w, h) OCR 扫描区域
+
 
 @dataclass
 class GridPosition:
@@ -51,6 +54,18 @@ class CellInfo:
     bottom: int                   # 格子底部 y
     center: Tuple[int, int]       # 格子中心坐标 (x, y)
     height: int                   # 格子高度
+
+
+@dataclass
+class LabelCell:
+    """左侧竖排标签格子（含 OCR 文字）"""
+    index: int                    # 编号 (1-indexed, 从上到下)
+    top: int                      # 格子顶部 y
+    bottom: int                   # 格子底部 y
+    center: Tuple[int, int]       # 格子中心坐标 (x, y)，可直接用于 tap
+    height: int                   # 格子高度
+    text: str                     # OCR 识别的文字
+    confidence: float             # OCR 置信度
 
 
 def nms_by_distance(
@@ -157,6 +172,55 @@ def detect_right_column_cells(
     return cells
 
 
+# ── 左侧竖向标签列检测 ──
+
+def detect_left_column_labels(
+    image: ImageLike,
+    *,
+    roi: Tuple[int, int, int, int] = LEFT_COL_ROI,
+    min_confidence: float = 0.5,
+) -> List[LabelCell]:
+    """通过 OCR 识别左侧竖排标签列的文字和坐标。
+
+    直接对左侧区域执行 OCR，每个识别到的文字块转换为 LabelCell，
+    center 坐标可直接用于 adapter.tap() 点击。
+
+    Args:
+        image: 截图 (960x540)
+        roi: OCR 扫描区域 (x, y, w, h)
+        min_confidence: OCR 最低置信度
+
+    Returns:
+        按从上到下排序的 LabelCell 列表
+    """
+    from ..ocr.recognize import ocr as ocr_recognize
+
+    img = load_image(image)
+    ocr_result = ocr_recognize(img, roi=roi, min_confidence=min_confidence)
+
+    labels: List[LabelCell] = []
+    for box in ocr_result.boxes:
+        ys = [p[1] for p in box.box]
+        top = min(ys)
+        bottom = max(ys)
+        labels.append(LabelCell(
+            index=0,
+            top=top,
+            bottom=bottom,
+            center=box.center,
+            height=bottom - top,
+            text=box.text,
+            confidence=box.confidence,
+        ))
+
+    # 按 y 坐标排序（从上到下），重新编号
+    labels.sort(key=lambda l: l.top)
+    for i, lbl in enumerate(labels, 1):
+        lbl.index = i
+
+    return labels
+
+
 # ── 左侧主网格模板匹配 ──
 
 def find_template_in_grid(
@@ -212,8 +276,10 @@ def find_shishen_tihuan_positions(
 __all__ = [
     "GridPosition",
     "CellInfo",
+    "LabelCell",
     "find_template_in_grid",
     "find_shishen_tihuan_positions",
     "detect_right_column_cells",
+    "detect_left_column_labels",
     "nms_by_distance",
 ]

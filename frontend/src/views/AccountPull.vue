@@ -48,7 +48,7 @@
           </el-radio-group>
         </el-form-item>
 
-        <el-form-item v-if="postPullMode === 'auto'" label="默认区服">
+        <el-form-item v-if="postPullMode !== 'none'" label="默认区服">
           <el-select v-model="defaultZone" placeholder="请选择默认区服" style="width: 300px;" @change="savePostPullSettings">
             <el-option v-for="z in ZONES" :key="z" :label="z" :value="z" />
           </el-select>
@@ -191,28 +191,29 @@ const createAccountForm = reactive({
   zone: '樱之华'
 })
 
-// localStorage 持久化
-const STORAGE_KEY = 'accountPull_postPullSettings'
-
-const loadPostPullSettings = () => {
+// 通过 API 持久化抓取后建号配置
+const loadPostPullSettings = async () => {
   try {
-    const saved = localStorage.getItem(STORAGE_KEY)
-    if (saved) {
-      const parsed = JSON.parse(saved)
-      if (parsed.mode) postPullMode.value = parsed.mode
-      if (parsed.defaultZone) defaultZone.value = parsed.defaultZone
+    const response = await apiRequest('/api/system/settings')
+    if (response.ok) {
+      const data = await response.json()
+      if (data.pull_post_mode) postPullMode.value = data.pull_post_mode
+      if (data.pull_default_zone) defaultZone.value = data.pull_default_zone
     }
   } catch (e) {
     console.warn('加载抓取后建号配置失败:', e)
   }
 }
 
-const savePostPullSettings = () => {
+const savePostPullSettings = async () => {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({
-      mode: postPullMode.value,
-      defaultZone: defaultZone.value
-    }))
+    await apiRequest('/api/system/settings', {
+      method: 'PUT',
+      body: JSON.stringify({
+        pull_post_mode: postPullMode.value,
+        pull_default_zone: defaultZone.value
+      })
+    })
   } catch (e) {
     console.warn('保存抓取后建号配置失败:', e)
   }

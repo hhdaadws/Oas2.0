@@ -86,7 +86,18 @@
       "Bash(venvScriptspython -c \"from app.modules.vision.grid_detect import find_shishen_tihuan_positions, find_template_in_grid; positions = find_template_in_grid\\(''d007126c-38b0-4128-a0f5-49625a5147f3.png'', ''assets/ui/templates/shishen_tihuan.png''\\); [print\\(f''Row {p.row}: x={p.match.x}, y={p.match.y}, center={p.match.center}, score={p.match.score:.4f}''\\) for p in positions]; rows = find_shishen_tihuan_positions\\(''d007126c-38b0-4128-a0f5-49625a5147f3.png''\\); print\\(f''shishen_tihuan appears at rows: {rows}''\\)\")",
       "Bash(venvScriptspython.exe -c \"from app.modules.vision.grid_detect import find_shishen_tihuan_positions, find_template_in_grid; positions = find_template_in_grid\\(''d007126c-38b0-4128-a0f5-49625a5147f3.png'', ''assets/ui/templates/shishen_tihuan.png''\\); [print\\(f''Row {p.row}: x={p.match.x}, y={p.match.y}, center={p.match.center}, score={p.match.score:.4f}''\\) for p in positions]; rows = find_shishen_tihuan_positions\\(''d007126c-38b0-4128-a0f5-49625a5147f3.png''\\); print\\(f''shishen_tihuan appears at rows: {rows}''\\)\")",
       "Bash(ls:*)",
-      "Bash(PYTHONPATH=src venv/Scripts/python.exe:*)"
+      "Bash(PYTHONPATH=src venv/Scripts/python.exe:*)",
+      "Bash(venvScriptspython -c \"from app.modules.executor.liao_shop import LiaoShopExecutor; print\\(''liao_shop.py import OK''\\)\")",
+      "Bash(venvScriptspython -c \"from app.modules.ui.assets import AssetType, ASSET_REGISTRY; print\\(f''AssetTypes: {[a.value for a in AssetType]}''\\); print\\(f''Registry: {list\\(ASSET_REGISTRY.keys\\(\\)\\)}''\\)\")",
+      "Bash(venvScriptspython -c \"from app.core.constants import DEFAULT_TASK_CONFIG; shop = DEFAULT_TASK_CONFIG[''寮商店'']; print\\(f''寮商店配置: {shop}''\\)\")",
+      "Bash(PYTHONPATH=src venv/Scripts/python:*)",
+      "Bash(grep:*)",
+      "Bash(venvScriptspython -c \"from app.modules.ui.screens import *; from app.modules.ui.default_graph import build_default_graph; from app.modules.executor.lineup_switch import switch_lineup; from app.modules.lineup import get_lineup_for_task, DEFAULT_LINEUP; g = build_default_graph\\(\\); path = g.find_path\\(''TINGYUAN'', ''DIGUI''\\); print\\(''DIGUI screen registered: OK''\\); print\\(''Navigation path TINGYUAN->DIGUI:'', [e.dst for e in path] if path else ''NOT FOUND''\\); print\\(''DEFAULT_LINEUP:'', DEFAULT_LINEUP\\); print\\(''switch_lineup imported: OK''\\)\")",
+      "Bash(venvScriptspython -c \"from app.modules.executor.weekly_shop import WeeklyShopExecutor; from app.core.constants import TaskType, TASK_PRIORITY, DEFAULT_TASK_CONFIG; print\\(''TaskType.WEEKLY_SHOP ='', TaskType.WEEKLY_SHOP\\); print\\(''Priority ='', TASK_PRIORITY.get\\(TaskType.WEEKLY_SHOP\\)\\); print\\(''Default config ='', DEFAULT_TASK_CONFIG.get\\(''每周商店''\\)\\); print\\(''All imports OK''\\)\")",
+      "Bash(venvScriptspython.exe -c \"from app.modules.executor.weekly_shop import WeeklyShopExecutor; from app.core.constants import TaskType, TASK_PRIORITY, DEFAULT_TASK_CONFIG; print\\(''TaskType.WEEKLY_SHOP ='', TaskType.WEEKLY_SHOP\\); print\\(''Priority ='', TASK_PRIORITY.get\\(TaskType.WEEKLY_SHOP\\)\\); print\\(''Default config ='', DEFAULT_TASK_CONFIG.get\\(''每周商店''\\)\\); print\\(''All imports OK''\\)\")",
+      "Bash(PYTHONPATH=src venv/Scripts/alembic.exe revision:*)",
+      "Bash(wmic:*)",
+      "Bash(venvScriptspython -c \"from app.modules.ui.dialog_detector import detect_dialog; from app.modules.vision.region_analysis import region_mean_brightness; img=''MuMu-20260213-120731-199.png''; b=region_mean_brightness\\(img,\\(50,460,650,70\\)\\); t=region_mean_brightness\\(img,\\(0,50,960,200\\)\\); print\\(f''bottom={b:.1f} top={t:.1f} contrast={t-b:.1f}''\\); print\\(f''detect_dialog={detect_dialog\\(img\\)}''\\)\")"
     ],
     "deny": [],
     "ask": []
