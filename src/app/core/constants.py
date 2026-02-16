@@ -20,12 +20,16 @@ class AccountProgress(str, Enum):
 class TaskType(str, Enum):
     """任务类型"""
     INIT = "起号"
-    # --- 起号专用（一次性） ---
+    # --- 起号专用（重复） ---
     INIT_COLLECT_REWARD = "起号_领取奖励"
     INIT_RENT_SHIKIGAMI = "起号_租借式神"
     # --- 起号专用（重复） ---
     INIT_NEWBIE_QUEST = "起号_新手任务"
     INIT_EXP_DUNGEON = "起号_经验副本"
+    INIT_COLLECT_JINNANG = "起号_领取锦囊"
+    INIT_SHIKIGAMI_TRAIN = "起号_式神养成"
+    INIT_FANHE_UPGRADE = "起号_升级饭盒"
+    COLLECT_ACHIEVEMENT = "领取成就奖励"
     # --- 常规任务 ---
     FOSTER = "寄养"
     XUANSHANG = "悬赏"
@@ -45,6 +49,12 @@ class TaskType(str, Enum):
     DAILY_SUMMON = "每日一抽"
     WEEKLY_SHOP = "每周商店"
     MIWEN = "秘闻"
+    YUHUN = "御魂"
+    DOUJI = "斗技"
+    SIGNIN = "签到"
+    WEEKLY_SHARE = "每周分享"
+    SUMMON_GIFT = "召唤礼包"
+    COLLECT_FANHE_JIUHU = "领取饭盒酒壶"
     REST = "休息"
 
 
@@ -85,15 +95,21 @@ TASK_PRIORITY = {
     TaskType.INIT_RENT_SHIKIGAMI: 98,
     TaskType.INIT_EXP_DUNGEON: 95,
     TaskType.INIT_NEWBIE_QUEST: 93,
+    TaskType.INIT_COLLECT_JINNANG: 92,
+    TaskType.INIT_SHIKIGAMI_TRAIN: 96,
+    TaskType.INIT_FANHE_UPGRADE: 94,
+    TaskType.COLLECT_ACHIEVEMENT: 91,
     TaskType.ADD_FRIEND: 90,  # 加好友优先级提高，起号后优先执行
     TaskType.COOP: 80,
     TaskType.XUANSHANG: 70,
     TaskType.DELEGATE_HELP: 65,
     TaskType.FOSTER: 60,
     TaskType.COLLECT_LOGIN_GIFT: 55,  # 登录礼包（进入游戏后优先领取）
-    TaskType.EXPLORE: 50,  # 探索突破
+    TaskType.SIGNIN: 56,  # 签到（进入游戏后优先执行）
+    TaskType.EXPLORE: 21,  # 探索突破（最低功能性任务）
     TaskType.MIWEN: 49,
     TaskType.FENGMO: 48,
+    TaskType.YUHUN: 47,
     TaskType.COLLECT_MAIL: 45,
     TaskType.DIGUI: 46,
     TaskType.DAOGUAN: 44,
@@ -102,7 +118,11 @@ TASK_PRIORITY = {
     TaskType.LIAO_SHOP: 42,
     TaskType.DAILY_SUMMON: 38,
     TaskType.WEEKLY_SHOP: 41,
+    TaskType.WEEKLY_SHARE: 39,
+    TaskType.SUMMON_GIFT: 37,
+    TaskType.COLLECT_FANHE_JIUHU: 54,
     TaskType.CLIMB_TOWER: 35,
+    TaskType.DOUJI: 36,
     TaskType.REST: 20,
 }
 
@@ -130,7 +150,10 @@ DEFAULT_TASK_CONFIG = {
     },
     "探索突破": {
         "enabled": True,
-        "stamina_threshold": 1000,  # 体力阈值，executor 通过 OCR 检查
+        "sub_explore": True,        # 是否执行探索
+        "sub_tupo": True,           # 是否执行突破
+        "stamina_threshold": 1000,  # 保留体力底线，体力低于此值时不执行（0=不限制）
+        "difficulty": "normal",     # 探索难度："normal" | "hard"
         "next_time": "2020-01-01 00:00",  # 时间触发
         "fail_delay": 30,
     },
@@ -205,19 +228,51 @@ DEFAULT_TASK_CONFIG = {
     },
     "签到": {
         "enabled": False,
-        "status": "未签到",
-        "signed_date": None
-    }
+        "next_time": "2020-01-01 00:00",
+        "fail_delay": 30,
+    },
+    "御魂": {
+        "enabled": False,
+        "run_count": 0,
+        "remaining_count": 0,
+        "unlocked_count": 0,
+        "target_level": 10,
+        "fail_delay": 2880,
+    },
+    "每周分享": {
+        "enabled": True,
+        "next_time": "2020-01-01 00:00",
+        "fail_delay": 30,
+    },
+    "召唤礼包": {
+        "enabled": True,
+        "next_time": "2020-01-01 00:00",
+        "fail_delay": 30,
+    },
+    "领取饭盒酒壶": {
+        "enabled": True,
+        "next_time": "2020-01-01 00:00",
+        "fail_delay": 30,
+    },
+    "斗技": {
+        "enabled": False,
+        "start_hour": 12,
+        "end_hour": 23,
+        "mode": "honor",
+        "target_score": 2000,
+        "next_time": "2020-01-01 00:00",
+        "fail_delay": 30,
+    },
 }
 
 # 起号阶段任务默认配置
 DEFAULT_INIT_TASK_CONFIG = {
-    # === 阶段 1：一次性前置任务 ===
+    # === 重复任务（按优先级/间隔并行调度）===
     "起号_租借式神": {
         "enabled": True,
-        "completed": False,
+        "next_time": "2020-01-01 00:00",
+        "fail_delay": 30,
     },
-    # === 阶段 2：重复任务（阶段1完成后按优先级/间隔并行调度）===
     "起号_领取奖励": {
         "enabled": True,
         "next_time": "2020-01-01 00:00",
@@ -233,16 +288,39 @@ DEFAULT_INIT_TASK_CONFIG = {
         "next_time": "2020-01-01 00:00",
         "fail_delay": 30,
     },
+    "起号_领取锦囊": {
+        "enabled": True,
+        "next_time": "2020-01-01 00:00",
+        "fail_delay": 30,
+    },
+    "起号_式神养成": {
+        "enabled": True,
+        "next_time": "2020-01-01 00:00",
+        "fail_delay": 30,
+    },
+    "起号_升级饭盒": {
+        "enabled": True,
+        "next_time": "2020-01-01 00:00",
+        "fail_delay": 30,
+    },
     "探索突破": {
         "enabled": True,
+        "sub_explore": True,
+        "sub_tupo": True,
         "stamina_threshold": 1000,
+        "difficulty": "normal",
+        "next_time": "2020-01-01 00:00",
+        "fail_delay": 30,
+    },
+    "爬塔": {
+        "enabled": True,
         "next_time": "2020-01-01 00:00",
         "fail_delay": 30,
     },
     "签到": {
         "enabled": True,
-        "status": "未签到",
-        "signed_date": None,
+        "next_time": "2020-01-01 00:00",
+        "fail_delay": 30,
     },
     "地鬼": {
         "enabled": True,
@@ -279,6 +357,50 @@ DEFAULT_INIT_TASK_CONFIG = {
         "next_time": "2020-01-01 00:00",
         "fail_delay": 30,
     },
+    "领取登录礼包": {
+        "enabled": True,
+        "next_time": "2020-01-01 00:00",
+        "fail_delay": 30,
+    },
+    "每日一抽": {
+        "enabled": True,
+        "next_time": "2020-01-01 00:00",
+        "fail_delay": 30,
+    },
+    "弥助": {
+        "enabled": True,
+        "next_time": "2020-01-01 00:00",
+        "fail_delay": 30,
+    },
+    "领取成就奖励": {
+        "enabled": True,
+        "next_time": "2020-01-01 00:00",
+        "fail_delay": 30,
+    },
+    "每周分享": {
+        "enabled": True,
+        "next_time": "2020-01-01 00:00",
+        "fail_delay": 30,
+    },
+    "召唤礼包": {
+        "enabled": True,
+        "next_time": "2020-01-01 00:00",
+        "fail_delay": 30,
+    },
+    "领取饭盒酒壶": {
+        "enabled": True,
+        "next_time": "2020-01-01 00:00",
+        "fail_delay": 30,
+    },
+    "斗技": {
+        "enabled": False,
+        "start_hour": 12,
+        "end_hour": 23,
+        "mode": "honor",
+        "target_score": 2000,
+        "next_time": "2020-01-01 00:00",
+        "fail_delay": 30,
+    },
 }
 
 # 全局休息时间（0-6点）
@@ -312,3 +434,12 @@ def build_default_task_config(fail_delays: dict = None) -> dict:
                 and delay > 0):
             config[task_name]["fail_delay"] = int(delay)
     return config
+
+
+def build_default_explore_progress() -> dict:
+    """生成默认探索进度（28章全部未通关）。
+
+    Returns:
+        {"1": {"simple": false, "hard": false}, ..., "28": {"simple": false, "hard": false}}
+    """
+    return {str(i): {"simple": False, "hard": False} for i in range(1, 29)}

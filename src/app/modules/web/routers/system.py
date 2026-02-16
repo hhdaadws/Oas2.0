@@ -278,3 +278,32 @@ async def update_fail_delays(body: FailDelayConfig, db: Session = Depends(get_db
 
     logger.info("全局默认失败延迟配置已更新")
     return {"message": "保存成功", "delays": validated}
+
+
+# --------------- 全局任务开关 ---------------
+
+class TaskSwitchesUpdate(BaseModel):
+    switches: Dict[str, bool]  # {"召唤礼包": true/false}
+
+
+@router.get("/task-switches")
+async def get_task_switches(db: Session = Depends(get_db)):
+    """获取全局任务开关。"""
+    row = db.query(SystemConfig).order_by(SystemConfig.id.asc()).first()
+    switches = (row.global_task_switches or {}) if row else {}
+    return {"switches": switches}
+
+
+@router.put("/task-switches")
+async def update_task_switches(body: TaskSwitchesUpdate, db: Session = Depends(get_db)):
+    """更新全局任务开关。"""
+    row = db.query(SystemConfig).order_by(SystemConfig.id.asc()).first()
+    if not row:
+        row = SystemConfig()
+        db.add(row)
+    row.global_task_switches = body.switches
+    db.commit()
+    db.refresh(row)
+
+    logger.info("全局任务开关已更新")
+    return {"message": "保存成功", "switches": row.global_task_switches}

@@ -1,110 +1,20 @@
 """
-签到状态处理：
-- 到庭院后检测签到弹窗并执行点击操作
-- 两种签到流程：qiandao.png → qiandao_sure → exit 或 qiandao_1.png → jiangli → 关闭
-- 每日跨天重置签到状态
+签到 UI 操作：
+- 已在签到界面 → 日常 → 一键完成
 """
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
-
-from sqlalchemy.orm.attributes import flag_modified
-
-from ...core.timeutils import now_beijing
-from ...db.models import GameAccount
 
 if TYPE_CHECKING:
     from ..emu.adapter import EmulatorAdapter
 
 # 模板路径
-_QIANDAO = "assets/ui/templates/qiandao.png"
-_QIANDAO_X_TEMPLATES: list[str] = sorted(
-    p.as_posix() for p in Path("assets/ui/templates").glob("qiandao_[0-9]*.png")
-) or ["assets/ui/templates/qiandao_1.png"]
-_QIANDAO_SURE_TEMPLATES: list[str] = sorted(
-    p.as_posix() for p in Path("assets/ui/templates").glob("qiandao_sure_*.png")
-) or ["assets/ui/templates/qiandao_sure_1.png"]
+_QIANDAO_RICHANG = "assets/ui/templates/qiandao_richang.png"
+_QIANDAO_YIJIANWANCHENG = "assets/ui/templates/qiandao_yijianwancheng.png"
+_LINGQU_CHENGGONG = "assets/ui/templates/lingquchenggong.png"
 _EXIT = "assets/ui/templates/exit.png"
-_JIANGLI = "assets/ui/templates/jiangli.png"
-
-# 关闭奖励弹窗的固定坐标中心和随机半径
-_CLOSE_CX, _CLOSE_CY, _CLOSE_RADIUS = 20, 20, 20
-
-
-def _get_today_str() -> str:
-    return now_beijing().date().isoformat()
-
-
-def refresh_signin_status_if_new_day(account: GameAccount) -> bool:
-    """跨天重置：若不是今天，签到状态自动重置为未签到。"""
-    cfg = account.task_config or {}
-    signin = cfg.get("签到") if isinstance(cfg, dict) else None
-    if not isinstance(signin, dict):
-        return False
-
-    signed_date = signin.get("signed_date")
-    today = _get_today_str()
-    if signed_date == today:
-        return False
-
-    changed = False
-    if signin.get("status") != "未签到":
-        signin["status"] = "未签到"
-        changed = True
-    if signin.get("signed_date") is not None:
-        signin["signed_date"] = None
-        changed = True
-
-    if changed:
-        cfg["签到"] = signin
-        account.task_config = cfg
-    return changed
-
-
-def should_signin(account: GameAccount) -> bool:
-    """检查是否需要签到：已启用且今天尚未签到。"""
-    cfg = account.task_config or {}
-    if not isinstance(cfg, dict):
-        return False
-
-    signin = cfg.get("签到")
-    if not isinstance(signin, dict):
-        return False
-
-    if signin.get("enabled") is not True:
-        return False
-
-    today = _get_today_str()
-    if signin.get("status") == "已签到" and signin.get("signed_date") == today:
-        return False
-
-    return True
-
-
-def mark_signin_done(account: GameAccount, *, log: Any = None) -> bool:
-    """标记今天签到完成，写回 task_config。"""
-    cfg = account.task_config or {}
-    if not isinstance(cfg, dict):
-        return False
-
-    signin = cfg.get("签到")
-    if not isinstance(signin, dict):
-        return False
-
-    today = _get_today_str()
-    signin["status"] = "已签到"
-    signin["signed_date"] = today
-    cfg["签到"] = signin
-    account.task_config = cfg
-
-    if log:
-        try:
-            log.info(f"[签到] 签到完成: account={account.login_id}, date={today}")
-        except Exception:
-            pass
-    return True
 
 
 async def perform_signin(
@@ -112,145 +22,72 @@ async def perform_signin(
     capture_method: str = "adb",
     *,
     log: Any = None,
-    poll_timeout: float = 10.0,
-    poll_interval: float = 1.5,
+    popup_handler: Any = None,
 ) -> bool:
-    """在庭院中执行实际的签到 UI 操作。
+    """在签到界面中执行签到操作（调用前需已通过 ensure_ui 导航到签到界面）。
 
-    轮询检测签到弹窗，支持多个签到弹窗依次处理。
-    每完成一个签到流程后重置超时计时器，继续等待下一个弹窗。
-    当连续 poll_timeout 秒内没有新弹窗出现时，认为签到全部完成。
-    返回 True 表示至少完成一个签到，False 表示超时未检测到任何签到弹窗。
+    流程：点击 qiandao_richang.png → 点击 qiandao_yijianwancheng.png。
+    返回 True 表示签到完成，False 表示某一步失败。
     """
-    from ..vision.template import match_template
-    from ..vision.utils import random_point_in_circle
+    from ..executor.helpers import click_template
 
-    addr = adapter.cfg.adb_addr
-    elapsed = 0.0
-    completed_count = 0
+    label = "签到"
 
-    while elapsed < poll_timeout:
+    # Step 1: 点击日常签到 (qiandao_richang.png) — 可选步骤
+    # 进入签到界面后有概率已处于可一键完成状态，此步骤找不到时继续
+    ok = await click_template(
+        adapter, capture_method, _QIANDAO_RICHANG,
+        timeout=5.0, post_delay=1.5,
+        log=log, label=label, popup_handler=popup_handler,
+    )
+    if not ok:
+        if log:
+            log.info("[签到] 未检测到日常签到按钮，尝试直接点击一键完成")
+
+    # Step 2: 点击一键完成 (qiandao_yijianwancheng.png)
+    ok = await click_template(
+        adapter, capture_method, _QIANDAO_YIJIANWANCHENG,
+        timeout=8.0, post_delay=1.5,
+        log=log, label=label, popup_handler=popup_handler,
+    )
+    if not ok:
+        if log:
+            log.warning("[签到] 未检测到一键完成按钮 (qiandao_yijianwancheng.png)")
+        return False
+
+    # Step 3: 关闭领取成功弹窗 (lingquchenggong.png)
+    ok = await click_template(
+        adapter, capture_method, _LINGQU_CHENGGONG,
+        timeout=5.0, post_delay=1.0,
+        verify_gone=True, max_clicks=3, gone_interval=1.0,
+        log=log, label=label, popup_handler=popup_handler,
+    )
+    if not ok:
+        if log:
+            log.warning("[签到] 未检测到领取成功弹窗")
+
+    # Step 4: 处理可能出现的 exit.png 关闭按钮（可选步骤）
+    await click_template(
+        adapter, capture_method, _EXIT,
+        timeout=3.0, post_delay=1.0,
+        log=log, label=label, popup_handler=popup_handler,
+    )
+
+    # Step 5: 清理可能残留的弹窗
+    # 修复：lingquchenggong 被 exit 遮挡导致 verify_gone 误判，
+    # 点击 exit 后 lingquchenggong 重新出现的问题
+    if popup_handler is not None:
         screenshot = adapter.capture(capture_method)
-        if screenshot is None:
-            if log:
-                log.warning("[签到] 截图失败，稍后重试")
-            await asyncio.sleep(poll_interval)
-            elapsed += poll_interval
-            continue
+        if screenshot is not None:
+            dismissed = await popup_handler.check_and_dismiss(screenshot)
+            if dismissed > 0 and log:
+                log.info(f"[{label}] 清理了 {dismissed} 个残留弹窗")
 
-        # Flow A: 检测 qiandao.png
-        m = match_template(screenshot, _QIANDAO)
-        if m:
-            if log:
-                log.info("[签到] 检测到签到弹窗 (qiandao.png)")
-            adapter.adb.tap(addr, *m.center)
-            await asyncio.sleep(2.0)
-
-            # 等待 qiandao_sure_x.png
-            for _ in range(3):
-                ss = adapter.capture(capture_method)
-                if ss is not None:
-                    for tpl in _QIANDAO_SURE_TEMPLATES:
-                        ms = match_template(ss, tpl)
-                        if ms:
-                            adapter.adb.tap(addr, *ms.center)
-                            if log:
-                                tpl_name = Path(tpl).name
-                                log.info(f"[签到] 点击确认签到 ({tpl_name})")
-                            break
-                    else:
-                        await asyncio.sleep(1.0)
-                        continue
-                    break
-                await asyncio.sleep(1.0)
-
-            await asyncio.sleep(2.0)
-
-            # 等待 exit.png
-            for _ in range(3):
-                ss = adapter.capture(capture_method)
-                if ss is not None:
-                    me = match_template(ss, _EXIT)
-                    if me:
-                        adapter.adb.tap(addr, *me.center)
-                        if log:
-                            log.info("[签到] 点击退出 (exit.png)，回到庭院")
-                        break
-                await asyncio.sleep(1.0)
-
-            completed_count += 1
-            if log:
-                log.info(f"[签到] 第 {completed_count} 个签到流程完成，继续等待下一个签到弹窗...")
-            await asyncio.sleep(2.0)
-            elapsed = 0.0
-            continue
-
-        # Flow B: 检测 qiandao_x.png
-        m1 = None
-        matched_tpl = None
-        for tpl in _QIANDAO_X_TEMPLATES:
-            m1 = match_template(screenshot, tpl)
-            if m1:
-                matched_tpl = Path(tpl).name
-                break
-        if m1:
-            if log:
-                log.info(f"[签到] 检测到签到弹窗 ({matched_tpl})")
-            adapter.adb.tap(addr, *m1.center)
-            await asyncio.sleep(2.0)
-
-            # 检测 jiangli.png 然后随机点击关闭
-            ss = adapter.capture(capture_method)
-            if ss is not None:
-                mj = match_template(ss, _JIANGLI)
-                if mj and log:
-                    log.info("[签到] 检测到奖励弹窗 (jiangli.png)")
-
-            rx, ry = random_point_in_circle(_CLOSE_CX, _CLOSE_CY, _CLOSE_RADIUS)
-            adapter.adb.tap(addr, rx, ry)
-            if log:
-                log.info(f"[签到] 随机点击 ({rx}, {ry}) 关闭奖励弹窗")
-
-            completed_count += 1
-            if log:
-                log.info(f"[签到] 第 {completed_count} 个签到流程完成，继续等待下一个签到弹窗...")
-            await asyncio.sleep(2.0)
-            elapsed = 0.0
-            continue
-
-        await asyncio.sleep(poll_interval)
-        elapsed += poll_interval
-
-    if completed_count > 0:
-        if log:
-            log.info(f"[签到] 所有签到弹窗处理完毕，共完成 {completed_count} 个签到流程")
-        return True
-    else:
-        if log:
-            log.info("[签到] 超时未检测到签到弹窗，跳过")
-        return False
-
-
-def try_signin_if_needed(account: GameAccount, *, log: Any = None) -> bool:
-    """向后兼容：同步标记签到完成（不含 UI 操作）。
-
-    若需要实际 UI 签到，请改用 should_signin() + perform_signin() + mark_signin_done() 组合。
-    """
-    if not should_signin(account):
-        return False
-    return mark_signin_done(account, log=log)
-
-
-def mark_task_config_modified(account: GameAccount) -> None:
-    """标记 task_config 为脏字段，确保 SQLAlchemy 提交 JSON 修改。"""
-    flag_modified(account, "task_config")
+    if log:
+        log.info("[签到] 签到流程完成")
+    return True
 
 
 __all__ = [
-    "refresh_signin_status_if_new_day",
-    "should_signin",
     "perform_signin",
-    "mark_signin_done",
-    "try_signin_if_needed",
-    "mark_task_config_modified",
 ]

@@ -47,8 +47,9 @@ function waitForPort(url, timeoutMs = 30000) {
 
 // --- Start FastAPI backend ---
 function startBackend() {
-  const venvPython = path.join(ROOT_DIR, 'venv', 'Scripts', 'python.exe')
-  const uvicornModule = path.join(ROOT_DIR, 'venv', 'Scripts', 'uvicorn.exe')
+  const CONDA_ENV = 'D:\\Users\\ASUS\\anaconda3\\envs\\timeocr'
+  const condaPython = path.join(CONDA_ENV, 'python.exe')
+  const uvicornModule = path.join(CONDA_ENV, 'Scripts', 'uvicorn.exe')
 
   // Try uvicorn.exe first, fall back to python -m uvicorn
   const fs = require('fs')
@@ -58,7 +59,7 @@ function startBackend() {
     cmd = uvicornModule
     args = ['app.main:app', '--host', '127.0.0.1', '--port', String(BACKEND_PORT)]
   } else {
-    cmd = venvPython
+    cmd = condaPython
     args = ['-m', 'uvicorn', 'app.main:app', '--host', '127.0.0.1', '--port', String(BACKEND_PORT)]
   }
 

@@ -55,7 +55,8 @@ export const API_ENDPOINTS = {
   system: {
     settings: '/api/system/settings',
     captureBenchmark: '/api/system/capture/benchmark',
-    failDelays: '/api/system/fail-delays'
+    failDelays: '/api/system/fail-delays',
+    taskSwitches: '/api/system/task-switches'
   }
 }
 

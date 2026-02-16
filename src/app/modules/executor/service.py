@@ -73,6 +73,7 @@ class ExecutorService:
                 row,
                 system_config=syscfg,
                 on_done=self._on_task_done,
+                rescan_callback=self.rescan_account,
             )
             self._workers[row.id] = actor
             asyncio.create_task(actor.run_forever())
@@ -80,6 +81,16 @@ class ExecutorService:
         self._dispatcher_task = asyncio.create_task(self._dispatcher_loop())
         self._started = True
         self._log.info(f"ExecutorService started with {len(self._workers)} workers")
+
+        # 预加载 UI 模板到缓存
+        try:
+            from ..ui.detector import UIDetector
+            from ..ui.registry import registry as _global_registry
+            detector = UIDetector(_global_registry)
+            detector.warmup()
+            self._log.info("UI 模板预加载完成")
+        except Exception as e:
+            self._log.warning("UI 模板预加载失败（不影响运行）: {}", e)
 
     async def stop(self) -> None:
         if not self._started:
@@ -246,6 +257,20 @@ class ExecutorService:
 
             if self._pending:
                 self._have_items.set()
+
+    def rescan_account(self, account_id: int) -> List[TaskIntent]:
+        """为正在执行的 account 做即时 re-scan，收集新到期任务。
+
+        仅在 Worker 的 batch 执行完毕后、cleanup 之前调用。
+        此时 account_id 仍在 _running_accounts 中，不存在与 Feeder 的竞争。
+        """
+        from ..tasks.feeder import feeder as feeder_instance
+
+        try:
+            return feeder_instance.collect_due_tasks_for_account(account_id)
+        except Exception as e:
+            self._log.error(f"rescan_account 失败: account={account_id}, error={e}")
+            return []
 
     def enqueue(
         self, account_id: int, task_type: TaskType, payload: Optional[dict] = None

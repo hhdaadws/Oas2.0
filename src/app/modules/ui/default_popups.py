@@ -65,3 +65,109 @@ def register_default_popups(reg: Optional[PopupRegistry] = None) -> None:
         ],
         priority=50,
     ))
+
+    # NPC 剧情对话（底部深色对话框 + 跳过按钮）
+    r.register(PopupDef(
+        id="story_dialogue",
+        label="剧情对话",
+        detect_template=TemplateDef(
+            name="tiaoguo",
+            path="assets/ui/templates/tiaoguo.png",
+        ),
+        dismiss_actions=[
+            DismissAction(
+                type=DismissType.TAP_SELF,
+                post_delay_ms=1500,
+            ),
+        ],
+        priority=20,
+    ))
+
+    # 插画弹窗（全屏插画/过场画面，点击屏幕中心关闭）
+    r.register(PopupDef(
+        id="story_illustration",
+        label="插画弹窗",
+        detect_template=TemplateDef(
+            name="chahua",
+            path="assets/ui/templates/chahua.png",
+        ),
+        dismiss_actions=[
+            DismissAction(
+                type=DismissType.TAP,
+                tap_x=480,
+                tap_y=270,
+                post_delay_ms=1000,
+            ),
+        ],
+        priority=25,
+    ))
+
+    # 领取成功弹窗（点击自身关闭）
+    r.register(PopupDef(
+        id="lingquchenggong",
+        label="领取成功",
+        detect_template=TemplateDef(
+            name="lingquchenggong",
+            path="assets/ui/templates/lingquchenggong.png",
+        ),
+        dismiss_actions=[
+            DismissAction(
+                type=DismissType.TAP_SELF,
+                post_delay_ms=1500,
+            ),
+        ],
+        priority=15,
+    ))
+
+    # 获得奖励弹窗（点击左上角关闭，多处执行器共用）
+    r.register(PopupDef(
+        id="jiangli",
+        label="获得奖励",
+        detect_template=TemplateDef(
+            name="jiangli",
+            path="assets/ui/templates/jiangli.png",
+        ),
+        dismiss_actions=[
+            DismissAction(
+                type=DismissType.TAP,
+                tap_x=20,
+                tap_y=20,
+                post_delay_ms=1500,
+            ),
+        ],
+        priority=12,
+    ))
+
+    # 成就升级弹窗（点击自身关闭）
+    r.register(PopupDef(
+        id="chengjiu_shengji",
+        label="成就升级",
+        detect_template=TemplateDef(
+            name="chengjiu_shengji",
+            path="assets/ui/templates/chengjiu_shengji.png",
+        ),
+        dismiss_actions=[
+            DismissAction(
+                type=DismissType.TAP_SELF,
+                post_delay_ms=1500,
+            ),
+        ],
+        priority=13,
+    ))
+
+    # 通用弹窗2（点击自身关闭）
+    r.register(PopupDef(
+        id="popup_2",
+        label="通用弹窗2",
+        detect_template=TemplateDef(
+            name="popup_2",
+            path="assets/ui/templates/popup_2.png",
+        ),
+        dismiss_actions=[
+            DismissAction(
+                type=DismissType.TAP_SELF,
+                post_delay_ms=1500,
+            ),
+        ],
+        priority=50,
+    ))

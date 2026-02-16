@@ -2,44 +2,63 @@
 # 修改后自动生效（运行时热重载），无需重启服务
 #
 # action 类型说明：
-#   click_template  - 等待模板出现后点击（对应 helpers.click_template）
-#   click_text      - OCR 识别文字后点击（对应 helpers.click_text）
+#   click_template    - 等待模板出现后点击（对应 helpers.click_template）
+#   click_text        - OCR 识别文字后点击（对应 helpers.click_text）
 #   wait_for_template - 等待模板出现，不点击
-#   swipe           - 滑动操作，params: [x1, y1, x2, y2, duration_ms]
-#   tap             - 直接点击坐标，x/y
-#   sleep           - 等待，seconds
+#   swipe             - 滑动操作，params: [x1, y1, x2, y2, duration_ms]
+#   tap               - 直接点击坐标，x/y
+#   sleep             - 等待，seconds
 
 # === 全局开关 ===
 # false 时所有账号的爬塔任务均不调度
 enabled: true
 
-# === 从庭院导航到爬塔界面 ===
+# === 导航：庭院 → 爬塔主界面 → 地图 → 挑战界面 ===
 navigation:
   steps:
     - action: click_template
-      template: "assets/ui/templates/pata_entry.png"
+      template: "assets/ui/templates/climb/pata_rukou.png"
       timeout: 8.0
       settle: 0.5
       post_delay: 2.0
       label: "庭院-点击爬塔入口"
+      max_retries: 2
+      retry_delay: 1.0
 
-    # 如果需要多步导航，在此添加更多步骤，例如：
-    # - action: click_template
-    #   template: "assets/ui/templates/pata_floor.png"
-    #   timeout: 8.0
-    #   settle: 0.5
-    #   post_delay: 2.0
-    #   label: "选择楼层"
+    - action: wait_for_template
+      template: "assets/ui/templates/climb/pata_tag.png"
+      timeout: 8.0
+      label: "验证-爬塔主界面"
 
-  # 到达爬塔界面后的验证模板（确认导航成功）
-  verify_template: "assets/ui/templates/pata_tag.png"
+    - action: click_template
+      template: "assets/ui/templates/climb/pata_zhandou.png"
+      timeout: 8.0
+      settle: 0.5
+      post_delay: 2.0
+      label: "主界面-进入地图"
+
+    - action: wait_for_template
+      template: "assets/ui/templates/climb/pata_tag_ditu.png"
+      timeout: 8.0
+      label: "验证-地图界面"
+
+    - action: click_template
+      template: "assets/ui/templates/climb/pata_guaiwu.png"
+      timeout: 8.0
+      settle: 0.5
+      post_delay: 2.0
+      label: "地图-点击怪物"
+
+  # 到达挑战界面后的验证模板
+  verify_template: "assets/ui/templates/climb/tiaozhan.png"
   verify_timeout: 8.0
 
 # === 门票 OCR 识别 ===
-# 到达爬塔界面后，OCR 读取门票数量来决定战斗次数
+# 到达挑战界面后，OCR 读取门票数量来决定战斗次数
 ticket:
   # OCR 区域 (x, y, w, h)，960x540 分辨率下的绝对坐标
-  roi: [800, 20, 80, 25]
+  # 左上角 (583, 13)，右下角 (632, 34)
+  roi: [583, 13, 49, 21]
   # 可选关键词过滤（不填则直接解析 OCR 全文）
   keyword: ""
   # 战斗次数上限（防止 OCR 误读导致无限循环）
@@ -47,35 +66,80 @@ ticket:
   # OCR 失败时的默认门票数（null 表示直接失败）
   fallback: null
 
+# === 租借式神（首次战斗前执行） ===
+# 在挑战界面点击租借入口，找到目标式神并借用
+rent:
+  # 进入租借界面的按钮模板
+  enter_template: "assets/ui/templates/climb/pata_zujie.png"
+  # 要租借的式神模板（用于定位目标行）
+  shikigami_template: "assets/ui/templates/climb/shishen_1.png"
+  # 借用按钮模板（找同一水平线的进行点击）
+  borrow_button: "assets/ui/templates/climb/shishen_jieyong.png"
+  # 退出租借界面的按钮模板
+  exit_template: "assets/ui/templates/exit_dark.png"
+  # 同一水平线的 Y 坐标容差（像素）
+  y_tolerance: 30
+  # 等待超时
+  timeout: 8.0
+
+# === 阵容锁定管理 ===
+# 使用 zhenrong_lock.png 模板检测锁定状态
+lock:
+  # 锁定/解锁切换的点击坐标
+  toggle_pos: [611, 501]
+  # 锁图标搜索区域 (x, y, w, h)
+  detect_roi: [570, 470, 100, 60]
+  # 模板匹配阈值
+  detect_threshold: 0.80
+  # 切换验证最大重试次数
+  max_retries: 3
+
+# === 首次战斗阵容配置 ===
+# 首次战斗需要手动配置阵容（拖拽式神到指定位置）
+first_battle_lineup:
+  # 进入阵容配置界面的点击坐标（战斗模块标准坐标）
+  config_btn: [462, 446]
+  # 上阵式神模板（在阵容配置界面底部列表中搜索）
+  shangzhen_template: "assets/ui/templates/climb/shangzhen_shishen_1.png"
+  # 式神放置位置1（租借式神 → 此坐标）
+  lineup_pos_1: [127, 281]
+  # 式神放置位置2（座敷童子 → 此坐标）
+  lineup_pos_2: [297, 295]
+  # 拖拽持续时间（毫秒）
+  drag_duration_ms: 800
+
 # === 战斗配置 ===
 battle:
-  # 每轮战斗前的操作步骤
-  pre_battle:
-    - action: click_template
-      template: "assets/ui/templates/pata_tiaozhan.png"
-      timeout: 8.0
-      settle: 0.5
-      post_delay: 1.5
-      label: "爬塔-点击挑战"
-
-  # 战斗确认按钮模板（传给 run_battle 的 confirm_template）
-  # 设为 null 则跳过确认步骤
-  confirm_template: "assets/ui/templates/pata_tiaozhan_sure.png"
-
+  # 挑战按钮模板（点击进入战斗）
+  challenge_template: "assets/ui/templates/climb/tiaozhan.png"
+  # 奖励界面模板（战斗胜利后出现）
+  reward_template: "assets/ui/templates/zhandou_jiangli.png"
   # 战斗超时秒数
   battle_timeout: 120.0
 
-  # 每轮战斗结束后的操作（用于返回爬塔列表界面）
-  post_battle:
+# === 返回导航（任务完成后退回庭院） ===
+return_navigation:
+  steps:
     - action: click_template
-      template: "assets/ui/templates/exit.png"
+      template: "assets/ui/templates/back.png"
       timeout: 8.0
       settle: 0.5
-      post_delay: 1.5
-      label: "爬塔-返回列表"
+      post_delay: 2.0
+      label: "返回-挑战界面→地图"
 
-  # 最后一轮是否跳过 post_battle 步骤
-  skip_post_on_last: true
+    - action: click_template
+      template: "assets/ui/templates/back.png"
+      timeout: 8.0
+      settle: 0.5
+      post_delay: 2.0
+      label: "返回-地图→主界面"
+
+    - action: click_template
+      template: "assets/ui/templates/back.png"
+      timeout: 8.0
+      settle: 0.5
+      post_delay: 2.0
+      label: "返回-主界面→庭院"
 
 # === 失败策略 ===
 on_failure:

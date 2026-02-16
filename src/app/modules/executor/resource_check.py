@@ -15,7 +15,6 @@ from ..ui.assets import AssetType, get_asset_def
 # 任务资源需求注册表：task_type → [(asset_type, min_amount), ...]
 TASK_RESOURCE_REQUIREMENTS: Dict[TaskType, List[Tuple[AssetType, int]]] = {
     TaskType.DELEGATE_HELP: [(AssetType.STAMINA, 300)],
-    TaskType.EXPLORE: [(AssetType.STAMINA, 1000)],
 }
 
 

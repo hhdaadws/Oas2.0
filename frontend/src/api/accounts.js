@@ -44,6 +44,14 @@ export function updateTaskConfig(id, data) {
   })
 }
 
+// 获取休息配置
+export function getRestConfig(id) {
+  return request({
+    url: `/accounts/${id}/rest-config`,
+    method: 'get'
+  })
+}
+
 // 更新休息配置
 export function updateRestConfig(id, data) {
   return request({
@@ -98,6 +106,23 @@ export function getLineupConfig(id) {
 export function updateLineupConfig(id, data) {
   return request({
     url: `/accounts/${id}/lineup-config`,
+    method: 'put',
+    data
+  })
+}
+
+// 获取式神状态配置
+export function getShikigamiConfig(id) {
+  return request({
+    url: `/accounts/${id}/shikigami-config`,
+    method: 'get'
+  })
+}
+
+// 更新式神状态配置
+export function updateShikigamiConfig(id, data) {
+  return request({
+    url: `/accounts/${id}/shikigami-config`,
     method: 'put',
     data
   })

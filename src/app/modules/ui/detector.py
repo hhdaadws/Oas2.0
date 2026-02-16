@@ -3,7 +3,8 @@ from __future__ import annotations
 from typing import Optional, Tuple
 
 from ..vision import match_template, DEFAULT_THRESHOLD
-from ..vision.utils import load_image, pixel_match
+from ..vision.utils import load_image, pixel_match, to_gray
+from ..vision.template import _GRAY_TEMPLATE_CACHE
 from .registry import UIDef, UIRegistry
 from .types import UIDetectResult
 
@@ -12,6 +13,18 @@ class UIDetector:
     def __init__(self, registry: UIRegistry, default_threshold: float = DEFAULT_THRESHOLD) -> None:
         self.registry = registry
         self.default_threshold = default_threshold
+
+    def warmup(self) -> None:
+        """预加载所有已注册模板到缓存，消除首次使用延迟。"""
+        for ui in self.registry.all():
+            for tpl in ui.templates:
+                if tpl.path and isinstance(tpl.path, str):
+                    try:
+                        img = load_image(tpl.path)
+                        gray = to_gray(img)
+                        _GRAY_TEMPLATE_CACHE[tpl.path] = gray
+                    except Exception:
+                        pass
 
     def detect(self, image: bytes, *, threshold: Optional[float] = None) -> UIDetectResult:
         """Detect UI by scanning registered UIDef entries.
@@ -24,21 +37,24 @@ class UIDetector:
         best_score = 0.0
         best_debug: dict = {"anchors": {}}
 
-        # Preload big image once
+        # Preload big image once and convert to grayscale for reuse
         big = load_image(image)
+        big_gray = to_gray(big)
         for ui in self.registry.all():
-            s, debug = self._score_ui(big, ui, thr)
+            s, debug = self._score_ui(big, big_gray, ui, thr)
             if s > best_score:
                 best_score = s
                 best_ui = ui.id
                 best_debug = debug
+            if best_score >= 0.95:
+                break
 
         if best_score >= thr:
             best_debug["threshold"] = thr
             return UIDetectResult(ui=best_ui, score=best_score, debug=best_debug)
         return UIDetectResult(ui="UNKNOWN", score=best_score, debug={"threshold": thr})
 
-    def _score_ui(self, big_img, ui: UIDef, thr: float) -> tuple[float, dict]:
+    def _score_ui(self, big_img, big_gray, ui: UIDef, thr: float) -> tuple[float, dict]:
         score = 0.0
         tag_score = 0.0
         anchors: dict[str, dict] = {}
@@ -47,10 +63,10 @@ class UIDetector:
         for tpl in ui.templates:
             s = 0.0
             try:
-                # If ROI defined, crop big image
+                # If ROI defined, crop big image (use grayscale for matching)
                 if tpl.roi:
                     x, y, w, h = tpl.roi
-                    roi_img = big_img[y : y + h, x : x + w]
+                    roi_img = big_gray[y : y + h, x : x + w]
                     res = match_template(roi_img, tpl.path, threshold=tpl.threshold or thr)
                     if res:
                         s = res.score
@@ -63,7 +79,7 @@ class UIDetector:
                     else:
                         s = 0.0
                 else:
-                    res = match_template(big_img, tpl.path, threshold=tpl.threshold or thr)
+                    res = match_template(big_gray, tpl.path, threshold=tpl.threshold or thr)
                     if res:
                         s = res.score
                         cx, cy = res.center

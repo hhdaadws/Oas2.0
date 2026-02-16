@@ -7,7 +7,7 @@ from __future__ import annotations
 import asyncio
 import time
 from datetime import datetime, timedelta
-from typing import Any, Awaitable, Callable, List, Optional
+from typing import Any, Awaitable, Callable, List, Optional, Tuple
 
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -35,11 +35,21 @@ from .init_collect_reward import InitCollectRewardExecutor
 from .init_rent_shikigami import InitRentShikigamiExecutor
 from .init_newbie_quest import InitNewbieQuestExecutor
 from .init_exp_dungeon import InitExpDungeonExecutor
+from .init_collect_jinnang import InitCollectJinnangExecutor
+from .init_shikigami_train import InitShikigamiTrainExecutor
+from .init_fanhe_upgrade import InitFanheUpgradeExecutor
 from .digui import DiGuiExecutor
+from .explore import ExploreExecutor
 from .xuanshang import XuanShangExecutor
 from .climb_tower import ClimbTowerExecutor
 from .weekly_shop import WeeklyShopExecutor
 from .miwen import MiWenExecutor
+from .signin import SigninExecutor
+from .yuhun import YuHunExecutor
+from .collect_achievement import CollectAchievementExecutor
+from .summon_gift import SummonGiftExecutor
+from .weekly_share import WeeklyShareExecutor
+from .collect_fanhe_jiuhu import CollectFanheJiuhuExecutor
 from .db_logger import emit as db_log
 from .types import TaskIntent
 
@@ -47,6 +57,11 @@ from .types import TaskIntent
 _EXECUTOR_HAS_OWN_UPDATE = {
     TaskType.INIT,
     TaskType.INIT_COLLECT_REWARD,
+    TaskType.INIT_RENT_SHIKIGAMI,
+    TaskType.INIT_COLLECT_JINNANG,
+    TaskType.INIT_SHIKIGAMI_TRAIN,
+    TaskType.INIT_EXP_DUNGEON,
+    TaskType.INIT_FANHE_UPGRADE,
     TaskType.DELEGATE_HELP,
     TaskType.COLLECT_LOGIN_GIFT,
     TaskType.COLLECT_MAIL,
@@ -54,6 +69,11 @@ _EXECUTOR_HAS_OWN_UPDATE = {
     TaskType.LIAO_COIN,
     TaskType.ADD_FRIEND,
     TaskType.WEEKLY_SHOP,
+    TaskType.SIGNIN,
+    TaskType.YUHUN,
+    TaskType.COLLECT_ACHIEVEMENT,
+    TaskType.SUMMON_GIFT,
+    TaskType.COLLECT_FANHE_JIUHU,
 }
 
 # 弥助固定时间点
@@ -63,15 +83,20 @@ _GOUXIE_FIXED_TIMES = ["18:00", "21:00"]
 
 
 class WorkerActor:
+    _MAX_RESCAN_ROUNDS = 3  # re-scan 最大轮次
+    _PKG_NAME = "com.netease.onmyoji.wyzymnqsd_cps"
+
     def __init__(
         self,
         emulator_row: Emulator,
         system_config: Optional[SystemConfig],
         on_done: Optional[Callable[[int, bool], Awaitable[None] | None]],
+        rescan_callback: Optional[Callable[[int], List[TaskIntent]]] = None,
     ) -> None:
         self.emulator = emulator_row
         self.syscfg = system_config
         self.on_done = on_done
+        self.rescan_callback = rescan_callback
         self.inbox: asyncio.Queue[List[TaskIntent]] = asyncio.Queue()
         self.current: Optional[TaskIntent] = None
         self._stop = asyncio.Event()
@@ -131,12 +156,16 @@ class WorkerActor:
                 continue
 
             account_id = batch[0].account_id
-            batch_success = True
-            self._log.info(f"开始执行批次: account={account_id}, 任务数={len(batch)}")
+            overall_success = True
+            shared_adapter = None
+            shared_ui = None
+            rescan_round = 0
+
             task_names = ", ".join(
                 i.task_type.value if isinstance(i.task_type, TaskType) else str(i.task_type)
                 for i in batch
             )
+            self._log.info(f"开始执行批次: account={account_id}, 任务数={len(batch)}")
             db_log(account_id, f"开始执行批次 ({len(batch)}个任务: {task_names})")
 
             with SessionLocal() as db:
@@ -146,80 +175,175 @@ class WorkerActor:
 
             if not account:
                 self._log.warning(f"Account not found: {account_id}")
-                batch_success = False
+                overall_success = False
             else:
-                shared_adapter = None
-                shared_ui = None
-                batch_len = len(batch)
-                for i, intent in enumerate(batch):
-                    if self._stop.is_set():
+                # === 主循环：batch 执行 + re-scan ===
+                current_batch = batch
+                abort = False
+
+                while current_batch and not abort:
+                    batch_success, shared_adapter, shared_ui, abort = (
+                        await self._execute_batch_tasks(
+                            current_batch, account,
+                            shared_adapter=shared_adapter,
+                            shared_ui=shared_ui,
+                        )
+                    )
+
+                    if not batch_success:
+                        overall_success = False
+
+                    # 中断判断
+                    if abort or self._stop.is_set():
                         break
-                    is_last = (i == batch_len - 1)
-                    self.current = intent
-                    intent.started_at = datetime.utcnow()
-                    try:
-                        intent_task = asyncio.create_task(
-                            self._run_intent(
-                                intent, account,
-                                shared_adapter=shared_adapter,
-                                shared_ui=shared_ui,
-                                skip_cleanup=not is_last,
-                            )
+
+                    # re-scan：检查是否有新到期任务
+                    rescan_round += 1
+                    if rescan_round > self._MAX_RESCAN_ROUNDS:
+                        self._log.info(
+                            f"达到 re-scan 上限 ({self._MAX_RESCAN_ROUNDS}), "
+                            f"account={account_id}"
                         )
-                        ok = await self._wait_with_stale_timeout(
-                            intent_task, self._stale_timeout_sec
-                        )
-                        if ok:
-                            # 任务成功后统一更新 next_time
-                            self._update_next_time_for_intent(intent, account_id)
-                            task_name = intent.task_type.value if isinstance(intent.task_type, TaskType) else str(intent.task_type)
-                            db_log(account_id, f"{task_name}任务执行成功")
-                        else:
-                            batch_success = False
-                            task_name = intent.task_type.value if isinstance(intent.task_type, TaskType) else str(intent.task_type)
-                            db_log(account_id, f"{task_name}任务执行失败", level="WARNING")
-                            self._update_next_time_on_failure(intent, account_id)
-                        # 无论成功失败，都提取 adapter/ui 供后续任务复用
-                        if not shared_adapter and hasattr(self, '_last_executor_adapter'):
-                            shared_adapter = self._last_executor_adapter
-                        if not shared_ui and hasattr(self, '_last_executor_ui'):
-                            shared_ui = self._last_executor_ui
-                    except asyncio.TimeoutError:
-                        batch_success = False
-                        self._log.error(
-                            f"Intent stale timeout: account={intent.account_id}, "
-                            f"task={intent.task_type}, stale_limit={self._stale_timeout_sec}s"
-                        )
-                        task_name = intent.task_type.value if isinstance(intent.task_type, TaskType) else str(intent.task_type)
-                        db_log(intent.account_id, f"{task_name}任务空闲超时 ({self._stale_timeout_sec}s 无活动)", level="ERROR")
-                        self._update_next_time_on_failure(intent, account_id)
-                    except AccountExpiredException:
-                        batch_success = False
-                        self._log.warning(f"账号失效: account={intent.account_id}")
-                        self._mark_account_invalid(intent.account_id)
-                        db_log(intent.account_id, "账号登录失效，已标记为无效", level="ERROR")
-                        break  # 中断批次剩余任务
-                    except Exception as exc:
-                        batch_success = False
-                        self._log.error(f"Intent error: {exc}")
-                        task_name = intent.task_type.value if isinstance(intent.task_type, TaskType) else str(intent.task_type)
-                        db_log(intent.account_id, f"{task_name}任务异常: {str(exc)[:200]}", level="ERROR")
-                        self._update_next_time_on_failure(intent, account_id)
+                        break
+
+                    new_intents = self._do_rescan(account_id)
+                    if not new_intents:
+                        break
+
+                    new_task_names = ", ".join(
+                        i.task_type.value if isinstance(i.task_type, TaskType)
+                        else str(i.task_type)
+                        for i in new_intents
+                    )
+                    self._log.info(
+                        f"re-scan 发现 {len(new_intents)} 个新任务: "
+                        f"account={account_id}, tasks=[{new_task_names}]"
+                    )
+                    db_log(
+                        account_id,
+                        f"re-scan 追加 {len(new_intents)} 个新到期任务: {new_task_names}",
+                    )
+                    current_batch = new_intents
+
+                # === 所有轮次完成，最终 cleanup ===
+                self._final_cleanup(shared_adapter)
 
             self.current = None
             if self.on_done:
-                done_result = self.on_done(account_id, batch_success)
+                done_result = self.on_done(account_id, overall_success)
                 if asyncio.iscoroutine(done_result):
                     await done_result
 
-            self._log.info(f"批次执行完毕: account={account_id}, success={batch_success}")
+            self._log.info(
+                f"账号执行全部完毕: account={account_id}, "
+                f"success={overall_success}, rescan_rounds={rescan_round}"
+            )
             db_log(
                 account_id,
-                f"批次执行完毕 (结果: {'成功' if batch_success else '部分失败'})",
-                level="INFO" if batch_success else "WARNING",
+                f"账号执行全部完毕 (结果: {'成功' if overall_success else '部分失败'}, "
+                f"re-scan轮次: {rescan_round})",
+                level="INFO" if overall_success else "WARNING",
             )
 
         self._log.info("WorkerActor stopped")
+
+    async def _execute_batch_tasks(
+        self,
+        batch: List[TaskIntent],
+        account: GameAccount,
+        *,
+        shared_adapter=None,
+        shared_ui=None,
+    ) -> Tuple[bool, Any, Any, bool]:
+        """执行批次内所有任务，全部 skip_cleanup=True。
+
+        Returns:
+            (batch_success, shared_adapter, shared_ui, abort)
+            abort=True 表示 AccountExpiredException 或 stop 信号。
+        """
+        batch_success = True
+        abort = False
+        account_id = account.id
+
+        for intent in batch:
+            if self._stop.is_set():
+                abort = True
+                break
+            self.current = intent
+            intent.started_at = datetime.utcnow()
+            try:
+                intent_task = asyncio.create_task(
+                    self._run_intent(
+                        intent, account,
+                        shared_adapter=shared_adapter,
+                        shared_ui=shared_ui,
+                        skip_cleanup=True,
+                    )
+                )
+                ok = await self._wait_with_stale_timeout(
+                    intent_task, self._stale_timeout_sec
+                )
+                if ok:
+                    self._update_next_time_for_intent(intent, account_id)
+                    task_name = intent.task_type.value if isinstance(intent.task_type, TaskType) else str(intent.task_type)
+                    db_log(account_id, f"{task_name}任务执行成功")
+                else:
+                    batch_success = False
+                    task_name = intent.task_type.value if isinstance(intent.task_type, TaskType) else str(intent.task_type)
+                    db_log(account_id, f"{task_name}任务执行失败", level="WARNING")
+                    self._update_next_time_on_failure(intent, account_id)
+                # 提取 adapter/ui 供后续任务复用
+                if not shared_adapter and hasattr(self, '_last_executor_adapter'):
+                    shared_adapter = self._last_executor_adapter
+                if not shared_ui and hasattr(self, '_last_executor_ui'):
+                    shared_ui = self._last_executor_ui
+            except asyncio.TimeoutError:
+                batch_success = False
+                self._log.error(
+                    f"Intent stale timeout: account={intent.account_id}, "
+                    f"task={intent.task_type}, stale_limit={self._stale_timeout_sec}s"
+                )
+                task_name = intent.task_type.value if isinstance(intent.task_type, TaskType) else str(intent.task_type)
+                db_log(intent.account_id, f"{task_name}任务空闲超时 ({self._stale_timeout_sec}s 无活动)", level="ERROR")
+                self._update_next_time_on_failure(intent, account_id)
+            except AccountExpiredException:
+                batch_success = False
+                abort = True
+                self._log.warning(f"账号失效: account={intent.account_id}")
+                self._mark_account_invalid(intent.account_id)
+                db_log(intent.account_id, "账号登录失效，已标记为无效", level="ERROR")
+                break
+            except Exception as exc:
+                batch_success = False
+                self._log.error(f"Intent error: {exc}")
+                task_name = intent.task_type.value if isinstance(intent.task_type, TaskType) else str(intent.task_type)
+                db_log(intent.account_id, f"{task_name}任务异常: {str(exc)[:200]}", level="ERROR")
+                self._update_next_time_on_failure(intent, account_id)
+
+        return batch_success, shared_adapter, shared_ui, abort
+
+    def _do_rescan(self, account_id: int) -> List[TaskIntent]:
+        """通过 rescan_callback 获取新到期任务。"""
+        if not self.rescan_callback:
+            return []
+        try:
+            return self.rescan_callback(account_id)
+        except Exception as e:
+            self._log.error(f"rescan 回调异常: account={account_id}, error={e}")
+            return []
+
+    def _final_cleanup(self, shared_adapter) -> None:
+        """所有任务（含 re-scan）完成后关闭游戏。"""
+        if shared_adapter:
+            try:
+                shared_adapter.adb.force_stop(
+                    shared_adapter.cfg.adb_addr, self._PKG_NAME
+                )
+                self._log.info("最终 cleanup: 游戏已停止")
+            except Exception as e:
+                self._log.error(f"最终 cleanup 失败: {e}")
+        else:
+            self._log.info("最终 cleanup: 无 adapter，跳过")
 
     def _mark_account_invalid(self, account_id: int) -> None:
         """将账号状态标记为失效"""
@@ -284,6 +408,27 @@ class WorkerActor:
                 emulator_row=self.emulator,
                 system_config=self.syscfg,
             )
+        elif intent.task_type == TaskType.INIT_COLLECT_JINNANG:
+            executor = InitCollectJinnangExecutor(
+                worker_id=self.emulator.id,
+                emulator_id=self.emulator.id,
+                emulator_row=self.emulator,
+                system_config=self.syscfg,
+            )
+        elif intent.task_type == TaskType.INIT_SHIKIGAMI_TRAIN:
+            executor = InitShikigamiTrainExecutor(
+                worker_id=self.emulator.id,
+                emulator_id=self.emulator.id,
+                emulator_row=self.emulator,
+                system_config=self.syscfg,
+            )
+        elif intent.task_type == TaskType.INIT_FANHE_UPGRADE:
+            executor = InitFanheUpgradeExecutor(
+                worker_id=self.emulator.id,
+                emulator_id=self.emulator.id,
+                emulator_row=self.emulator,
+                system_config=self.syscfg,
+            )
         elif intent.task_type == TaskType.DELEGATE_HELP:
             executor = DelegateHelpExecutor(
                 worker_id=self.emulator.id,
@@ -333,6 +478,17 @@ class WorkerActor:
                 emulator_row=self.emulator,
                 system_config=self.syscfg,
             )
+        elif intent.task_type == TaskType.EXPLORE:
+            executor = ExploreExecutor(
+                worker_id=self.emulator.id,
+                emulator_id=self.emulator.id,
+                emulator_row=self.emulator,
+                system_config=self.syscfg,
+            )
+            # 注入中断回调：探索 yield point 时检查并执行高优先级任务
+            executor.interrupt_callback = self._make_interrupt_callback(
+                account, executor
+            )
         elif intent.task_type == TaskType.XUANSHANG:
             executor = XuanShangExecutor(
                 worker_id=self.emulator.id,
@@ -356,6 +512,48 @@ class WorkerActor:
             )
         elif intent.task_type == TaskType.MIWEN:
             executor = MiWenExecutor(
+                worker_id=self.emulator.id,
+                emulator_id=self.emulator.id,
+                emulator_row=self.emulator,
+                system_config=self.syscfg,
+            )
+        elif intent.task_type == TaskType.SIGNIN:
+            executor = SigninExecutor(
+                worker_id=self.emulator.id,
+                emulator_id=self.emulator.id,
+                emulator_row=self.emulator,
+                system_config=self.syscfg,
+            )
+        elif intent.task_type == TaskType.YUHUN:
+            executor = YuHunExecutor(
+                worker_id=self.emulator.id,
+                emulator_id=self.emulator.id,
+                emulator_row=self.emulator,
+                system_config=self.syscfg,
+            )
+        elif intent.task_type == TaskType.COLLECT_ACHIEVEMENT:
+            executor = CollectAchievementExecutor(
+                worker_id=self.emulator.id,
+                emulator_id=self.emulator.id,
+                emulator_row=self.emulator,
+                system_config=self.syscfg,
+            )
+        elif intent.task_type == TaskType.SUMMON_GIFT:
+            executor = SummonGiftExecutor(
+                worker_id=self.emulator.id,
+                emulator_id=self.emulator.id,
+                emulator_row=self.emulator,
+                system_config=self.syscfg,
+            )
+        elif intent.task_type == TaskType.WEEKLY_SHARE:
+            executor = WeeklyShareExecutor(
+                worker_id=self.emulator.id,
+                emulator_id=self.emulator.id,
+                emulator_row=self.emulator,
+                system_config=self.syscfg,
+            )
+        elif intent.task_type == TaskType.COLLECT_FANHE_JIUHU:
+            executor = CollectFanheJiuhuExecutor(
                 worker_id=self.emulator.id,
                 emulator_id=self.emulator.id,
                 emulator_row=self.emulator,
@@ -439,6 +637,69 @@ class WorkerActor:
         except Exception as e:
             self._log.error(f"更新失败延迟 next_time 失败: task={config_key}, account={account_id}, error={e}")
 
+    def _make_interrupt_callback(self, account: GameAccount, executor_ref):
+        """创建中断回调闭包，供长任务执行器在 yield point 调用。
+
+        探索等长时间执行器在每轮循环后调用此回调，检查是否有更高优先级
+        的到期任务需要插队执行。
+
+        Args:
+            account: 当前账号
+            executor_ref: 调用方执行器实例（用于获取其 adapter/ui）
+        """
+        from ...core.constants import TASK_PRIORITY
+
+        async def _interrupt_cb(current_priority: int) -> list[str]:
+            if not self.rescan_callback:
+                return []
+
+            due_intents = self.rescan_callback(account.id)
+            higher = [
+                i for i in due_intents
+                if TASK_PRIORITY.get(i.task_type, 0) > current_priority
+            ]
+            if not higher:
+                return []
+
+            higher.sort(
+                key=lambda i: TASK_PRIORITY.get(i.task_type, 0), reverse=True
+            )
+            task_names = [i.task_type.value for i in higher]
+            self._log.info(
+                f"[中断] 发现 {len(higher)} 个高优先级任务: {task_names}, "
+                f"account={account.id}"
+            )
+
+            completed = []
+            for hi in higher:
+                task_name = (
+                    hi.task_type.value
+                    if isinstance(hi.task_type, TaskType)
+                    else str(hi.task_type)
+                )
+                try:
+                    ok = await self._run_intent(
+                        hi, account,
+                        shared_adapter=executor_ref.adapter,
+                        shared_ui=executor_ref.ui,
+                        skip_cleanup=True,
+                    )
+                    if ok:
+                        self._update_next_time_for_intent(hi, account.id)
+                        self._log.info(f"[中断] {task_name} 执行成功")
+                    else:
+                        self._update_next_time_on_failure(hi, account.id)
+                        self._log.warning(f"[中断] {task_name} 执行失败")
+                    completed.append(task_name)
+                except Exception as exc:
+                    self._log.error(f"[中断] {task_name} 异常: {exc}")
+                    self._update_next_time_on_failure(hi, account.id)
+                    completed.append(task_name)
+
+            return completed
+
+        return _interrupt_cb
+
     @staticmethod
     def _compute_next_time(task_type: TaskType) -> Optional[str]:
         """根据任务类型计算下一次执行时间。"""
@@ -459,6 +720,7 @@ class WorkerActor:
             TaskType.DAOGUAN,
             TaskType.DAILY_SUMMON,
             TaskType.XUANSHANG,
+            TaskType.DOUJI,
         ):
             # 每日任务: 明天 00:01
             tomorrow = now_beijing().date() + timedelta(days=1)
@@ -474,6 +736,16 @@ class WorkerActor:
             days_until_monday = (7 - bj_now.weekday()) % 7 or 7
             next_monday = bj_now.date() + timedelta(days=days_until_monday)
             return f"{next_monday.isoformat()} 00:01"
+
+        if task_type == TaskType.WEEKLY_SHARE:
+            # 每周分享: +7天
+            bj_now = now_beijing()
+            return format_beijing_time(bj_now + timedelta(days=7))
+
+        if task_type == TaskType.SUMMON_GIFT:
+            # 召唤礼包: 明天 00:01
+            tomorrow = now_beijing().date() + timedelta(days=1)
+            return f"{tomorrow.isoformat()} 00:01"
 
         # 结界卡合成等条件触发型任务无需更新 next_time
         return None

@@ -1,11 +1,11 @@
 <?xml version='1.0' encoding='utf-8' standalone='yes' ?>
 <map>
-    <string name="regex_file_url_g37">https://nos.gameyw.netease.com/gameyw-gbox/regular_encode_g37_1770375341_457e9e81295a0df27d805c2a249282af.json.one_z6</string>
+    <string name="regex_file_url_g37">https://nos.gameyw.netease.com/gameyw-gbox/regular_encode_g37_1766459032_fe6924a06b0d2e82070151bfe4dc88a1.json.one_z6</string>
     <boolean name="downlaoding" value="false" />
     <boolean name="lu" value="false" />
     <string name="rstr">***</string>
     <string name="drpf">drpf-dep87.proxima.nie.netease.com</string>
-    <long name="update_data_time" value="1770712650517" />
+    <long name="update_data_time" value="1766573159533" />
     <boolean name="sig" value="false" />
     <boolean name="t2s" value="true" />
     <boolean name="enable" value="true" />

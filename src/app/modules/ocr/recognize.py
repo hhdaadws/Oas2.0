@@ -3,8 +3,11 @@ from __future__ import annotations
 
 from typing import List, Optional, Tuple
 
+import cv2
+import numpy as np
+
 from ..vision.utils import ImageLike, load_image
-from .engine import get_ocr_engine
+from .engine import get_ocr_engine, get_digit_ocr_engine
 from .types import OcrBox, OcrResult
 
 # ROI 类型：(x, y, w, h)，与 TemplateDef.roi 格式一致
@@ -59,6 +62,41 @@ def ocr(
                 confidence=float(confidence),
                 box=adjusted_box,
             ))
+
+    return OcrResult(boxes=boxes)
+
+
+def ocr_digits(
+    image: ImageLike,
+    *,
+    roi: Optional[Roi] = None,
+) -> OcrResult:
+    """对图像执行纯数字 OCR 识别（使用 ddddocr 引擎）。
+
+    适用于体力、功勋、勋章等已知为纯数字的 ROI 区域。
+    ddddocr 直接对整图分类，无需文本检测阶段，对小尺寸数字识别准确。
+
+    Args:
+        image: 图像来源（路径 / bytes / np.ndarray）
+        roi: 可选区域 (x, y, w, h)，仅识别该区域内的文字
+
+    Returns:
+        OcrResult，包含识别结果
+    """
+    engine = get_digit_ocr_engine()
+    img = load_image(image)
+
+    if roi:
+        x, y, w, h = roi
+        img = img[y : y + h, x : x + w]
+
+    # ddddocr 接受 PNG bytes
+    _, buf = cv2.imencode(".png", img)
+    text = engine.classification(buf.tobytes())
+
+    boxes: List[OcrBox] = []
+    if text:
+        boxes.append(OcrBox(text=text, confidence=1.0, box=[]))
 
     return OcrResult(boxes=boxes)
 

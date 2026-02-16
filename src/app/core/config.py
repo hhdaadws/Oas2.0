@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     
     # OCR
     paddle_ocr_lang: str = Field(default="ch", env="PADDLE_OCR_LANG")
-    ocr_model_dir: str = Field(default="C:/data/ocr_model", env="OCR_MODEL_DIR")
+    ocr_model_dir: str = Field(default="E:/newdata/data/ocr_model", env="OCR_MODEL_DIR")
     
     # 模拟器/启动配置
     mumu_manager_path: str = Field(default="", env="MUMU_MANAGER_PATH")

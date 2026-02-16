@@ -17,6 +17,7 @@ from ...db.base import SessionLocal
 from ...db.models import Emulator, GameAccount, SystemConfig, Task
 from ..emu.adapter import AdapterConfig, EmulatorAdapter
 from ..ocr.recognize import ocr as ocr_recognize
+from ..ocr.recognize import ocr_digits
 from ..ui.assets import parse_number
 from ..ui.manager import UIManager
 from ..vision.template import Match, match_template
@@ -111,7 +112,7 @@ class WeeklyShopExecutor(BaseExecutor):
 
     def _read_xunzhang(self, screenshot) -> Optional[int]:
         """OCR 读取勋章商店界面的勋章值"""
-        result = ocr_recognize(screenshot, roi=XUNZHANG_ROI)
+        result = ocr_digits(screenshot, roi=XUNZHANG_ROI)
         raw = result.text.strip()
         value = parse_number(raw)
         self.logger.info(f"[每周商店] 勋章 OCR: raw='{raw}' → value={value}")
@@ -317,6 +318,22 @@ class WeeklyShopExecutor(BaseExecutor):
             return {
                 "status": TaskStatus.SUCCEEDED,
                 "message": "未启用购买选项",
+                "timestamp": datetime.utcnow().isoformat(),
+            }
+
+        # 6b. 检查勋章是否足够购买任何一种已启用商品
+        enabled_costs = [
+            cost for _, cost, config_key, _ in ITEMS
+            if buy_options.get(config_key, True)
+        ]
+        min_cost = min(enabled_costs)
+        if xunzhang < min_cost:
+            self.logger.info(f"[每周商店] 勋章不足以购买任何商品: {xunzhang} < {min_cost}，直接结束")
+            self._update_next_time(all_done=True)
+            return {
+                "status": TaskStatus.SUCCEEDED,
+                "message": f"勋章不足({xunzhang})，无法购买任何商品",
+                "xunzhang": xunzhang,
                 "timestamp": datetime.utcnow().isoformat(),
             }
 

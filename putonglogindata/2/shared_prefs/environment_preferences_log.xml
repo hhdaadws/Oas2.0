@@ -1,4 +1,5 @@
 <?xml version='1.0' encoding='utf-8' standalone='yes' ?>
 <map>
-    <string name="getUrl">400</string>
+    <string name="getUrl">172</string>
+    <string name="download">555</string>
 </map>

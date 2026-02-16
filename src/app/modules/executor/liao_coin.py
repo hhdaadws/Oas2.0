@@ -111,6 +111,21 @@ class LiaoCoinExecutor(BaseExecutor):
         self.logger.info("[领取寮金币] 开始导航至寮界面")
         in_liao = await self.ui.ensure_ui("LIAO", max_steps=8, step_timeout=3.0)
         if not in_liao:
+            # 检测是否因为未加入寮
+            from .helpers import check_and_handle_liao_not_joined
+            not_joined = await check_and_handle_liao_not_joined(
+                self.adapter,
+                self.ui.capture_method,
+                self.current_account.id,
+                log=self.logger,
+                label="领取寮金币",
+            )
+            if not_joined:
+                return {
+                    "status": TaskStatus.SKIPPED,
+                    "reason": "账号未加入寮，已提交申请并延后寮任务",
+                    "timestamp": datetime.utcnow().isoformat(),
+                }
             self.logger.error("[领取寮金币] 导航到寮界面失败")
             return {
                 "status": TaskStatus.FAILED,

@@ -16,7 +16,6 @@ from ...db.base import SessionLocal
 from ...db.models import Emulator, GameAccount, SystemConfig, Task
 from ..emu.adapter import AdapterConfig, EmulatorAdapter
 from ..ui.manager import UIManager
-from ..tasks.signin import should_signin, perform_signin, mark_signin_done, mark_task_config_modified
 from .base import BaseExecutor
 
 # 渠道包名
@@ -145,26 +144,6 @@ class CollectLoginGiftExecutor(BaseExecutor):
                 "error": "游戏就绪失败",
                 "timestamp": datetime.utcnow().isoformat(),
             }
-
-        try:
-            with SessionLocal() as db:
-                account = (
-                    db.query(GameAccount)
-                    .filter(GameAccount.id == self.current_account.id)
-                    .first()
-                )
-                if account and should_signin(account):
-                    signed = await perform_signin(
-                        self.adapter,
-                        capture_method=self.ui.capture_method,
-                        log=self.logger,
-                    )
-                    if signed:
-                        mark_signin_done(account, log=self.logger)
-                        mark_task_config_modified(account)
-                        db.commit()
-        except Exception as e:
-            self.logger.warning(f"[签到] 签到操作失败（不影响主任务）: {e}")
 
         self.logger.info("[领取登录礼包] 开始导航至商店界面")
         in_shop = await self.ui.ensure_ui("SHANGDIAN", max_steps=6, step_timeout=3.0)

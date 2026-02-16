@@ -21,7 +21,7 @@ from ...core.config import settings
 from ...core.constants import (
     TaskType, TaskStatus, TASK_PRIORITY,
     DEFAULT_TASK_CONFIG, DEFAULT_INIT_TASK_CONFIG, GLOBAL_REST_START, GLOBAL_REST_END,
-    build_default_task_config
+    build_default_task_config, build_default_explore_progress
 )
 from ...db.base import SessionLocal
 from ...db.models import (
@@ -738,7 +738,8 @@ class TaskScheduler:
                     zone=zone,
                     progress="init",
                     status=1,
-                    task_config=deepcopy(DEFAULT_INIT_TASK_CONFIG)
+                    task_config=deepcopy(DEFAULT_INIT_TASK_CONFIG),
+                    explore_progress=build_default_explore_progress(),
                 )
                 db.add(account)
                 db.commit()

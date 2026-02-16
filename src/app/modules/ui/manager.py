@@ -7,6 +7,7 @@ from loguru import logger
 
 from ..emu.adapter import EmulatorAdapter
 from ..vision import DEFAULT_THRESHOLD
+from ..vision.template import match_template
 from .registry import UIRegistry, registry as _global_registry
 from .detector import UIDetector
 from .graph import UIGraph, apply_edge
@@ -19,6 +20,9 @@ if TYPE_CHECKING:
 
 ENTER_TAP_X = 487
 ENTER_TAP_Y = 447
+
+EXIT_TEMPLATE = "assets/ui/templates/exit.png"
+BACK_TEMPLATE = "assets/ui/templates/back.png"
 
 
 class AccountExpiredException(Exception):
@@ -60,12 +64,33 @@ class UIManager(UIManagerProtocol):
             image = self.adapter.capture(self.capture_method)
         return self.detector.detect(image)
 
+    def _try_click_exit_or_back(self, image: bytes) -> bool:
+        """尝试在截图中匹配 exit/back 按钮并点击。
+
+        用于 ENTER→庭院 过渡期间，处理可能出现的中间界面。
+
+        Returns:
+            True 表示找到并点击了按钮，False 表示未找到。
+        """
+        for label, tpl_path in [("exit", EXIT_TEMPLATE), ("back", BACK_TEMPLATE)]:
+            m = match_template(image, tpl_path)
+            if m is not None:
+                cx, cy = m.center
+                logger.info("_try_click_exit_or_back: 检测到 {} 按钮 score={:.3f}，点击 ({}, {})", label, m.score, cx, cy)
+                self.adapter.tap(cx, cy)
+                return True
+        return False
+
+    def warmup(self) -> None:
+        """预加载所有模板到缓存。"""
+        self.detector.warmup()
+
     async def ensure_ui(
         self,
         target: str,
         *,
         max_steps: int = 8,
-        step_timeout: float = 3.0,
+        step_timeout: float = 2.0,
         threshold: float | None = None,
     ) -> bool:
         # quick check
@@ -97,10 +122,17 @@ class UIManager(UIManagerProtocol):
                 if cur.ui == target:
                     return True
                 continue
-            # execute one edge then re-check
+            # execute one edge then poll for UI change
+            old_ui = cur.ui
             await apply_edge(self.adapter, path[0], cur, detect_fn=self.detect_ui)
-            await asyncio.sleep(step_timeout)
-            cur = self.detect_ui()
+            poll_interval = 0.3
+            waited = 0.0
+            while waited < step_timeout:
+                await asyncio.sleep(poll_interval)
+                waited += poll_interval
+                cur = self.detect_ui()
+                if cur.ui != old_ui:
+                    break
             if cur.ui == target:
                 return True
         return False
@@ -109,7 +141,7 @@ class UIManager(UIManagerProtocol):
         self,
         mode: str = "adb_monkey",
         timeout: float = 60.0,
-        poll_interval: float = 2.0,
+        poll_interval: float = 1.0,
     ) -> bool:
         """启动游戏并等待进入庭院界面。
 
@@ -152,6 +184,10 @@ class UIManager(UIManagerProtocol):
                 logger.warning("launch_game: 检测到账号失效界面(shixiao)")
                 raise AccountExpiredException("检测到账号失效界面")
 
+            # UNKNOWN 状态：尝试点击 exit/back 按钮（处理 ENTER→庭院 过渡中间界面）
+            if result.ui not in ("ENTER", "TINGYUAN", "SHIXIAO"):
+                self._try_click_exit_or_back(image)
+
         logger.warning("launch_game: 超时 ({:.0f}s) 未进入庭院", timeout)
         return False
 
@@ -159,7 +195,7 @@ class UIManager(UIManagerProtocol):
         self,
         *,
         timeout: float = 30.0,
-        poll_interval: float = 2.0,
+        poll_interval: float = 1.0,
     ) -> bool:
         """在不重启游戏的前提下，尝试从当前 UI 导航到庭院。"""
         elapsed = 0.0
@@ -187,6 +223,10 @@ class UIManager(UIManagerProtocol):
                 if ok:
                     logger.info("go_to_tingyuan: 通过 UI 跳转到庭院成功")
                     return True
+
+            else:
+                # UNKNOWN 状态：尝试点击 exit/back 按钮（处理 ENTER→庭院 过渡中间界面）
+                self._try_click_exit_or_back(image)
 
             await asyncio.sleep(poll_interval)
             elapsed += poll_interval
@@ -231,16 +271,18 @@ class UIManager(UIManagerProtocol):
                 logger.warning("ensure_game_ready: 检测到账号失效界面(shixiao)")
                 raise AccountExpiredException("检测到账号失效界面")
 
-            if cur.ui in {"ENTER", "TINGYUAN"}:
+            if cur.ui == "ENTER":
+                # ENTER 界面不在导航图中，必须完成进入流程到达庭院
                 ok = await self.go_to_tingyuan(timeout=min(timeout, 45.0), poll_interval=poll_interval)
                 if ok:
                     return True
 
             elif cur.ui != "UNKNOWN":
-                ok = await self.ensure_ui("TINGYUAN", max_steps=6, step_timeout=1.5)
-                if ok:
-                    logger.info("ensure_game_ready: UI 跳转到庭院成功")
-                    return True
+                # 游戏已启动且在可识别界面（庭院、商店、寮等），
+                # 直接返回 True，由后续 ensure_ui(target) 负责导航到目标界面。
+                # 这样批次内连续任务可以从上一个任务的结束界面直接导航，避免冗余回庭院。
+                logger.info("ensure_game_ready: 游戏已就绪，当前 UI={}", cur.ui)
+                return True
         except AccountExpiredException:
             raise
         except Exception as e:
@@ -248,7 +290,7 @@ class UIManager(UIManagerProtocol):
 
         logger.info("ensure_game_ready: 当前状态异常，执行重启流程")
         try:
-            self.adapter.force_stop()
+            self.adapter.stop_app()
         except Exception as e:
             logger.warning("ensure_game_ready: 停止游戏失败，继续尝试启动: {}", e)
 
@@ -277,6 +319,7 @@ class UIManager(UIManagerProtocol):
         """
         from .assets import get_asset_def
         from ..ocr.recognize import ocr as ocr_recognize
+        from ..ocr.recognize import ocr_digits
 
         asset_def = get_asset_def(asset_type)
         if asset_def is None:
@@ -293,25 +336,42 @@ class UIManager(UIManagerProtocol):
 
         # 等待指定模板出现，确认界面完全加载
         if asset_def.wait_template:
-            # 先点击固定坐标展开菜单（如庭院右下角展开按钮）
+            already_visible = False
             if asset_def.pre_tap:
-                tx, ty = asset_def.pre_tap
-                self.adapter.adb.tap(self.adapter.cfg.adb_addr, tx, ty)
-                logger.debug("read_asset: 点击 ({}, {}) 展开菜单", tx, ty)
-                await asyncio.sleep(1.0)
+                # 先检查 wait_template 是否已匹配（侧边栏是否已展开），
+                # 避免 toggle 关闭已展开的侧边栏
+                screenshot = self.adapter.capture(self.capture_method)
+                if screenshot is not None:
+                    templates = (
+                        [asset_def.wait_template]
+                        if isinstance(asset_def.wait_template, str)
+                        else asset_def.wait_template
+                    )
+                    for tpl in templates:
+                        if match_template(screenshot, tpl) is not None:
+                            already_visible = True
+                            logger.debug("read_asset: 模板 {} 已可见，跳过展开点击", tpl)
+                            break
 
-            from ..executor.helpers import wait_for_template
-            m = await wait_for_template(
-                self.adapter,
-                self.capture_method,
-                asset_def.wait_template,
-                timeout=8.0,
-                interval=1.0,
-                label=asset_def.label,
-            )
-            if not m:
-                logger.warning("read_asset: 等待 {} 模板超时", asset_def.wait_template)
-                return None
+                if not already_visible:
+                    tx, ty = asset_def.pre_tap
+                    self.adapter.adb.tap(self.adapter.cfg.adb_addr, tx, ty)
+                    logger.debug("read_asset: 点击 ({}, {}) 展开菜单", tx, ty)
+                    await asyncio.sleep(1.0)
+
+            if not already_visible:
+                from ..executor.helpers import wait_for_template
+                m = await wait_for_template(
+                    self.adapter,
+                    self.capture_method,
+                    asset_def.wait_template,
+                    timeout=8.0,
+                    interval=1.0,
+                    label=asset_def.label,
+                )
+                if not m:
+                    logger.warning("read_asset: 等待 {} 模板超时", asset_def.wait_template)
+                    return None
 
         # OCR 识别（带重试）
         for attempt in range(retries + 1):
@@ -321,7 +381,8 @@ class UIManager(UIManagerProtocol):
                 logger.warning("read_asset: 截图失败 (attempt={})", attempt + 1)
                 continue
 
-            result = ocr_recognize(image, roi=asset_def.roi)
+            recognize_fn = ocr_digits if asset_def.digit_only else ocr_recognize
+            result = recognize_fn(image, roi=asset_def.roi)
             raw_text = result.text.strip()
             logger.debug(
                 "read_asset: {} OCR 原始文本='{}' (attempt={})",

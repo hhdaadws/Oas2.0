@@ -24,6 +24,10 @@ class BaseExecutor(ABC):
         self.skip_cleanup: bool = False
         # 弹窗处理器（懒初始化）
         self._popup_handler: Optional[Any] = None
+        # 中断回调：长任务执行器可在 yield point 调用，检查并执行更高优先级任务
+        # 签名: async (current_priority: int) -> list[str]
+        # 返回已执行的任务类型名列表（空列表 = 无中断）
+        self.interrupt_callback: Optional[Any] = None
 
     @property
     def popup_handler(self) -> Optional[Any]:

@@ -154,13 +154,13 @@ const emulators = ref([])
 
 // 已抓取账号列表
 const accounts = ref([])
-const listType = ref('gouxie')
+const listType = ref('putong')
 
 // 表单
 const formRef = ref()
 const form = reactive({
   emulator_id: null,
-  pull_type: 'gouxie',
+  pull_type: 'putong',
   account_id: ''
 })
 

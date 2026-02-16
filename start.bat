@@ -7,17 +7,21 @@ echo.
 
 cd /d "%~dp0"
 
-REM Check if venv exists
-if not exist "venv\Scripts\python.exe" (
-    echo [ERROR] Python venv not found. Run: python -m venv venv
-    echo Then: venv\Scripts\pip install -r requirements.txt
+set CONDA_ENV=D:\Users\ASUS\anaconda3\envs\timeocr
+set CONDA_PYTHON=%CONDA_ENV%\python.exe
+set CONDA_PIP=%CONDA_ENV%\Scripts\pip.exe
+
+REM Check if conda env exists
+if not exist "%CONDA_PYTHON%" (
+    echo [ERROR] Conda env 'timeocr' not found at %CONDA_ENV%
+    echo Run: conda create -n timeocr python=3.10
     pause
     exit /b 1
 )
 
 REM Install Python dependencies
 echo [INFO] Installing Python dependencies...
-venv\Scripts\pip install -r requirements.txt -q
+"%CONDA_PIP%" install -r requirements.txt -q
 
 REM Check if frontend node_modules exists
 if not exist "frontend\node_modules" (

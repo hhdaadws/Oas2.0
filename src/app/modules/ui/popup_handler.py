@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Optional
 from loguru import logger
 
 from ..vision.template import match_template
-from ..vision.utils import load_image
+from ..vision.utils import load_image, to_gray
 from .popups import DismissType, PopupDef, PopupRegistry, popup_registry
 
 if TYPE_CHECKING:
@@ -47,6 +47,7 @@ class PopupHandler:
             匹配到的 PopupDef，未匹配返回 None
         """
         big = load_image(image)
+        big_gray = to_gray(big)
 
         for popup in self.registry.all_sorted():
             tpl = popup.detect_template
@@ -54,10 +55,10 @@ class PopupHandler:
                 threshold = tpl.threshold or 0.85
                 if tpl.roi:
                     x, y, w, h = tpl.roi
-                    roi_img = big[y:y + h, x:x + w]
+                    roi_img = big_gray[y:y + h, x:x + w]
                     m = match_template(roi_img, tpl.path, threshold=threshold)
                 else:
-                    m = match_template(big, tpl.path, threshold=threshold)
+                    m = match_template(big_gray, tpl.path, threshold=threshold)
                 if m:
                     self._log.info(
                         "检测到弹窗: {} (score={:.3f})",

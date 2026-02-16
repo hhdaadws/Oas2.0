@@ -15,6 +15,18 @@
       </div>
     </el-card>
 
+    <el-card style="margin-bottom: 20px">
+      <template #header>
+        <div class="card-header">
+          <span>全局任务开关</span>
+        </div>
+      </template>
+      <div style="display: flex; align-items: center">
+        <span style="margin-right: 10px">召唤礼包：</span>
+        <el-switch v-model="taskSwitches.召唤礼包" @change="saveTaskSwitches" />
+      </div>
+    </el-card>
+
     <el-row :gutter="20" class="stat-cards">
       <el-col :span="6">
         <el-card>
@@ -144,7 +156,7 @@
     <el-card class="queue-preview">
       <template #header>
         <div class="card-header">
-          <span>计划任务预览（按下次执行时间排序）</span>
+          <span>计划任务预览（已到期 + 等待中）</span>
         </div>
       </template>
 
@@ -156,9 +168,16 @@
             <el-tag :type="getPriorityType(row.priority)">{{ row.priority }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="next_time" label="下次执行时间">
+        <el-table-column prop="next_time" label="下次执行时间" min-width="180">
           <template #default="{ row }">
-            {{ row.next_time || '-' }}
+            <template v-if="row.is_due">
+              <el-tag type="danger" size="small">已到期</el-tag>
+              <span style="margin-left: 6px; color: #909399; font-size: 12px">{{ row.next_time }}</span>
+            </template>
+            <template v-else>
+              <el-tag type="success" size="small">等待中</el-tag>
+              <span style="margin-left: 6px">{{ row.next_time || '-' }}</span>
+            </template>
           </template>
         </el-table-column>
       </el-table>
@@ -229,6 +248,7 @@ const runningTasks = ref([])
 const queuePreview = ref([])
 const scheduledPreview = ref([])
 const schedulerRunning = ref(false)
+const taskSwitches = reactive({ '召唤礼包': false })
 const runtimeLogs = ref([])
 const runtimeLogFilter = reactive({ level: '', emulator_id: null })
 const runtimeEmulatorOptions = ref([])
@@ -322,6 +342,29 @@ const stopScheduler = async () => {
 const refreshData = () => {
   fetchData()
   ElMessage.success('数据已刷新')
+}
+
+const fetchTaskSwitches = async () => {
+  try {
+    const response = await apiRequest(API_ENDPOINTS.system.taskSwitches)
+    const data = await response.json()
+    const switches = data.switches || {}
+    taskSwitches['召唤礼包'] = Boolean(switches['召唤礼包'])
+  } catch (error) {
+    console.error('获取全局任务开关失败:', error)
+  }
+}
+
+const saveTaskSwitches = async () => {
+  try {
+    await apiRequest(API_ENDPOINTS.system.taskSwitches, {
+      method: 'PUT',
+      body: JSON.stringify({ switches: { '召唤礼包': taskSwitches['召唤礼包'] } })
+    })
+    ElMessage.success('全局任务开关已保存')
+  } catch (error) {
+    ElMessage.error('保存全局任务开关失败')
+  }
 }
 
 const mergeRuntimeLogs = (currentLogs, incomingLogs, maxItems = 80) => {
@@ -459,6 +502,7 @@ onMounted(async () => {
   await fetchData()
   await fetchLogs()
   await fetchRuntimeLogs(true)
+  await fetchTaskSwitches()
   coreRefreshTimer = setInterval(fetchData, 5000)
   runtimeLogTimer = setInterval(() => fetchRuntimeLogs(false), 15000)
   logRefreshTimer = setInterval(fetchLogs, 15000)

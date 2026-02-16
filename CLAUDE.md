@@ -10,13 +10,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ```bash
 python -m venv venv
 venv\Scripts\pip install -r requirements.txt
+cp .env.example .env  # 首次需复制，然后编辑 .env 填入本地配置
 ```
 
 ### 启动后端（Windows）
 ```powershell
-# PowerShell
-$env:PYTHONPATH="src"; venv\Scripts\uvicorn app.main:app --host 0.0.0.0 --port 9001
-
 # PowerShell（开发热重载）
 $env:PYTHONPATH="src"; venv\Scripts\uvicorn app.main:app --reload --host 0.0.0.0 --port 9001
 
@@ -35,7 +33,13 @@ venv\Scripts\python -m uvicorn app.main:app --app-dir src --reload --host 0.0.0.
 ```bash
 cd frontend && npm install && npm run dev
 ```
-前端默认端口 5173，后端端口 9001，CORS 已配置 `allow_origins=["*"]`。
+前端开发端口 9000（`vite.config.js` 配置），后端端口 9001。Vite 已配置 `/api` → `http://127.0.0.1:9001` 和 `/ws` → `ws://127.0.0.1:9001` 代理。后端 CORS 已配置 `allow_origins=["*"]`。
+
+### 一键启动
+```bash
+start.bat                    # Windows 一键启动（含 Electron 桌面端）
+cd desktop && npm run start  # 仅启动 Electron 桌面壳
+```
 
 ### 数据库迁移
 ```bash
@@ -60,6 +64,12 @@ black src
 flake8 src
 ```
 
+### 提交规范
+提交信息格式：`feat(scope): ...`、`fix: ...`、`chore: ...`。每次提交聚焦单一变更。
+
+### Windows 注意事项
+- PowerShell 读取文件时若出现乱码，使用 `-Encoding UTF8` 参数（如 `Get-Content -Encoding UTF8`）
+
 ## 架构总览
 
 阴阳师手游多账号自动化系统。通过 MuMu 模拟器运行多个游戏实例，用视觉识别（OCR + 模板匹配）驱动 UI 操作，调度器自动分发任务到各个模拟器 Worker。
@@ -77,8 +87,11 @@ Feeder（扫描器）→ ExecutorService（中央队列）→ WorkerActor（模�
 ### 任务执行器
 
 - **BaseExecutor**（`src/app/modules/executor/base.py`）：抽象基类，定义 `prepare() → execute() → cleanup()` 三阶段流程
-- 具体执行器：`CollectLoginGiftExecutor`、`DelegateHelpExecutor` 等
+- 具体执行器位于 `src/app/modules/executor/` 下，每个任务一个文件
 - 未实现的任务类型使用 `MockExecutor`（直接返回成功）
+- `worker.py` 的 `_run_intent()` 根据 `task_type` 选择执行器，`_compute_next_time()` 控制下次执行时间
+- 执行器若需自定义 `next_time` 更新，需加入 `_EXECUTOR_HAS_OWN_UPDATE` 集合并实现 `_update_next_time()`
+- **新增任务类型的完整指南见 `docs/add-new-task.md`**，涵盖常量、调度、执行器、API、前端 UI 全链路
 
 ### UI 系统
 
@@ -97,32 +110,60 @@ UIRegistry → UIDetector → UIGraph → UIManager → PopupHandler
 ### 视觉与 OCR
 
 - **模板匹配**（`src/app/modules/vision/template.py`）：OpenCV `matchTemplate` 用于 UI 识别
+- **专项视觉检测器**（`src/app/modules/vision/`）：
+  - `explore_detect.py` — 探索格子/光标检测
+  - `tupo_detect.py` — 结界突破卡片检测
+  - `yuhun_detect.py` — 御魂副本检测
+  - `battle_lineup_detect.py` — 战斗阵容检测
+  - `color_detect.py` — 基于颜色的 UI 元素检测
 - **OCR**（`src/app/modules/ocr/`）：PaddleOCR 中文识别，支持 ROI 裁剪优化。用于读取游戏内资源数值（体力、金币等）
 - 截图方式：`adb`（默认）或 `ipc`（MuMu IPC DLL）
+
+### 阵容系统
+
+`src/app/modules/lineup/` 管理战斗阵容配置。`LINEUP_SUPPORTED_TASKS` 定义支持阵容的任务列表。执行器通过 `get_lineup_for_task(account.lineup_config, "任务名")` 获取分组和位置。
+
+### 式神数据
+
+`src/app/modules/shikigami/` 管理式神（角色）相关数据与逻辑。
 
 ### 数据模型关系
 
 - `Email` 1→N `GameAccount`（一个邮箱最多 4 个游戏账号，不同区服）
 - `GameAccount.task_config`（JSON 字段）：存储每种任务的 `enabled`、`next_time` 等配置。Feeder 直接读取此字段判断任务是否到期
 - `GameAccount.progress`：`init`（初始化中）/ `ok`（正常）。Feeder 只扫描 `progress=ok` 的账号
+- `GameAccount.lineup_config`（JSON 字段）：按任务名存储阵容分组与位置
 - `Emulator` 1→1 `WorkerActor`（运行时绑定）
 - `CoopAccount`：勾协账号库（独立于 GameAccount），通过 `CoopPool` 与 GameAccount 配对
 
 ### 任务类型与优先级
 
-定义在 `src/app/core/constants.py`，中文 Enum 值：
+定义在 `src/app/core/constants.py`，中文 Enum 值。`TASK_PRIORITY` 字典控制执行顺序：
 
-| 优先级 | TaskType | 中文 | next_time 更新策略 |
-|--------|----------|------|-------------------|
-| 100 | INIT | 起号 | - |
-| 90 | ADD_FRIEND | 加好友 | 明天 00:01 |
-| 80 | COOP | 勾协 | 下一个 18:00/21:00 |
-| 70 | DELEGATE | 委托 | 下一个 12:00/18:00 |
-| 65 | DELEGATE_HELP | 弥助 | 下一个 00:00/06:00/12:00/18:00 |
-| 60 | FOSTER | 寄养 | +6 小时 |
-| 55 | COLLECT_LOGIN_GIFT | 领取登录礼包 | 自定义更新 |
-| 50 | EXPLORE | 探索突破 | +6 小时 |
-| 40 | CARD_SYNTHESIS | 结界卡合成 | 条件触发（explore_count≥40） |
+| 优先级 | TaskType | 说明 |
+|--------|----------|------|
+| 100 | INIT | 起号 |
+| 99-92 | INIT_* | 起号子任务（领取奖励、租借式神、经验副本、新手任务、领取锦囊） |
+| 90 | ADD_FRIEND | 加好友 |
+| 80 | COOP | 勾协 |
+| 70 | XUANSHANG | 悬赏 |
+| 65 | DELEGATE_HELP | 弥助 |
+| 60 | FOSTER | 寄养 |
+| 56 | SIGNIN | 签到 |
+| 55 | COLLECT_LOGIN_GIFT | 领取登录礼包 |
+| 50 | EXPLORE | 探索突破 |
+| 49 | MIWEN | 秘闻 |
+| 48 | FENGMO | 逢魔 |
+| 46 | DIGUI | 地鬼 |
+| 45 | COLLECT_MAIL | 领取邮件 |
+| 44 | DAOGUAN | 道馆 |
+| 43 | LIAO_COIN | 领取寮金币 |
+| 42 | LIAO_SHOP | 寮商店 |
+| 41 | WEEKLY_SHOP | 每周商店 |
+| 40 | CARD_SYNTHESIS | 结界卡合成（explore_count≥40 触发） |
+| 38 | DAILY_SUMMON | 每日一抽 |
+| 35 | CLIMB_TOWER | 爬塔 |
+| 20 | REST | 休息 |
 
 ### 前端
 
@@ -135,6 +176,10 @@ Vue 3 + Vite + Element Plus + Pinia。页面在 `frontend/src/views/`，API 封�
 ### 调度链路
 - **主链路**：`Feeder + ExecutorService`，`simple_scheduler` 仅作为兼容回退，新功能禁止接入
 - `/api/tasks/scheduler/start|stop|status` 控制的是 Feeder + ExecutorService，不是 simple_scheduler
+- `simple_scheduler` 启停接口已废弃（`/api/tasks/simple-scheduler/*`），仅保留兼容诊断，严禁在新功能中调用
+
+### 仪表盘数据源
+- `/api/dashboard` 与 `/api/stats/realtime` 优先使用 `executor_service.queue_info()` / `running_info()`，仅在无数据时回退旧预览
 
 ### 任务配置更新
 - `task_config` 更新必须采用"默认配置 + 现有配置 + 本次提交"的合并策略，禁止用默认值覆盖
@@ -145,7 +190,19 @@ Vue 3 + Vite + Element Plus + Pinia。页面在 `frontend/src/views/`，API 封�
 - 全局休息时间 0:00-6:00（`GLOBAL_REST_START`/`GLOBAL_REST_END`）
 - 每日随机休息 2-3 小时（`RestPlan` 由 Feeder 自动生成）
 
+### 环境配置
+- 首次开发复制 `.env.example` 为 `.env`，关键配置项：
+  - `DATABASE_URL`：SQLite 路径（默认 `sqlite:///./data.db`）
+  - `MUMU_MANAGER_PATH`、`ADB_PATH`：模拟器和 ADB 路径
+  - `OCR_MODEL_DIR`：PaddleOCR 模型目录（默认 `C:/data/ocr_model`）
+  - `JWT_SECRET`：首次启动自动生成并追加到 `.env`
+- `data.db`、`logs/`、`putonglogindata/`、`gouxielogindata/` 等为本地运行产物，不应提交
+
 ### 账号抓取
 - 游戏渠道包名：`com.netease.onmyoji.wyzymnqsd_cps`
 - 抓取数据源：`shared_prefs`（需 adb root）+ `clientconfig`
 - 保存到 `gouxielogindata/` 或 `putonglogindata/` 目录
+- 删除 API：`DELETE /api/account-pull/device-login-data/{emulator_id}` 默认仅删除 `shared_prefs`，`clientconfig` 需显式参数开启
+
+### 桌面端
+- Electron 壳层在 `desktop/`（入口 `desktop/main.js`），包装前端 Web 页面为桌面应用

@@ -16,7 +16,6 @@ from ...db.base import SessionLocal
 from ...db.models import Emulator, GameAccount, SystemConfig, Task
 from ..emu.adapter import AdapterConfig, EmulatorAdapter
 from ..ui.manager import UIManager
-from ..tasks.signin import should_signin, perform_signin, mark_signin_done, mark_task_config_modified
 from .base import BaseExecutor
 
 # 弥助固定执行时间点
@@ -136,22 +135,6 @@ class DelegateHelpExecutor(BaseExecutor):
 
         # 弥助占位：导航到委派界面即视为成功
         self.logger.info("[弥助] 开始导航至委派界面")
-        # 到庭院后优先签到（若勾选且未签到）
-        try:
-            with SessionLocal() as db:
-                account = db.query(GameAccount).filter(GameAccount.id == self.current_account.id).first()
-                if account and should_signin(account):
-                    signed = await perform_signin(
-                        self.adapter,
-                        capture_method=self.ui.capture_method,
-                        log=self.logger,
-                    )
-                    if signed:
-                        mark_signin_done(account, log=self.logger)
-                        mark_task_config_modified(account)
-                        db.commit()
-        except Exception as e:
-            self.logger.warning(f"[签到] 签到操作失败（不影响主任务）: {e}")
 
         in_weipai = await self.ui.ensure_ui("WEIPAI", max_steps=6, step_timeout=1.5)
         if not in_weipai:

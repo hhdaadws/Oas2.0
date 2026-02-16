@@ -36,11 +36,17 @@ class GameAccount(Base):
     gold = Column(Integer, default=0)        # 金币
     gongxun = Column(Integer, default=0)     # 功勋
     xunzhang = Column(Integer, default=0)    # 勋章
+    tupo_ticket = Column(Integer, default=0)  # 突破票
+    fanhe_level = Column(Integer, default=1)  # 饭盒等级（1-10）
+    jiuhu_level = Column(Integer, default=1)  # 酒壶等级（1-10）
+    liao_level = Column(Integer, default=0)   # 寮等级（0=未知）
     progress = Column(String(20), default="init", index=True)  # init|ok
     status = Column(Integer, default=1, index=True)  # 1=active|2=invalid
     current_task = Column(String(50), nullable=True)
     task_config = Column(JSON, default=dict)  # 任务配置
     lineup_config = Column(JSON, default=dict)  # 阵容分组配置
+    shikigami_config = Column(JSON, default=dict)  # 式神状态配置（init阶段）
+    explore_progress = Column(JSON, default=dict)  # 探索进度（1-28章通关状态）
     remark = Column(String(500), nullable=True, default="")  # 备注
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -75,6 +81,7 @@ class AccountRestConfig(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     account_id = Column(Integer, ForeignKey("game_accounts.id"), unique=True, nullable=False)
+    enabled = Column(Integer, default=1)  # 1=启用, 0=禁用
     mode = Column(String(20), default="random")  # random|custom
     rest_start = Column(String(10), nullable=True)  # HH:MM
     rest_duration = Column(Integer, default=2)  # 小时数
@@ -279,4 +286,5 @@ class SystemConfig(Base):
     pull_post_mode = Column(String(20), default="none")    # 抓取后建号模式: none|auto|confirm
     pull_default_zone = Column(String(50), default="樱之华")  # 抓取后建号默认区服
     default_fail_delays = Column(JSON, nullable=True)  # 全局默认失败延迟 {"寄养": 30, ...}
+    global_task_switches = Column(JSON, nullable=True)  # 全局任务开关 {"召唤礼包": true}
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

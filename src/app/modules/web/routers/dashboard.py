@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from ....core.constants import AccountStatus, DEFAULT_TASK_CONFIG, DEFAULT_INIT_TASK_CONFIG, TASK_PRIORITY, TaskType
-from ....core.timeutils import format_beijing_time, now_beijing
+from ....core.timeutils import format_beijing_time, is_time_reached, now_beijing
 from ....db.base import get_db
 from ....db.models import CoopAccount, GameAccount, Log
 from ...executor.service import executor_service
@@ -23,13 +23,14 @@ ENABLE_LEGACY_DASHBOARD_FALLBACK = False
 _TIME_TASK_KEYS = [
     "寄养", "悬赏", "弥助", "勾协", "加好友", "领取登录礼包", "领取邮件",
     "爬塔", "逢魔", "地鬼", "道馆", "寮商店", "领取寮金币", "每日一抽",
-    "每周商店", "秘闻", "探索突破",
+    "每周商店", "秘闻", "探索突破", "每周分享", "召唤礼包", "斗技",
 ]
 
 # 起号阶段：有 next_time 的时间类任务
 _INIT_TIME_TASK_KEYS = [
-    "起号_新手任务", "起号_经验副本",
+    "起号_新手任务", "起号_经验副本", "起号_领取锦囊",
     "探索突破", "地鬼", "每周商店", "寮商店", "领取寮金币", "领取邮件", "加好友",
+    "领取成就奖励", "每周分享", "召唤礼包", "斗技",
 ]
 
 # 起号阶段：一次性任务（无 next_time，用 completed 标记）
@@ -97,6 +98,7 @@ async def get_dashboard(db: Session = Depends(get_db)):
             "领取邮件": 45,
             "结界卡合成": 40,
             "爬塔": 35,
+            "斗技": 36,
             "休息": 20,
         }
         queue_preview = []
@@ -158,6 +160,7 @@ async def get_dashboard(db: Session = Depends(get_db)):
                     "task_type": task_key,
                     "next_time": "即时",
                     "priority": _get_priority(task_key),
+                    "is_due": True,
                 })
             # 时间类任务
             for task_key in _INIT_TIME_TASK_KEYS:
@@ -173,6 +176,7 @@ async def get_dashboard(db: Session = Depends(get_db)):
                     "task_type": task_key,
                     "next_time": next_time,
                     "priority": _get_priority(task_key),
+                    "is_due": is_time_reached(next_time),
                 })
         else:
             cfg = acc.task_config or DEFAULT_TASK_CONFIG.copy()
@@ -189,10 +193,19 @@ async def get_dashboard(db: Session = Depends(get_db)):
                     "task_type": task_key,
                     "next_time": next_time,
                     "priority": _get_priority(task_key),
+                    "is_due": is_time_reached(next_time),
                 })
-    # 按 next_time 排序，取前 20 个
-    scheduled_preview.sort(key=lambda x: x.get("next_time", ""))
-    scheduled_preview = scheduled_preview[:20]
+    # 分离已到期和未到期任务，分别排序后合并展示
+    due_tasks = [t for t in scheduled_preview if t.get("is_due")]
+    pending_tasks = [t for t in scheduled_preview if not t.get("is_due")]
+    due_tasks.sort(key=lambda x: x.get("next_time", ""))
+    pending_tasks.sort(key=lambda x: x.get("next_time", ""))
+    MAX_DUE = 20
+    MAX_TOTAL = 50
+    due_tasks = due_tasks[-MAX_DUE:] if len(due_tasks) > MAX_DUE else due_tasks
+    remaining_slots = MAX_TOTAL - len(due_tasks)
+    pending_tasks = pending_tasks[:remaining_slots]
+    scheduled_preview = due_tasks + pending_tasks
 
     return {
         "active_accounts": len(active_accounts),

@@ -1,5 +1,5 @@
 <?xml version='1.0' encoding='utf-8' standalone='yes' ?>
 <map>
-    <int name="cnt" value="2" />
-    <int name="speed" value="210" />
+    <int name="cnt" value="1" />
+    <int name="speed" value="102" />
 </map>

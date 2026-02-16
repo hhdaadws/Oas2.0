@@ -1,6 +1,6 @@
 """
 起号 - 领取可领取奖励执行器
-时间驱动的重复任务，每 8 小时执行一次。
+时间驱动的重复任务，每天执行一次。
 流程：导航到新手任务界面 → OCR 点击缘初之路 → 等待页面加载 → 一键领取奖励。
 """
 from __future__ import annotations
@@ -132,7 +132,7 @@ class InitCollectRewardExecutor(BaseExecutor):
         if not newbie_ok:
             self.logger.warning("[起号_领取奖励] 新手任务领取奖励步骤失败")
 
-        # 3. 更新 next_time (+8h)
+        # 3. 更新 next_time (+24h)
         self._update_next_time()
 
         self.logger.info(f"[起号_领取奖励] 执行完成: account_id={account.id}")
@@ -205,15 +205,54 @@ class InitCollectRewardExecutor(BaseExecutor):
             popup_handler=self.ui.popup_handler,
         )
         if not clicked:
-            self.logger.warning("[起号_领取奖励] 未检测到新手任务一键领取按钮")
+            self.logger.warning("[起号_领取奖励] 未检测到新手任务一键领取按钮，跳过步骤1")
+        else:
+            # 关闭奖励弹窗
+            await self._dismiss_jiangli("新手任务")
+
+        # ---- 领取步骤 2：点击领取奖励 → 一键领取 → 关闭弹窗 ----
+        self.logger.info("[起号_领取奖励] 开始领取步骤2")
+
+        # 2a. 点击 lingqu_jiangli.png（领取奖励按钮）
+        clicked_jiangli = await click_template(
+            self.adapter,
+            self.ui.capture_method,
+            "assets/ui/templates/lingqu_jiangli.png",
+            timeout=5.0,
+            interval=1.0,
+            settle=0.5,
+            post_delay=2.0,
+            log=self.logger,
+            label="起号_点击领取奖励",
+            popup_handler=self.ui.popup_handler,
+        )
+        if not clicked_jiangli:
+            self.logger.warning("[起号_领取奖励] 未检测到领取奖励按钮，跳过步骤2")
             return True
 
-        # 关闭奖励弹窗
-        await self._dismiss_jiangli("新手任务")
+        # 2b. 点击 yijianlingqu.png（一键领取）
+        clicked2 = await click_template(
+            self.adapter,
+            self.ui.capture_method,
+            "assets/ui/templates/jiangli_yijianlingqu.png",
+            timeout=5.0,
+            interval=1.0,
+            settle=0.5,
+            post_delay=2.0,
+            log=self.logger,
+            label="起号_步骤2一键领取",
+            popup_handler=self.ui.popup_handler,
+        )
+        if not clicked2:
+            self.logger.warning("[起号_领取奖励] 步骤2未检测到一键领取按钮")
+            return True
+
+        # 2c. 关闭弹窗（与步骤1相同）
+        await self._dismiss_jiangli("步骤2")
         return True
 
     async def _dismiss_jiangli(self, step_label: str) -> None:
-        """关闭 jiangli.png 奖励弹窗（统一模式）"""
+        """关闭 jiangli.png 奖励弹窗（统一模式），并处理可能出现的 chahua.png"""
         screenshot = self.adapter.capture(self.ui.capture_method)
         if screenshot is not None:
             if await self.ui.popup_handler.check_and_dismiss(screenshot) > 0:
@@ -239,11 +278,28 @@ class InitCollectRewardExecutor(BaseExecutor):
         )
         await asyncio.sleep(1.0)
 
+        # 关闭 jiangli 后可能出现 chahua.png，同样方式关闭
+        screenshot = self.adapter.capture(self.ui.capture_method)
+        if screenshot is not None:
+            chahua_result = match_template(
+                screenshot, "assets/ui/templates/chahua.png"
+            )
+            if chahua_result:
+                self.logger.info(
+                    f"[起号_领取奖励] {step_label} 检测到插画弹窗，点击关闭"
+                )
+                cx, cy = random_point_in_circle(20, 20, 20)
+                self.adapter.adb.tap(self.adapter.cfg.adb_addr, cx, cy)
+                self.logger.info(
+                    f"[起号_领取奖励] {step_label} 随机点击 ({cx}, {cy}) 关闭插画弹窗"
+                )
+                await asyncio.sleep(1.0)
+
     def _update_next_time(self) -> None:
-        """更新 next_time 为当前时间 +8 小时"""
+        """更新 next_time 为当前时间 +24 小时"""
         try:
             bj_now_str = format_beijing_time(now_beijing())
-            next_time = add_hours_to_beijing_time(bj_now_str, 8)
+            next_time = add_hours_to_beijing_time(bj_now_str, 24)
 
             with SessionLocal() as db:
                 account = (

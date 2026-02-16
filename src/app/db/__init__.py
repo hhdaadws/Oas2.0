@@ -14,11 +14,19 @@ def init_db():
     _migrate_login_id_unique_constraint()
     _migrate_system_config_columns()
     _migrate_lineup_config_column()
+    _migrate_shikigami_config_column()
+    _migrate_explore_progress_column()
     _migrate_remark_column()
     _migrate_asset_columns()
     _ensure_coop_schema()
     _migrate_pull_settings_columns()
     _migrate_default_fail_delays_column()
+    _migrate_global_task_switches_column()
+    _migrate_fanhe_level_column()
+    _migrate_jiuhu_level_column()
+    _migrate_liao_level_column()
+    _fix_fanhe_jiuhu_level_zero()
+    _migrate_rest_config_enabled_column()
     _ensure_performance_indexes()
 
 
@@ -161,6 +169,44 @@ def _migrate_lineup_config_column():
             pass
 
 
+def _migrate_shikigami_config_column():
+    """确保 game_accounts 表包含 shikigami_config 列。"""
+    try:
+        if engine.url.get_backend_name() != 'sqlite':
+            return
+        with engine.begin() as conn:
+            cols = [r[1] for r in conn.exec_driver_sql("PRAGMA table_info('game_accounts')").fetchall()]
+            if not cols or 'shikigami_config' in cols:
+                return
+            conn.exec_driver_sql("ALTER TABLE game_accounts ADD COLUMN shikigami_config JSON DEFAULT '{}'")
+    except Exception as e:
+        try:
+            from ..core.logger import logger
+            logger.error(f"shikigami_config 列迁移失败: {e}")
+        except Exception:
+            pass
+
+
+def _migrate_explore_progress_column():
+    """确保 game_accounts 表包含 explore_progress 列。"""
+    try:
+        if engine.url.get_backend_name() != 'sqlite':
+            return
+        with engine.begin() as conn:
+            cols = [r[1] for r in conn.exec_driver_sql("PRAGMA table_info('game_accounts')").fetchall()]
+            if not cols or 'explore_progress' in cols:
+                return
+            conn.exec_driver_sql(
+                "ALTER TABLE game_accounts ADD COLUMN explore_progress JSON DEFAULT '{}'"
+            )
+    except Exception as e:
+        try:
+            from ..core.logger import logger
+            logger.error(f"explore_progress 列迁移失败: {e}")
+        except Exception:
+            pass
+
+
 def _migrate_remark_column():
     """确保 game_accounts 表包含 remark 列。"""
     try:
@@ -188,7 +234,7 @@ def _migrate_asset_columns():
             cols = [r[1] for r in conn.exec_driver_sql("PRAGMA table_info('game_accounts')").fetchall()]
             if not cols:
                 return
-            for col_name in ("gouyu", "lanpiao", "gold", "gongxun", "xunzhang"):
+            for col_name in ("gouyu", "lanpiao", "gold", "gongxun", "xunzhang", "tupo_ticket"):
                 if col_name not in cols:
                     conn.exec_driver_sql(
                         f"ALTER TABLE game_accounts ADD COLUMN {col_name} INTEGER DEFAULT 0"
@@ -286,6 +332,126 @@ def _migrate_default_fail_delays_column():
         try:
             from ..core.logger import logger
             logger.error(f"default_fail_delays 列迁移失败: {e}")
+        except Exception:
+            pass
+
+
+def _migrate_global_task_switches_column():
+    """确保 system_config 表包含 global_task_switches 列。"""
+    try:
+        if engine.url.get_backend_name() != 'sqlite':
+            return
+        with engine.begin() as conn:
+            cols = [r[1] for r in conn.exec_driver_sql("PRAGMA table_info('system_config')").fetchall()]
+            if not cols or 'global_task_switches' in cols:
+                return
+            conn.exec_driver_sql(
+                "ALTER TABLE system_config ADD COLUMN global_task_switches JSON"
+            )
+    except Exception as e:
+        try:
+            from ..core.logger import logger
+            logger.error(f"global_task_switches 列迁移失败: {e}")
+        except Exception:
+            pass
+
+
+def _migrate_fanhe_level_column():
+    """确保 game_accounts 表包含 fanhe_level 列。"""
+    try:
+        if engine.url.get_backend_name() != 'sqlite':
+            return
+        with engine.begin() as conn:
+            cols = [r[1] for r in conn.exec_driver_sql("PRAGMA table_info('game_accounts')").fetchall()]
+            if not cols or 'fanhe_level' in cols:
+                return
+            conn.exec_driver_sql(
+                "ALTER TABLE game_accounts ADD COLUMN fanhe_level INTEGER DEFAULT 1"
+            )
+    except Exception as e:
+        try:
+            from ..core.logger import logger
+            logger.error(f"fanhe_level 列迁移失败: {e}")
+        except Exception:
+            pass
+
+
+def _migrate_jiuhu_level_column():
+    """确保 game_accounts 表包含 jiuhu_level 列。"""
+    try:
+        if engine.url.get_backend_name() != 'sqlite':
+            return
+        with engine.begin() as conn:
+            cols = [r[1] for r in conn.exec_driver_sql("PRAGMA table_info('game_accounts')").fetchall()]
+            if not cols or 'jiuhu_level' in cols:
+                return
+            conn.exec_driver_sql(
+                "ALTER TABLE game_accounts ADD COLUMN jiuhu_level INTEGER DEFAULT 1"
+            )
+    except Exception as e:
+        try:
+            from ..core.logger import logger
+            logger.error(f"jiuhu_level 列迁移失败: {e}")
+        except Exception:
+            pass
+
+
+def _migrate_liao_level_column():
+    """确保 game_accounts 表包含 liao_level 列。"""
+    try:
+        if engine.url.get_backend_name() != 'sqlite':
+            return
+        with engine.begin() as conn:
+            cols = [r[1] for r in conn.exec_driver_sql("PRAGMA table_info('game_accounts')").fetchall()]
+            if not cols or 'liao_level' in cols:
+                return
+            conn.exec_driver_sql(
+                "ALTER TABLE game_accounts ADD COLUMN liao_level INTEGER DEFAULT 0"
+            )
+    except Exception as e:
+        try:
+            from ..core.logger import logger
+            logger.error(f"liao_level 列迁移失败: {e}")
+        except Exception:
+            pass
+
+
+def _fix_fanhe_jiuhu_level_zero():
+    """将已有数据中 fanhe_level/jiuhu_level 为 0 的记录修正为 1（起始等级）。"""
+    try:
+        if engine.url.get_backend_name() != 'sqlite':
+            return
+        with engine.begin() as conn:
+            conn.exec_driver_sql(
+                "UPDATE game_accounts SET fanhe_level = 1 WHERE fanhe_level = 0"
+            )
+            conn.exec_driver_sql(
+                "UPDATE game_accounts SET jiuhu_level = 1 WHERE jiuhu_level = 0"
+            )
+    except Exception as e:
+        try:
+            from ..core.logger import logger
+            logger.error(f"修复 fanhe/jiuhu level 失败: {e}")
+        except Exception:
+            pass
+
+
+def _migrate_rest_config_enabled_column():
+    """确保 account_rest_configs 表包含 enabled 列。"""
+    try:
+        if engine.url.get_backend_name() != 'sqlite':
+            return
+        with engine.begin() as conn:
+            cols = [r[1] for r in conn.exec_driver_sql("PRAGMA table_info('account_rest_configs')").fetchall()]
+            if not cols or 'enabled' in cols:
+                return
+            conn.exec_driver_sql(
+                "ALTER TABLE account_rest_configs ADD COLUMN enabled INTEGER DEFAULT 1"
+            )
+    except Exception as e:
+        try:
+            from ..core.logger import logger
+            logger.error(f"rest_config enabled 列迁移失败: {e}")
         except Exception:
             pass
 

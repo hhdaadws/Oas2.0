@@ -21,10 +21,11 @@ from ....db.models import (
     CoopPool,
     Log,
 )
-from ....core.constants import DEFAULT_TASK_CONFIG, DEFAULT_INIT_TASK_CONFIG, AccountStatus, build_default_task_config
+from ....core.constants import DEFAULT_TASK_CONFIG, DEFAULT_INIT_TASK_CONFIG, AccountStatus, build_default_task_config, build_default_explore_progress
 from ....core.logger import logger
 from ...tasks import scheduler
 from ...lineup import LINEUP_SUPPORTED_TASKS, merge_lineup_with_defaults
+from ...shikigami import merge_shikigami_with_defaults
 
 
 router = APIRouter(prefix="/api/accounts", tags=["accounts"])
@@ -59,6 +60,10 @@ class AccountUpdate(BaseModel):
     gold: Optional[int] = None
     gongxun: Optional[int] = None
     xunzhang: Optional[int] = None
+    tupo_ticket: Optional[int] = None
+    fanhe_level: Optional[int] = None
+    jiuhu_level: Optional[int] = None
+    liao_level: Optional[int] = None
     remark: Optional[str] = None
 
 
@@ -84,7 +89,7 @@ class TaskConfigUpdate(BaseModel):
     daoguan: Optional[Dict[str, Any]] = Field(default=None, alias="道馆")
     signin: Optional[Dict[str, Any]] = Field(
         default=None, alias="签到"
-    )  # {enabled: bool, status: "已签到|未签到", signed_date: "YYYY-MM-DD"|null}
+    )  # {enabled: bool, next_time: str, fail_delay: int}
     liao_shop: Optional[Dict[str, Any]] = Field(default=None, alias="寮商店")
     liao_coin: Optional[Dict[str, Any]] = Field(default=None, alias="领取寮金币")
     daily_summon: Optional[Dict[str, Any]] = Field(default=None, alias="每日一抽")
@@ -95,14 +100,24 @@ class TaskConfigUpdate(BaseModel):
     init_rent_shikigami: Optional[Dict[str, Any]] = Field(default=None, alias="起号_租借式神")
     init_newbie_quest: Optional[Dict[str, Any]] = Field(default=None, alias="起号_新手任务")
     init_exp_dungeon: Optional[Dict[str, Any]] = Field(default=None, alias="起号_经验副本")
+    init_collect_jinnang: Optional[Dict[str, Any]] = Field(default=None, alias="起号_领取锦囊")
+    init_shikigami_train: Optional[Dict[str, Any]] = Field(default=None, alias="起号_式神养成")
+    init_fanhe_upgrade: Optional[Dict[str, Any]] = Field(default=None, alias="起号_升级饭盒")
+    collect_achievement: Optional[Dict[str, Any]] = Field(default=None, alias="领取成就奖励")
+    weekly_share: Optional[Dict[str, Any]] = Field(default=None, alias="每周分享")
+    summon_gift: Optional[Dict[str, Any]] = Field(default=None, alias="召唤礼包")
+    collect_fanhe_jiuhu: Optional[Dict[str, Any]] = Field(default=None, alias="领取饭盒酒壶")
+    yuhun: Optional[Dict[str, Any]] = Field(default=None, alias="御魂")
+    douji: Optional[Dict[str, Any]] = Field(default=None, alias="斗技")
 
 
 class RestConfigUpdate(BaseModel):
     """更新休息配置"""
 
-    mode: str = "random"  # random|custom
+    enabled: Optional[bool] = None
+    mode: Optional[str] = None  # random|custom
     start_time: Optional[str] = None  # HH:MM
-    duration: Optional[int] = 2  # 小时数
+    duration: Optional[int] = None  # 小时数
 
 
 def _get_global_fail_delays(db: Session) -> dict:
@@ -186,6 +201,14 @@ async def get_accounts(db: Session = Depends(get_db)):
                 account.updated_at = datetime.utcnow()
                 need_commit = True
 
+            rc = account.rest_config
+            rest_config_data = {
+                "enabled": bool(rc.enabled) if rc else True,
+                "mode": rc.mode if rc else "random",
+                "start_time": rc.rest_start if rc else None,
+                "duration": rc.rest_duration if rc else 2,
+            }
+
             email_data["children"].append(
                 {
                     "type": "game",
@@ -199,12 +222,19 @@ async def get_accounts(db: Session = Depends(get_db)):
                     "gold": account.gold,
                     "gongxun": account.gongxun,
                     "xunzhang": account.xunzhang,
+                    "tupo_ticket": account.tupo_ticket,
+                    "fanhe_level": account.fanhe_level,
+                "jiuhu_level": account.jiuhu_level,
+                    "liao_level": account.liao_level,
                     "status": account.status,
                     "progress": account.progress,
                     "current_task": account.current_task,
                     "task_config": normalized_task_config,
                     "lineup_config": account.lineup_config or {},
+                    "shikigami_config": merge_shikigami_with_defaults(account.shikigami_config or {}),
+                    "explore_progress": account.explore_progress or {},
                     "remark": account.remark or "",
+                    "rest_config": rest_config_data,
                 }
             )
 
@@ -222,6 +252,14 @@ async def get_accounts(db: Session = Depends(get_db)):
             account.updated_at = datetime.utcnow()
             need_commit = True
 
+        rc = account.rest_config
+        rest_config_data = {
+            "enabled": bool(rc.enabled) if rc else True,
+            "mode": rc.mode if rc else "random",
+            "start_time": rc.rest_start if rc else None,
+            "duration": rc.rest_duration if rc else 2,
+        }
+
         result.append(
             {
                 "type": "game",
@@ -235,12 +273,19 @@ async def get_accounts(db: Session = Depends(get_db)):
                 "gold": account.gold,
                 "gongxun": account.gongxun,
                 "xunzhang": account.xunzhang,
+                "tupo_ticket": account.tupo_ticket,
+                "fanhe_level": account.fanhe_level,
+                "jiuhu_level": account.jiuhu_level,
+                "liao_level": account.liao_level,
                 "status": account.status,
                 "progress": account.progress,
                 "current_task": account.current_task,
                 "task_config": normalized_task_config,
                 "lineup_config": account.lineup_config or {},
+                "shikigami_config": merge_shikigami_with_defaults(account.shikigami_config or {}),
+                "explore_progress": account.explore_progress or {},
                 "remark": account.remark or "",
+                "rest_config": rest_config_data,
             }
         )
 
@@ -298,6 +343,7 @@ async def create_game_account(
         progress="ok",  # ID账号默认已完成初始化
         status=AccountStatus.ACTIVE,
         task_config=build_default_task_config(_get_global_fail_delays(db)),
+        explore_progress=build_default_explore_progress(),
     )
     db.add(game_account)
     db.commit()
@@ -366,6 +412,14 @@ async def update_account(
         account.gongxun = update.gongxun
     if update.xunzhang is not None:
         account.xunzhang = update.xunzhang
+    if update.tupo_ticket is not None:
+        account.tupo_ticket = update.tupo_ticket
+    if update.fanhe_level is not None:
+        account.fanhe_level = update.fanhe_level
+    if update.jiuhu_level is not None:
+        account.jiuhu_level = update.jiuhu_level
+    if update.liao_level is not None:
+        account.liao_level = update.liao_level
 
     account.updated_at = datetime.utcnow()
     db.commit()
@@ -418,6 +472,67 @@ async def update_task_config(
     return {"message": "任务配置更新成功", "config": merged_config}
 
 
+@router.get("/{account_id}/rest-config")
+async def get_rest_config(account_id: int, db: Session = Depends(get_db)):
+    """
+    获取休息配置
+    """
+    account = db.query(GameAccount).filter(GameAccount.id == account_id).first()
+    if not account:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="账号不存在")
+
+    rc = (
+        db.query(AccountRestConfig)
+        .filter(AccountRestConfig.account_id == account_id)
+        .first()
+    )
+
+    return {
+        "enabled": bool(rc.enabled) if rc else True,
+        "mode": rc.mode if rc else "random",
+        "start_time": rc.rest_start if rc else None,
+        "duration": rc.rest_duration if rc else 2,
+    }
+
+
+def _generate_rest_plan_for_today(account_id, rc, bj_now, today_str):
+    """为账号生成当日休息计划，逻辑与 Feeder._ensure_daily_rest_plans 保持一致。"""
+    if rc.mode == "custom" and rc.rest_start and rc.rest_duration:
+        start_time = rc.rest_start
+        duration_hours = float(rc.rest_duration)
+        start_dt = datetime.strptime(f"{today_str} {start_time}", "%Y-%m-%d %H:%M")
+        end_dt = start_dt + timedelta(hours=duration_hours)
+    else:
+        # random 模式：在当前时间到 23:00 之间随机生成 2-3 小时时段
+        duration_hours = random.uniform(2, 3)
+        bj_now_naive = bj_now.replace(tzinfo=None)
+        effective_earliest = max(
+            datetime.combine(bj_now.date(), time(7, 0)),
+            bj_now_naive,
+        )
+        latest_start_dt = datetime.combine(bj_now.date(), time(23, 0)) - timedelta(hours=duration_hours)
+        if latest_start_dt < effective_earliest:
+            # 剩余时间不足 2 小时，无法生成
+            return None
+        total_minutes = max(
+            int((latest_start_dt - effective_earliest).total_seconds() // 60),
+            0,
+        )
+        start_dt = effective_earliest + timedelta(minutes=random.randint(0, total_minutes))
+        start_time = start_dt.strftime("%H:%M")
+        end_dt = min(
+            start_dt + timedelta(hours=duration_hours),
+            datetime.combine(bj_now.date(), time(23, 0)),
+        )
+
+    return RestPlan(
+        account_id=account_id,
+        date=today_str,
+        start_time=start_time,
+        end_time=end_dt.strftime("%H:%M"),
+    )
+
+
 @router.put("/{account_id}/rest-config")
 async def update_rest_config(
     account_id: int, config: RestConfigUpdate, db: Session = Depends(get_db)
@@ -441,56 +556,56 @@ async def update_rest_config(
         db.add(rest_config)
 
     # 更新配置
-    rest_config.mode = config.mode
-    if config.mode == "custom":
-        rest_config.rest_start = config.start_time
-        rest_config.rest_duration = config.duration
+    if config.enabled is not None:
+        rest_config.enabled = 1 if config.enabled else 0
+    if config.mode is not None:
+        rest_config.mode = config.mode
+    if config.mode == "custom" or (config.mode is None and rest_config.mode == "custom"):
+        if config.start_time is not None:
+            rest_config.rest_start = config.start_time
+        if config.duration is not None:
+            rest_config.rest_duration = config.duration
     rest_config.updated_at = datetime.utcnow()
+
+    from ....core.timeutils import now_beijing
+    bj_now = now_beijing()
+    today_str = bj_now.date().isoformat()
+
+    # 禁用时删除当日 RestPlan（立即生效）
+    if rest_config.enabled == 0:
+        db.query(RestPlan).filter(
+            RestPlan.account_id == account_id,
+            RestPlan.date == today_str,
+        ).delete(synchronize_session=False)
+
+    # 启用时：如果当日尚无 RestPlan，立即生成一个
+    if rest_config.enabled == 1:
+        existing_plan = (
+            db.query(RestPlan)
+            .filter(
+                RestPlan.account_id == account_id,
+                RestPlan.date == today_str,
+            )
+            .first()
+        )
+        if not existing_plan:
+            plan = _generate_rest_plan_for_today(account_id, rest_config, bj_now, today_str)
+            if plan:
+                db.add(plan)
 
     db.commit()
 
-    # 随机模式：若今日无计划则立即生成（7:00-23:00 内，2-3小时）
-    if rest_config.mode == "random":
-        today = datetime.now().date().isoformat()
-        exists = (
-            db.query(RestPlan)
-            .filter(RestPlan.account_id == account_id, RestPlan.date == today)
-            .first()
-        )
-        if not exists:
-            duration_hours = random.uniform(2, 3)
-            base_date = datetime.now().date()
-            start_min_dt = datetime.combine(base_date, time(7, 0))
-            latest_start_dt = datetime.combine(base_date, time(23, 0)) - timedelta(
-                hours=duration_hours
-            )
-            if latest_start_dt < start_min_dt:
-                latest_start_dt = start_min_dt
-            total_minutes = max(
-                int((latest_start_dt - start_min_dt).total_seconds() // 60), 0
-            )
-            offset_min = random.randint(0, total_minutes)
-            start_dt = start_min_dt + timedelta(minutes=offset_min)
-            start_time = start_dt.strftime("%H:%M")
-
-            end_dt = start_dt + timedelta(hours=duration_hours)
-            end_limit_dt = datetime.combine(base_date, time(23, 0))
-            if end_dt > end_limit_dt:
-                end_dt = end_limit_dt
-            end_time = end_dt.strftime("%H:%M")
-
-            new_plan = RestPlan(
-                account_id=account_id,
-                date=today,
-                start_time=start_time,
-                end_time=end_time,
-            )
-            db.add(new_plan)
-            db.commit()
-
     logger.info(f"更新账号 {account.login_id} 休息配置")
 
-    return {"message": "休息配置更新成功"}
+    return {
+        "message": "休息配置更新成功",
+        "config": {
+            "enabled": bool(rest_config.enabled),
+            "mode": rest_config.mode,
+            "start_time": rest_config.rest_start,
+            "duration": rest_config.rest_duration,
+        },
+    }
 
 
 @router.get("/{account_id}/rest-plan")
@@ -502,7 +617,17 @@ async def get_rest_plan(account_id: int, db: Session = Depends(get_db)):
     if not account:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="账号不存在")
 
-    today = datetime.now().date().isoformat()
+    # 检查休息是否启用
+    rest_config = (
+        db.query(AccountRestConfig)
+        .filter(AccountRestConfig.account_id == account_id)
+        .first()
+    )
+    if rest_config and rest_config.enabled == 0:
+        return {"message": "休息功能已关闭"}
+
+    from ....core.timeutils import now_beijing
+    today = now_beijing().date().isoformat()
     plan = (
         db.query(RestPlan)
         .filter(RestPlan.account_id == account_id, RestPlan.date == today)
@@ -510,44 +635,7 @@ async def get_rest_plan(account_id: int, db: Session = Depends(get_db)):
     )
 
     if not plan:
-        # 若无今日计划且模式为随机，则即时生成一个
-        rest_config = (
-            db.query(AccountRestConfig)
-            .filter(AccountRestConfig.account_id == account_id)
-            .first()
-        )
-        if rest_config and rest_config.mode == "random":
-            duration_hours = random.uniform(2, 3)
-            base_date = datetime.now().date()
-            start_min_dt = datetime.combine(base_date, time(7, 0))
-            latest_start_dt = datetime.combine(base_date, time(23, 0)) - timedelta(
-                hours=duration_hours
-            )
-            if latest_start_dt < start_min_dt:
-                latest_start_dt = start_min_dt
-            total_minutes = max(
-                int((latest_start_dt - start_min_dt).total_seconds() // 60), 0
-            )
-            offset_min = random.randint(0, total_minutes)
-            start_dt = start_min_dt + timedelta(minutes=offset_min)
-            start_time = start_dt.strftime("%H:%M")
-
-            end_dt = start_dt + timedelta(hours=duration_hours)
-            end_limit_dt = datetime.combine(base_date, time(23, 0))
-            if end_dt > end_limit_dt:
-                end_dt = end_limit_dt
-            end_time = end_dt.strftime("%H:%M")
-
-            plan = RestPlan(
-                account_id=account_id,
-                date=today,
-                start_time=start_time,
-                end_time=end_time,
-            )
-            db.add(plan)
-            db.commit()
-        else:
-            return {"message": "今日暂无休息计划"}
+        return {"message": "今日暂无休息计划"}
 
     return {"date": plan.date, "start_time": plan.start_time, "end_time": plan.end_time}
 
@@ -771,3 +859,56 @@ async def update_lineup_config(
     logger.info(f"更新账号 {account.login_id} 阵容配置")
 
     return {"message": "阵容配置更新成功", "config": merged}
+
+
+# ───────── 式神状态配置 ─────────
+
+
+class ShikigamiConfigUpdate(BaseModel):
+    model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
+    zuofu: Optional[Dict[str, Any]] = Field(default=None, alias="座敷童子")
+
+
+@router.get("/{account_id}/shikigami-config")
+async def get_shikigami_config(account_id: int, db: Session = Depends(get_db)):
+    """获取账号式神状态配置"""
+    account = db.query(GameAccount).filter(GameAccount.id == account_id).first()
+    if not account:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="账号不存在")
+
+    merged = merge_shikigami_with_defaults(account.shikigami_config or {})
+    return merged
+
+
+@router.put("/{account_id}/shikigami-config")
+async def update_shikigami_config(
+    account_id: int, config: ShikigamiConfigUpdate, db: Session = Depends(get_db)
+):
+    """更新账号式神状态配置"""
+    account = db.query(GameAccount).filter(GameAccount.id == account_id).first()
+    if not account:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="账号不存在")
+
+    current = account.shikigami_config or {}
+    update_dict = config.model_dump(exclude_unset=True, by_alias=True)
+
+    for key, value in update_dict.items():
+        if value is not None and isinstance(value, dict):
+            base = current.get(key, {})
+            if not isinstance(base, dict):
+                base = {}
+            base.update(value)
+            current[key] = base
+
+    from sqlalchemy.orm.attributes import flag_modified
+
+    account.shikigami_config = current
+    flag_modified(account, "shikigami_config")
+    account.updated_at = datetime.utcnow()
+    db.commit()
+
+    merged = merge_shikigami_with_defaults(account.shikigami_config)
+    logger.info(f"更新账号 {account.login_id} 式神配置")
+
+    return {"message": "式神配置更新成功", "config": merged}

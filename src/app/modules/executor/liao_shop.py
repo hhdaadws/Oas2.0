@@ -17,6 +17,7 @@ from ...db.base import SessionLocal
 from ...db.models import Emulator, GameAccount, SystemConfig, Task
 from ..emu.adapter import AdapterConfig, EmulatorAdapter
 from ..ocr.recognize import ocr as ocr_recognize
+from ..ocr.recognize import ocr_digits
 from ..ui.assets import parse_number
 from ..ui.manager import UIManager
 from ..vision.template import Match, match_template
@@ -29,9 +30,16 @@ PKG_NAME = "com.netease.onmyoji.wyzymnqsd_cps"
 # 功勋 OCR 区域 (x, y, w, h)
 GONGXUN_ROI = (709, 15, 84, 24)
 
+# 寮等级 OCR 区域 (x, y, w, h) - LIAO_XINXI 界面
+LIAO_LEVEL_ROI = (192, 120, 22, 17)
+
 # 购买成本
 HEISUI_COST = 200
 LANPIAO_COST = 120
+
+# 商品所需寮等级
+LANPIAO_REQUIRED_LEVEL = 4   # 蓝票需要寮4级
+HEISUI_REQUIRED_LEVEL = 5    # 黑碎需要寮5级
 
 
 class LiaoShopExecutor(BaseExecutor):
@@ -103,10 +111,18 @@ class LiaoShopExecutor(BaseExecutor):
 
     def _read_gongxun(self, screenshot) -> Optional[int]:
         """OCR 读取寮商店界面右上角的功勋值"""
-        result = ocr_recognize(screenshot, roi=GONGXUN_ROI)
+        result = ocr_digits(screenshot, roi=GONGXUN_ROI)
         raw = result.text.strip()
         value = parse_number(raw)
         self.logger.info(f"[寮商店] 功勋 OCR: raw='{raw}' → value={value}")
+        return value
+
+    def _read_liao_level(self, screenshot) -> Optional[int]:
+        """OCR 读取 LIAO_XINXI 界面的寮等级"""
+        result = ocr_digits(screenshot, roi=LIAO_LEVEL_ROI)
+        raw = result.text.strip()
+        value = parse_number(raw)
+        self.logger.info(f"[寮商店] 寮等级 OCR: raw='{raw}' → value={value}")
         return value
 
     def _read_remaining(self, screenshot, m: Match) -> Optional[int]:
@@ -290,7 +306,89 @@ class LiaoShopExecutor(BaseExecutor):
                 "timestamp": datetime.utcnow().isoformat(),
             }
 
-        # 2. 导航到寮商店界面
+        # 2. 先导航到寮信息界面（LIAO_XINXI）读取寮等级
+        self.logger.info("[寮商店] 开始导航至寮信息界面，读取寮等级")
+        in_xinxi = await self.ui.ensure_ui("LIAO_XINXI", max_steps=10, step_timeout=3.0)
+        if not in_xinxi:
+            # 检测是否因为未加入寮
+            from .helpers import check_and_handle_liao_not_joined
+            not_joined = await check_and_handle_liao_not_joined(
+                self.adapter,
+                self.ui.capture_method,
+                self.current_account.id,
+                log=self.logger,
+                label="寮商店",
+            )
+            if not_joined:
+                return {
+                    "status": TaskStatus.SKIPPED,
+                    "reason": "账号未加入寮，已提交申请并延后寮任务",
+                    "timestamp": datetime.utcnow().isoformat(),
+                }
+            self.logger.error("[寮商店] 导航到寮信息界面失败")
+            return {
+                "status": TaskStatus.FAILED,
+                "error": "导航寮信息界面失败",
+                "timestamp": datetime.utcnow().isoformat(),
+            }
+
+        # 3. OCR 读取寮等级
+        await asyncio.sleep(0.5)
+        screenshot = self.adapter.capture(self.ui.capture_method)
+        liao_level = None
+        if screenshot is not None:
+            if await self.ui.popup_handler.check_and_dismiss(screenshot) > 0:
+                screenshot = self.adapter.capture(self.ui.capture_method)
+            if screenshot is not None:
+                liao_level = self._read_liao_level(screenshot)
+
+        if liao_level is not None and liao_level > 0:
+            self._save_liao_level(liao_level)
+        else:
+            liao_level = self._get_cached_liao_level()
+            self.logger.warning(f"[寮商店] 寮等级 OCR 失败，使用缓存值: {liao_level}")
+
+        # 4. 读取购买选项并根据寮等级过滤
+        buy_heisui, buy_lanpiao = self._get_buy_options()
+
+        if liao_level is not None and liao_level > 0:
+            if buy_lanpiao and liao_level < LANPIAO_REQUIRED_LEVEL:
+                self.logger.info(
+                    f"[寮商店] 寮等级{liao_level} < {LANPIAO_REQUIRED_LEVEL}，排除蓝票"
+                )
+                buy_lanpiao = False
+            if buy_heisui and liao_level < HEISUI_REQUIRED_LEVEL:
+                self.logger.info(
+                    f"[寮商店] 寮等级{liao_level} < {HEISUI_REQUIRED_LEVEL}，排除黑碎"
+                )
+                buy_heisui = False
+
+            if not buy_heisui and not buy_lanpiao:
+                self.logger.info(
+                    f"[寮商店] 寮等级{liao_level}不满足任何商品要求，跳过本次"
+                )
+                self._update_next_time(all_done=True)
+                return {
+                    "status": TaskStatus.SUCCEEDED,
+                    "message": f"寮等级{liao_level}不满足购买条件，等待下周",
+                    "liao_level": liao_level,
+                    "timestamp": datetime.utcnow().isoformat(),
+                }
+
+        self.logger.info(
+            f"[寮商店] 寮等级={liao_level}, buy_heisui={buy_heisui}, buy_lanpiao={buy_lanpiao}"
+        )
+
+        if not buy_heisui and not buy_lanpiao:
+            self.logger.warning("[寮商店] 未启用任何购买选项，跳过")
+            self._update_next_time(all_done=True)
+            return {
+                "status": TaskStatus.SUCCEEDED,
+                "message": "未启用购买选项",
+                "timestamp": datetime.utcnow().isoformat(),
+            }
+
+        # 5. 导航到寮商店界面
         self.logger.info("[寮商店] 开始导航至寮商店界面")
         in_shop = await self.ui.ensure_ui("LIAO_SHANGDIAN", max_steps=10, step_timeout=3.0)
         if not in_shop:
@@ -302,7 +400,7 @@ class LiaoShopExecutor(BaseExecutor):
             }
         self.logger.info("[寮商店] 已到达寮商店界面")
 
-        # 3. 读取功勋（顶部固定显示，不受滚动影响）
+        # 6. 读取功勋（顶部固定显示，不受滚动影响）
         screenshot = self.adapter.capture(self.ui.capture_method)
         if screenshot is None:
             return {
@@ -325,26 +423,32 @@ class LiaoShopExecutor(BaseExecutor):
             gongxun = 9999
         self._update_gongxun_in_db(gongxun)
 
-        # 4. 读取购买选项
-        buy_heisui, buy_lanpiao = self._get_buy_options()
-        self.logger.info(f"[寮商店] 配置: buy_heisui={buy_heisui}, buy_lanpiao={buy_lanpiao}, 功勋={gongxun}")
+        self.logger.info(
+            f"[寮商店] 配置: buy_heisui={buy_heisui}, buy_lanpiao={buy_lanpiao}, 功勋={gongxun}"
+        )
 
-        if not buy_heisui and not buy_lanpiao:
-            self.logger.warning("[寮商店] 未启用任何购买选项，跳过")
+        # 6b. 检查功勋是否足够购买任何一种已启用商品
+        min_cost = min(
+            ([HEISUI_COST] if buy_heisui else []) +
+            ([LANPIAO_COST] if buy_lanpiao else [])
+        )
+        if gongxun < min_cost:
+            self.logger.info(f"[寮商店] 功勋不足以购买任何商品: {gongxun} < {min_cost}，直接结束")
             self._update_next_time(all_done=True)
             return {
                 "status": TaskStatus.SUCCEEDED,
-                "message": "未启用购买选项",
+                "message": f"功勋不足({gongxun})，无法购买任何商品",
+                "gongxun": gongxun,
                 "timestamp": datetime.utcnow().isoformat(),
             }
 
-        # 5. 逐个查找并购买（找到一个买一个）
+        # 7. 逐个查找并购买（找到一个买一个）
         MAX_SCROLL = 5
         heisui_done = True
         lanpiao_done = True
         insufficient_gongxun = False
 
-        # 5a. 下滑查找并购买黑碎
+        # 7a. 下滑查找并购买黑碎
         if buy_heisui:
             heisui_remaining = 0
             for scroll_i in range(MAX_SCROLL):
@@ -381,7 +485,7 @@ class LiaoShopExecutor(BaseExecutor):
             else:
                 self.logger.info("[寮商店] 黑碎本周已购买完毕")
 
-        # 5b. 继续查找并购买蓝票
+        # 7b. 继续查找并购买蓝票
         if buy_lanpiao:
             lanpiao_remaining = 0
             for scroll_i in range(MAX_SCROLL):
@@ -477,6 +581,37 @@ class LiaoShopExecutor(BaseExecutor):
                     db.commit()
         except Exception as e:
             self.logger.warning(f"[寮商店] 更新功勋到 DB 失败: {e}")
+
+    def _save_liao_level(self, level: int) -> None:
+        """保存寮等级到数据库"""
+        try:
+            with SessionLocal() as db:
+                account = (
+                    db.query(GameAccount)
+                    .filter(GameAccount.id == self.current_account.id)
+                    .first()
+                )
+                if account:
+                    account.liao_level = level
+                    db.commit()
+                    self.logger.info(f"[寮商店] 寮等级已保存: {level}")
+        except Exception as e:
+            self.logger.warning(f"[寮商店] 保存寮等级到 DB 失败: {e}")
+
+    def _get_cached_liao_level(self) -> Optional[int]:
+        """从数据库读取缓存的寮等级"""
+        try:
+            with SessionLocal() as db:
+                account = (
+                    db.query(GameAccount)
+                    .filter(GameAccount.id == self.current_account.id)
+                    .first()
+                )
+                if account and account.liao_level and account.liao_level > 0:
+                    return account.liao_level
+        except Exception as e:
+            self.logger.warning(f"[寮商店] 读取缓存寮等级失败: {e}")
+        return None
 
     def _update_next_time(self, *, all_done: bool) -> None:
         """更新寮商店 next_time

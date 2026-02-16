@@ -60,14 +60,16 @@ def match_template(
         Match or None if best score is below threshold.
     """
     thr = DEFAULT_THRESHOLD if threshold is None else float(threshold)
-    img = to_gray(load_image(image))
+    loaded = load_image(image)
+    img = loaded if loaded.ndim == 2 else to_gray(loaded)
     if isinstance(template, str):
         tpl = _GRAY_TEMPLATE_CACHE.get(template)
         if tpl is None:
             tpl = to_gray(load_image(template))
             _GRAY_TEMPLATE_CACHE[template] = tpl
     else:
-        tpl = to_gray(load_image(template))
+        tpl_loaded = load_image(template)
+        tpl = tpl_loaded if tpl_loaded.ndim == 2 else to_gray(tpl_loaded)
     _ensure_sizes(img, tpl)
 
     res = cv2.matchTemplate(img, tpl, method)
@@ -99,14 +101,16 @@ def find_all_templates(
     Returns matches sorted by score (desc).
     """
     thr = DEFAULT_THRESHOLD if threshold is None else float(threshold)
-    img = to_gray(load_image(image))
+    loaded = load_image(image)
+    img = loaded if loaded.ndim == 2 else to_gray(loaded)
     if isinstance(template, str):
         tpl = _GRAY_TEMPLATE_CACHE.get(template)
         if tpl is None:
             tpl = to_gray(load_image(template))
             _GRAY_TEMPLATE_CACHE[template] = tpl
     else:
-        tpl = to_gray(load_image(template))
+        tpl_loaded = load_image(template)
+        tpl = tpl_loaded if tpl_loaded.ndim == 2 else to_gray(tpl_loaded)
     _ensure_sizes(img, tpl)
 
     res = cv2.matchTemplate(img, tpl, method)

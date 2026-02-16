@@ -6,7 +6,8 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from enum import Enum
-from typing import Callable, Dict, Optional, Tuple
+from pathlib import Path
+from typing import Callable, Dict, List, Optional, Tuple, Union
 
 
 class AssetType(str, Enum):
@@ -17,6 +18,7 @@ class AssetType(str, Enum):
     GOLD = "gold"              # 金币
     GONGXUN = "gongxun"        # 功勋
     XUNZHANG = "xunzhang"      # 勋章
+    TUPO_TICKET = "tupo_ticket"  # 突破票
 
 
 @dataclass
@@ -29,7 +31,8 @@ class AssetDef:
     db_field: str                          # GameAccount 对应字段名
     label: str                             # 显示名称
     pre_tap: Optional[Tuple[int, int]] = None  # 等待模板前先点击此坐标（如展开菜单）
-    wait_template: Optional[str] = None        # OCR 前等待此模板出现，确认界面就绪
+    wait_template: Optional[Union[str, List[str]]] = None  # OCR 前等待此模板出现，确认界面就绪
+    digit_only: bool = False                   # True 时使用数字专用 OCR 引擎（仅 0-9）
 
 
 def parse_number(text: str) -> Optional[int]:
@@ -68,6 +71,16 @@ def parse_number(text: str) -> Optional[int]:
     return None
 
 
+def _discover_shangdian_paths() -> List[str]:
+    """自动发现 assets/ui/templates/shangdian_*.png 模板路径列表。"""
+    templates_dir = Path("assets/ui/templates")
+    paths = sorted(p.as_posix() for p in templates_dir.glob("shangdian_*.png"))
+    return paths or ["assets/ui/templates/shangdian_1.png"]  # 兜底
+
+
+_SHANGDIAN_WAIT_TEMPLATES = _discover_shangdian_paths()
+
+
 # 资产注册表
 ASSET_REGISTRY: Dict[AssetType, AssetDef] = {
     AssetType.STAMINA: AssetDef(
@@ -78,7 +91,8 @@ ASSET_REGISTRY: Dict[AssetType, AssetDef] = {
         db_field="stamina",
         label="体力",
         pre_tap=(921, 490),
-        wait_template="assets/ui/templates/shangdian_1.png",
+        wait_template=_SHANGDIAN_WAIT_TEMPLATES,
+        digit_only=True,
     ),
     AssetType.GOUYU: AssetDef(
         asset_type=AssetType.GOUYU,
@@ -88,7 +102,7 @@ ASSET_REGISTRY: Dict[AssetType, AssetDef] = {
         db_field="gouyu",
         label="勾玉",
         pre_tap=(921, 490),
-        wait_template="assets/ui/templates/shangdian_1.png",
+        wait_template=_SHANGDIAN_WAIT_TEMPLATES,
     ),
     AssetType.LANPIAO: AssetDef(
         asset_type=AssetType.LANPIAO,
@@ -106,7 +120,7 @@ ASSET_REGISTRY: Dict[AssetType, AssetDef] = {
         db_field="gold",
         label="金币",
         pre_tap=(921, 490),
-        wait_template="assets/ui/templates/shangdian_1.png",
+        wait_template=_SHANGDIAN_WAIT_TEMPLATES,
     ),
     AssetType.GONGXUN: AssetDef(
         asset_type=AssetType.GONGXUN,
@@ -115,6 +129,7 @@ ASSET_REGISTRY: Dict[AssetType, AssetDef] = {
         parser=parse_number,
         db_field="gongxun",
         label="功勋",
+        digit_only=True,
     ),
     AssetType.XUNZHANG: AssetDef(
         asset_type=AssetType.XUNZHANG,
@@ -123,6 +138,16 @@ ASSET_REGISTRY: Dict[AssetType, AssetDef] = {
         parser=parse_number,
         db_field="xunzhang",
         label="勋章",
+        digit_only=True,
+    ),
+    AssetType.TUPO_TICKET: AssetDef(
+        asset_type=AssetType.TUPO_TICKET,
+        screen="JIEJIE_TUPO",
+        roi=(855, 13, 30, 18),
+        parser=parse_number,
+        db_field="tupo_ticket",
+        label="突破票",
+        digit_only=True,
     ),
 }
 

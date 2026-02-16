@@ -111,12 +111,13 @@ async def pull_account(
 
         # 抓取 shared_prefs（账号凭证）
         shared_prefs_remote = f"/data/user/0/{PKG_NAME}/shared_prefs"
-        shared_prefs_local = str(save_dir / "shared_prefs")
+        shared_prefs_local = save_dir / "shared_prefs"
 
-        # 创建本地目录
-        Path(shared_prefs_local).mkdir(parents=True, exist_ok=True)
+        # 清理旧数据，避免 adb pull 产生 shared_prefs/shared_prefs 嵌套
+        if shared_prefs_local.exists():
+            shutil.rmtree(shared_prefs_local)
 
-        ok, msg = adb.pull(addr, shared_prefs_remote, shared_prefs_local, timeout=120.0)
+        ok, msg = adb.pull(addr, shared_prefs_remote, str(save_dir), timeout=120.0)
         if ok:
             pulled_files.append("shared_prefs")
             logger.info(f"抓取 shared_prefs 成功: {msg}")
