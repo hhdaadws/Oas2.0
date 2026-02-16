@@ -1,6 +1,7 @@
 """OCR 识别结果数据结构。"""
 from __future__ import annotations
 
+import random
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
@@ -21,6 +22,19 @@ class OcrBox:
         xs = [p[0] for p in self.box]
         ys = [p[1] for p in self.box]
         return (sum(xs) // len(xs), sum(ys) // len(ys))
+
+    def random_point(self, margin: float = 0.2) -> Tuple[int, int]:
+        """在 OCR 边界框内生成随机点击坐标。"""
+        xs = [p[0] for p in self.box]
+        ys = [p[1] for p in self.box]
+        x_min, x_max = min(xs), max(xs)
+        y_min, y_max = min(ys), max(ys)
+        w, h = x_max - x_min, y_max - y_min
+        margin = max(0.0, min(margin, 0.45))
+        mx, my = int(w * margin), int(h * margin)
+        rx = random.randint(x_min + mx, max(x_min + mx, x_max - mx))
+        ry = random.randint(y_min + my, max(y_min + my, y_max - my))
+        return (rx, ry)
 
 
 @dataclass

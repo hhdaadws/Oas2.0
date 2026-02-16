@@ -421,10 +421,11 @@ class InitFanheUpgradeExecutor(BaseExecutor):
                 screenshot, "assets/ui/templates/exit_pink.png", threshold=0.7
             )
             if exit_pink:
+                epx, epy = exit_pink.random_point()
                 self.adapter.adb.tap(
                     self.adapter.cfg.adb_addr,
-                    exit_pink.center[0],
-                    exit_pink.center[1],
+                    epx,
+                    epy,
                 )
                 await asyncio.sleep(1.0)
 

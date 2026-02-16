@@ -165,7 +165,7 @@ class LiaoCoinExecutor(BaseExecutor):
                 "timestamp": datetime.utcnow().isoformat(),
             }
 
-        jx, jy = jinbi_result.center
+        jx, jy = jinbi_result.random_point()
         self.adapter.adb.tap(self.adapter.cfg.adb_addr, jx, jy)
         self.logger.info(f"[领取寮金币] 点击寮金币按钮: ({jx}, {jy})")
         await asyncio.sleep(2.0)

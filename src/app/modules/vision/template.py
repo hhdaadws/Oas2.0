@@ -9,6 +9,7 @@ Features:
 """
 from __future__ import annotations
 
+import random
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 import cv2  # type: ignore
@@ -32,6 +33,15 @@ class Match:
     @property
     def center(self) -> Tuple[int, int]:
         return (self.x + self.w // 2, self.y + self.h // 2)
+
+    def random_point(self, margin: float = 0.2) -> Tuple[int, int]:
+        """在模板匹配区域内生成随机点击坐标（每边向内缩 margin 比例）。"""
+        margin = max(0.0, min(margin, 0.45))
+        mx = int(self.w * margin)
+        my = int(self.h * margin)
+        rx = random.randint(self.x + mx, self.x + self.w - 1 - mx)
+        ry = random.randint(self.y + my, self.y + self.h - 1 - my)
+        return (rx, ry)
 
 
 def _ensure_sizes(big: np.ndarray, small: np.ndarray) -> None:

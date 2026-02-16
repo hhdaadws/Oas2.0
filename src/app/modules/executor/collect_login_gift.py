@@ -195,7 +195,7 @@ class CollectLoginGiftExecutor(BaseExecutor):
 
         result = match_template(screenshot, "assets/ui/templates/richang.png")
         if result:
-            rx, ry = result.center
+            rx, ry = result.random_point()
             self.adapter.adb.tap(self.adapter.cfg.adb_addr, rx, ry)
             self.logger.info(f"[领取登录礼包] 点击日常按钮: ({rx}, {ry})")
         else:
@@ -227,7 +227,7 @@ class CollectLoginGiftExecutor(BaseExecutor):
             }
 
         # 点击领取按钮
-        lx, ly = lingqu_result.center
+        lx, ly = lingqu_result.random_point()
         self.adapter.adb.tap(self.adapter.cfg.adb_addr, lx, ly)
         self.logger.info(f"[领取登录礼包] 点击领取按钮: ({lx}, {ly})")
 

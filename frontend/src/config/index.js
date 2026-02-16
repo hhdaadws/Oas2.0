@@ -2,8 +2,9 @@
  * 全局API配置
  */
 
-// API基础地址（统一指向本机）
-export const API_BASE_URL = 'http://127.0.0.1:9001'
+// API基础地址：开发模式指向后端端口，生产模式（打包后同源）使用空串
+const isDev = import.meta.env.DEV
+export const API_BASE_URL = isDev ? 'http://127.0.0.1:9001' : ''
 
 // API端点配置
 export const API_ENDPOINTS = {

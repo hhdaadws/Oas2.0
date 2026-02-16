@@ -2,7 +2,7 @@
 数据库模型定义
 """
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, JSON, Float, Text, UniqueConstraint, Index, text
+from sqlalchemy import Boolean, Column, Integer, String, DateTime, ForeignKey, JSON, Float, Text, UniqueConstraint, Index, text
 from sqlalchemy.orm import relationship
 from .base import Base
 
@@ -287,4 +287,5 @@ class SystemConfig(Base):
     pull_default_zone = Column(String(50), default="樱之华")  # 抓取后建号默认区服
     default_fail_delays = Column(JSON, nullable=True)  # 全局默认失败延迟 {"寄养": 30, ...}
     global_task_switches = Column(JSON, nullable=True)  # 全局任务开关 {"召唤礼包": true}
+    save_fail_screenshot = Column(Boolean, default=False)  # 任务失败时保存截图
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

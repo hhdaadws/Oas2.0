@@ -132,7 +132,7 @@ async def switch_lineup(
 
     # 6. 点击目标分组
     target_cell = cells[group - 1]  # 1-indexed → 0-indexed
-    cx, cy = target_cell.center
+    cx, cy = target_cell.random_point()
     if log:
         log.info(f"{tag} 点击分组 {group}: ({cx}, {cy})")
     adapter.adb.tap(addr, cx, cy)
@@ -177,7 +177,7 @@ async def switch_lineup(
 
     # 9. 点击目标阵容
     target_pos = positions[position - 1]  # 1-indexed → 0-indexed
-    px, py = target_pos.center
+    px, py = target_pos.random_point()
     if log:
         log.info(f"{tag} 点击阵容 {position} (行 {target_pos.row}): ({px}, {py})")
     adapter.adb.tap(addr, px, py)

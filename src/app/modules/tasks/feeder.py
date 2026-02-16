@@ -359,6 +359,10 @@ class Feeder:
         """收集 init 账号的待执行任务，按优先级和 next_time 并行调度。"""
         intents: List[TaskIntent] = []
 
+        # 预先检查租借式神数据（用于条件过滤依赖任务 + 动态优先级）
+        shiki_cfg = account.shikigami_config or {}
+        has_rental = bool(shiki_cfg.get("租借式神"))
+
         self._check_time_task(intents, account, cfg, "起号_租借式神", TaskType.INIT_RENT_SHIKIGAMI)
         self._check_time_task(intents, account, cfg, "起号_领取奖励", TaskType.INIT_COLLECT_REWARD)
         self._check_time_task(intents, account, cfg, "起号_新手任务", TaskType.INIT_NEWBIE_QUEST)
@@ -366,7 +370,19 @@ class Feeder:
         self._check_time_task(intents, account, cfg, "起号_领取锦囊", TaskType.INIT_COLLECT_JINNANG)
         self._check_time_task(intents, account, cfg, "起号_式神养成", TaskType.INIT_SHIKIGAMI_TRAIN)
         self._check_time_task(intents, account, cfg, "起号_升级饭盒", TaskType.INIT_FANHE_UPGRADE)
-        self._check_time_task(intents, account, cfg, "探索突破", TaskType.EXPLORE)
+
+        # 探索突破：依赖租借式神数据，无数据则跳过等待 re-scan
+        if has_rental:
+            self._check_time_task(intents, account, cfg, "探索突破", TaskType.EXPLORE)
+        else:
+            explore_cfg = cfg.get("探索突破", {})
+            if (explore_cfg.get("enabled") is True
+                    and explore_cfg.get("next_time")
+                    and is_time_reached(explore_cfg["next_time"])):
+                self.log.info(
+                    f"[init] 跳过探索突破: 租借式神数据为空, account={account.id}"
+                )
+
         if yaml_task_loader.is_enabled("climb_tower"):
             self._check_time_task(intents, account, cfg, "爬塔", TaskType.CLIMB_TOWER)
         self._check_time_task(intents, account, cfg, "地鬼", TaskType.DIGUI)
@@ -385,6 +401,9 @@ class Feeder:
             self._check_time_task(intents, account, cfg, "召唤礼包", TaskType.SUMMON_GIFT)
         self._check_time_task(intents, account, cfg, "领取饭盒酒壶", TaskType.COLLECT_FANHE_JIUHU)
 
+        # 对弈竞猜
+        self._check_time_task(intents, account, cfg, "对弈竞猜", TaskType.DUIYI_JINGCAI)
+
         # 斗技：时间窗口检查
         douji_cfg = cfg.get("斗技", {})
         if (douji_cfg.get("enabled") is True
@@ -397,9 +416,6 @@ class Feeder:
                 intents.append(TaskIntent(account_id=account.id, task_type=TaskType.DOUJI))
 
         # 当账号没有租借式神数据时，提升租借任务优先级至最高
-        shiki_cfg = account.shikigami_config or {}
-        has_rental = bool(shiki_cfg.get("租借式神"))
-
         def _priority(intent: TaskIntent) -> int:
             p = TASK_PRIORITY.get(intent.task_type, 0)
             if intent.task_type == TaskType.INIT_RENT_SHIKIGAMI and not has_rental:
@@ -454,6 +470,9 @@ class Feeder:
 
         # 探索突破：改为时间触发，实际体力检查由 Executor 通过 OCR 执行
         self._check_time_task(intents, account, cfg, "探索突破", TaskType.EXPLORE)
+
+        # 对弈竞猜
+        self._check_time_task(intents, account, cfg, "对弈竞猜", TaskType.DUIYI_JINGCAI)
 
         # 斗技：时间窗口检查
         douji_cfg = cfg.get("斗技", {})

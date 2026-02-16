@@ -297,7 +297,7 @@ class WeeklyShareExecutor(BaseExecutor):
                     continue
                 m = match_template(screenshot, tpl)
                 if m:
-                    cx, cy = m.center
+                    cx, cy = m.random_point()
                     self.adapter.adb.tap(self.adapter.cfg.adb_addr, cx, cy)
                     self.logger.info(
                         f"[每周分享] 点击 {label} ({cx}, {cy}) (attempt={attempt + 1})"

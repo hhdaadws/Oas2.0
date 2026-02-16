@@ -142,8 +142,8 @@ async def click_template(
                 log.info(f"{tag}模板已不在画面中")
             return True
 
-        # 点击模板中心
-        cx, cy = m.center
+        # 点击模板区域内随机位置
+        cx, cy = m.random_point()
         adapter.adb.tap(addr, cx, cy)
         if log:
             log.info(f"{tag}点击 ({cx}, {cy}) (attempt={attempt + 1})")
@@ -351,7 +351,7 @@ async def click_text(
         if fresh:
             box = fresh
 
-    cx, cy = box.center
+    cx, cy = box.random_point()
     adapter.adb.tap(addr, cx, cy)
     if log:
         log.info(f'{tag}OCR 点击 "{keyword}" ({cx}, {cy})')
@@ -408,7 +408,7 @@ async def check_and_handle_liao_not_joined(
         log.warning(f"{tag}检测到一键申请界面(score={m.score:.2f})，账号未加入寮")
 
     # 1. 点击一键申请
-    cx, cy = m.center
+    cx, cy = m.random_point()
     adapter.adb.tap(adapter.cfg.adb_addr, cx, cy)
     if log:
         log.info(f"{tag}点击一键申请 ({cx}, {cy})")
@@ -527,7 +527,7 @@ async def check_and_create_jiejie(
 
     if create_match:
         # 结界未创建，点击创建
-        cx, cy = create_match.center
+        cx, cy = create_match.random_point()
         adapter.adb.tap(adapter.cfg.adb_addr, cx, cy)
         if log:
             log.info(f"{tag}点击创建结界 ({cx}, {cy})")

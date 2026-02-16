@@ -86,3 +86,8 @@ class PopupRegistry:
 
 # 全局默认弹窗注册表
 popup_registry = PopupRegistry()
+
+
+class JihaoPopupException(Exception):
+    """检测到祭号弹窗时抛出，触发关闭游戏 + 批量延后任务。"""
+    pass

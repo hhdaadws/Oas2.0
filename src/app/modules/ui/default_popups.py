@@ -138,7 +138,7 @@ def register_default_popups(reg: Optional[PopupRegistry] = None) -> None:
         priority=12,
     ))
 
-    # 成就升级弹窗（点击自身关闭）
+    # 成就升级弹窗（点击左上角关闭）
     r.register(PopupDef(
         id="chengjiu_shengji",
         label="成就升级",
@@ -148,7 +148,9 @@ def register_default_popups(reg: Optional[PopupRegistry] = None) -> None:
         ),
         dismiss_actions=[
             DismissAction(
-                type=DismissType.TAP_SELF,
+                type=DismissType.TAP,
+                tap_x=20,
+                tap_y=20,
                 post_delay_ms=1500,
             ),
         ],
@@ -170,4 +172,34 @@ def register_default_popups(reg: Optional[PopupRegistry] = None) -> None:
             ),
         ],
         priority=50,
+    ))
+
+    # 通用弹窗3（通过关闭按钮模板关闭）
+    r.register(PopupDef(
+        id="popup_3",
+        label="通用弹窗3",
+        detect_template=TemplateDef(
+            name="popup_3",
+            path="assets/ui/templates/popup_3.png",
+        ),
+        dismiss_actions=[
+            DismissAction(
+                type=DismissType.TAP_TEMPLATE,
+                template_path="assets/ui/templates/popup_3_close.png",
+                post_delay_ms=1000,
+            ),
+        ],
+        priority=50,
+    ))
+
+    # 祭号弹窗（检测到后抛出异常，由 Worker 处理关闭游戏 + 批量延后）
+    r.register(PopupDef(
+        id="jihao",
+        label="祭号弹窗",
+        detect_template=TemplateDef(
+            name="jihao",
+            path="assets/ui/templates/jihao.png",
+        ),
+        dismiss_actions=[],  # 不需要关闭动作，检测到就抛异常
+        priority=1,  # 最高优先级，最先检测
     ))

@@ -171,8 +171,8 @@ class AddFriendExecutor(BaseExecutor):
                 )
                 break
 
-            # 点击 jiahaoyou 中心
-            jx, jy = jiahaoyou_match.center
+            # 点击 jiahaoyou 区域内随机位置
+            jx, jy = jiahaoyou_match.random_point()
             self.adapter.adb.tap(self.adapter.cfg.adb_addr, jx, jy)
             self.logger.info(f"[加好友] 点击加好友: ({jx}, {jy}) (第 {i + 1} 次)")
             await asyncio.sleep(1.5)
@@ -189,7 +189,7 @@ class AddFriendExecutor(BaseExecutor):
                 popup_handler=self.ui.popup_handler,
             )
             if shenqing_match:
-                sx, sy = shenqing_match.center
+                sx, sy = shenqing_match.random_point()
                 self.adapter.adb.tap(self.adapter.cfg.adb_addr, sx, sy)
                 self.logger.info(f"[加好友] 点击申请: ({sx}, {sy})")
                 friends_added += 1

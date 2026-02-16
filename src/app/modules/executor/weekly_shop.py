@@ -169,7 +169,7 @@ class WeeklyShopExecutor(BaseExecutor):
             self.logger.warning(f"[每周商店] 未检测到{label}模板")
             return False
 
-        cx, cy = item_match.center
+        cx, cy = item_match.random_point()
         self.adapter.adb.tap(self.adapter.cfg.adb_addr, cx, cy)
         self.logger.info(f"[每周商店] 点击{label}: ({cx}, {cy})")
         await asyncio.sleep(1.5)

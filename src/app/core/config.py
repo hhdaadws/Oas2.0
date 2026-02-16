@@ -1,12 +1,25 @@
 """
 核心配置模块
 """
+import sys
 import secrets as _secrets
 from pathlib import Path
 from typing import List, Optional
 from pydantic_settings import BaseSettings
 from pydantic import Field
 
+
+def _get_base_dir() -> Path:
+    """获取项目根目录，兼容开发模式和 PyInstaller 打包模式。"""
+    if getattr(sys, 'frozen', False):
+        # PyInstaller 打包模式：exe 所在目录
+        return Path(sys.executable).resolve().parent
+    else:
+        # 开发模式：config.py → core/ → app/ → src/ → 项目根
+        return Path(__file__).resolve().parent.parent.parent.parent
+
+
+BASE_DIR = _get_base_dir()
 
 # TOTP 密钥（固定，仅开发者知晓）
 TOTP_SECRET = "JBSWY3DPEHPK3PXP"
@@ -19,14 +32,17 @@ class Settings(BaseSettings):
     """系统配置"""
 
     # 数据库
-    database_url: str = Field(default="sqlite:///./data.db", env="DATABASE_URL")
+    database_url: str = Field(
+        default=f"sqlite:///{(BASE_DIR / 'data.db').as_posix()}",
+        env="DATABASE_URL",
+    )
 
     # JWT 签名密钥（持久化，重启后 token 仍有效）
     jwt_secret: str = Field(default="", env="JWT_SECRET")
     
     # OCR
     paddle_ocr_lang: str = Field(default="ch", env="PADDLE_OCR_LANG")
-    ocr_model_dir: str = Field(default="E:/newdata/data/ocr_model", env="OCR_MODEL_DIR")
+    ocr_model_dir: str = Field(default=str(BASE_DIR / "ocr_model"), env="OCR_MODEL_DIR")
     
     # 模拟器/启动配置
     mumu_manager_path: str = Field(default="", env="MUMU_MANAGER_PATH")
@@ -53,7 +69,7 @@ class Settings(BaseSettings):
     
     # 日志
     log_level: str = Field(default="INFO", env="LOG_LEVEL")
-    log_path: str = Field(default="./logs", env="LOG_PATH")
+    log_path: str = Field(default=str(BASE_DIR / "logs"), env="LOG_PATH")
     log_retention_days: int = Field(default=3, env="LOG_RETENTION_DAYS")
     
     # 备份
@@ -64,8 +80,9 @@ class Settings(BaseSettings):
     zones: List[str] = ["樱之华", "春之樱", "两情相悦", "枫之舞"]
     
     class Config:
-        env_file = ".env"
+        env_file = str(BASE_DIR / ".env")
         case_sensitive = False
+        extra = "ignore"
     
     @property
     def coop_time_list(self) -> List[str]:
@@ -82,7 +99,7 @@ def _ensure_jwt_secret() -> str:
     if settings.jwt_secret:
         return settings.jwt_secret
     generated = _secrets.token_hex(32)
-    env_path = Path(".env")
+    env_path = BASE_DIR / ".env"
     with open(env_path, "a", encoding="utf-8") as f:
         f.write(f"\nJWT_SECRET={generated}\n")
     return generated

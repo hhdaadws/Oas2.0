@@ -1192,6 +1192,31 @@
                 <span class="config-item">分钟延迟</span>
               </template>
             </el-form-item>
+            <el-form-item label="对弈竞猜">
+              <el-switch
+                v-model="taskConfig.对弈竞猜.enabled"
+                @change="updateTaskConfigData"
+              />
+              <el-date-picker
+                v-if="taskConfig.对弈竞猜.enabled"
+                v-model="taskConfig.对弈竞猜.next_time"
+                type="datetime"
+                placeholder="下次执行时间"
+                format="YYYY-MM-DD HH:mm"
+                value-format="YYYY-MM-DD HH:mm"
+                style="margin-left: 10px; width: 200px"
+                @change="updateTaskConfigData"
+              />
+              <el-input-number
+                v-if="taskConfig.对弈竞猜.enabled"
+                v-model="taskConfig.对弈竞猜.fail_delay"
+                :min="1"
+                :max="1440"
+                style="margin-left: 10px; width: 130px"
+                @change="updateTaskConfigData"
+              />
+              <span v-if="taskConfig.对弈竞猜.enabled" class="config-item">分钟延迟</span>
+            </el-form-item>
           </el-form>
 
           <!-- 休息配置 -->
@@ -1387,6 +1412,7 @@ const taskConfig = reactive({
   签到: { enabled: false, next_time: "2020-01-01 00:00", fail_delay: 30 },
   御魂: { enabled: false, run_count: 0, remaining_count: 0, unlocked_count: 0, target_level: 10, fail_delay: 2880 },
   斗技: { enabled: false, start_hour: 12, end_hour: 23, mode: 'honor', target_score: 2000, next_time: "2020-01-01 00:00", fail_delay: 30 },
+  对弈竞猜: { enabled: true, next_time: "2020-01-01 00:00", fail_delay: 30 },
   每周分享: { enabled: true, next_time: "2020-01-01 00:00", fail_delay: 30 },
   召唤礼包: { enabled: true, next_time: "2020-01-01 00:00", fail_delay: 30 },
   起号_领取奖励: { enabled: true, next_time: "2020-01-01 00:00", fail_delay: 30 },
@@ -1746,6 +1772,13 @@ const handleNodeClick = async (data) => {
       fail_delay: savedConfig.斗技?.fail_delay ?? 30,
     }
 
+    // 对弈竞猜
+    taskConfig.对弈竞猜 = {
+      enabled: savedConfig.对弈竞猜?.enabled === true,
+      next_time: savedConfig.对弈竞猜?.next_time ?? "2020-01-01 00:00",
+      fail_delay: savedConfig.对弈竞猜?.fail_delay ?? 30,
+    }
+
     // 每周分享：支持next_time
     taskConfig.每周分享 = {
       enabled: savedConfig.每周分享?.enabled === true,
@@ -2012,6 +2045,11 @@ const updateTaskConfigData = async () => {
         target_score: taskConfig["斗技"].target_score,
         next_time: taskConfig["斗技"].next_time,
         fail_delay: taskConfig["斗技"].fail_delay,
+      },
+      "对弈竞猜": {
+        enabled: taskConfig["对弈竞猜"].enabled,
+        next_time: taskConfig["对弈竞猜"].next_time,
+        fail_delay: taskConfig["对弈竞猜"].fail_delay,
       }
     }
 

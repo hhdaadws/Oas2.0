@@ -256,7 +256,7 @@ class InitShikigamiTrainExecutor(BaseExecutor):
         self._update_shikigami_field(account_id, "owned", True)
         self.logger.info("[起号_式神养成] 找到未觉醒座敷童子，点击进入详情")
 
-        cx, cy = m_zuofu.center
+        cx, cy = m_zuofu.random_point()
         self.adapter.adb.tap(self.adapter.cfg.adb_addr, cx, cy)
         await asyncio.sleep(2.0)
 
@@ -307,7 +307,7 @@ class InitShikigamiTrainExecutor(BaseExecutor):
             return {"status": TaskStatus.FAILED, "error": "未找到已觉醒座敷童子"}
 
         # 2. 点击进入详情
-        cx, cy = m_zuofu.center
+        cx, cy = m_zuofu.random_point()
         self.adapter.adb.tap(addr, cx, cy)
         self.logger.info(f"[起号_式神养成] 技能升级: 点击已觉醒座敷 ({cx}, {cy})")
         await asyncio.sleep(2.0)
@@ -359,7 +359,7 @@ class InitShikigamiTrainExecutor(BaseExecutor):
                     f"[起号_式神养成] 技能升级: 无更多未觉醒素材，共点击 {click_count} 次"
                 )
                 break
-            self.adapter.adb.tap(addr, *m.center)
+            self.adapter.adb.tap(addr, *m.random_point())
             click_count += 1
             self.logger.info(
                 f"[起号_式神养成] 技能升级: 点击素材 #{click_count} ({m.center})"

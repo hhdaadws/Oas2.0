@@ -51,6 +51,7 @@ class TaskType(str, Enum):
     MIWEN = "秘闻"
     YUHUN = "御魂"
     DOUJI = "斗技"
+    DUIYI_JINGCAI = "对弈竞猜"
     SIGNIN = "签到"
     WEEKLY_SHARE = "每周分享"
     SUMMON_GIFT = "召唤礼包"
@@ -123,6 +124,7 @@ TASK_PRIORITY = {
     TaskType.COLLECT_FANHE_JIUHU: 54,
     TaskType.CLIMB_TOWER: 35,
     TaskType.DOUJI: 36,
+    TaskType.DUIYI_JINGCAI: 34,
     TaskType.REST: 20,
 }
 
@@ -263,6 +265,11 @@ DEFAULT_TASK_CONFIG = {
         "next_time": "2020-01-01 00:00",
         "fail_delay": 30,
     },
+    "对弈竞猜": {
+        "enabled": True,
+        "next_time": "2020-01-01 00:00",
+        "fail_delay": 30,
+    },
 }
 
 # 起号阶段任务默认配置
@@ -398,6 +405,11 @@ DEFAULT_INIT_TASK_CONFIG = {
         "end_hour": 23,
         "mode": "honor",
         "target_score": 2000,
+        "next_time": "2020-01-01 00:00",
+        "fail_delay": 30,
+    },
+    "对弈竞猜": {
+        "enabled": True,
         "next_time": "2020-01-01 00:00",
         "fail_delay": 30,
     },

@@ -285,7 +285,7 @@ class InitExpDungeonExecutor(BaseExecutor):
 
             m = match_template(screenshot, _TPL_JINGYANYAOGUAI)
             if m:
-                cx, cy = m.center
+                cx, cy = m.random_point()
                 self.logger.info(
                     f"[起号_经验副本] 第{scroll_i + 1}次查找找到经验妖怪 "
                     f"(score={m.score:.3f}, pos=({cx}, {cy}))"
@@ -307,14 +307,14 @@ class InitExpDungeonExecutor(BaseExecutor):
         return False
 
     async def _click_match_and_enter_battle(self, round_idx: int) -> str:
-        """点击自动匹配 → 等待匹配 → 点击准备 → 确认进入战斗。
+        """点击自动匹配 → 状态轮询等待匹配/准备 → 点击准备 → 确认进入战斗。
 
         流程:
             1. 点击 zidongpipei.png 自动匹配按钮
-            2. 等待 jingyan_dengdai.png 出现（6 秒超时）
-               - 未出现 → 判定为冷却中，返回 "cooldown"
-            3. 等待 zhandou_zhunbei_*.png 出现（60 秒超时，匹配可能耗时）
-               - 超时 → 匹配失败，返回 "error"
+            2+3. 状态感知轮询：同时检测 dengdai 和 zhunbei
+               - zhunbei 先出现 → 匹配极快，直接进入阶段 4
+               - dengdai 先出现 → 继续等待 zhunbei（最长 60s）
+               - 6s 内两者都未出现 → 检查冷却
             4. 循环检测并点击准备按钮，直到准备消失（15 秒超时）
                - 超时 → 返回 "error"
 
@@ -333,43 +333,76 @@ class InitExpDungeonExecutor(BaseExecutor):
         if not clicked:
             return "error"
 
-        # ── 阶段 2：等待 dengdai 出现（确认非冷却） ──
-        dengdai_match = await wait_for_template(
-            self.adapter, self.ui.capture_method, _TPL_JINGYAN_DENGDAI,
-            timeout=6.0, interval=1.0,
-            log=self.logger, label=f"经验副本R{round_idx}-等待匹配画面",
-            popup_handler=self.ui.popup_handler,
-        )
-        if not dengdai_match:
-            # dengdai 没出现，再确认 zidongpipei 是否还在（双重确认冷却）
+        # ── 阶段 2+3（合并）：状态感知等待 dengdai 或 zhunbei ──
+        # 同时检测两种模板，适应匹配速度快慢不同的情况：
+        # - zhunbei 先出现 → 匹配极快，直接进入阶段 4
+        # - dengdai 先出现 → 继续等待 zhunbei（最长 60s）
+        # - 6s 内两者都未出现 → 检查 zidongpipei 判断冷却
+        state = None  # None | "dengdai"
+        elapsed = 0.0
+        cooldown_window = 6.0
+        match_timeout = 60.0
+        poll_interval = 1.0
+        zhunbei_found = False
+
+        while elapsed < cooldown_window + match_timeout:
             screenshot = self.adapter.capture(self.ui.capture_method)
-            if screenshot is not None and match_template(screenshot, _TPL_ZIDONGPIPEI):
-                self.logger.info(
+            if screenshot is not None:
+                # 弹窗处理
+                if self.ui.popup_handler is not None:
+                    dismissed = await self.ui.popup_handler.check_and_dismiss(
+                        screenshot
+                    )
+                    if dismissed > 0:
+                        continue  # 弹窗关闭后立即重试
+
+                # 优先检测 zhunbei（准备按钮）— 匹配成功的终态
+                for tpl in _TPL_ZHUNBEI_LIST:
+                    m = match_template(screenshot, tpl)
+                    if m:
+                        zhunbei_found = True
+                        break
+                if zhunbei_found:
+                    self.logger.info(
+                        f"[起号_经验副本] 第 {round_idx} 轮: "
+                        f"检测到准备按钮 (state={state}, elapsed={elapsed:.1f}s)"
+                    )
+                    break
+
+                # 检测 dengdai（等待画面）— 匹配中的中间态
+                if state is None:
+                    m = match_template(screenshot, _TPL_JINGYAN_DENGDAI)
+                    if m:
+                        state = "dengdai"
+                        self.logger.info(
+                            f"[起号_经验副本] 第 {round_idx} 轮: "
+                            f"匹配等待中... (elapsed={elapsed:.1f}s)"
+                        )
+
+            await asyncio.sleep(poll_interval)
+            elapsed += poll_interval
+
+            # 冷却检测：6s 内 dengdai 和 zhunbei 都未出现
+            if state is None and elapsed >= cooldown_window:
+                screenshot = self.adapter.capture(self.ui.capture_method)
+                if screenshot is not None and match_template(
+                    screenshot, _TPL_ZIDONGPIPEI
+                ):
+                    self.logger.info(
+                        f"[起号_经验副本] 第 {round_idx} 轮: "
+                        f"等待画面未出现且自动匹配按钮仍在，判定为冷却中"
+                    )
+                    return "cooldown"
+                self.logger.warning(
                     f"[起号_经验副本] 第 {round_idx} 轮: "
-                    f"等待画面未出现且自动匹配按钮仍在，判定为冷却中"
+                    f"等待画面未出现且自动匹配按钮消失，状态异常"
                 )
-                return "cooldown"
+                return "error"
+
+        if not zhunbei_found:
             self.logger.warning(
                 f"[起号_经验副本] 第 {round_idx} 轮: "
-                f"等待画面未出现且自动匹配按钮消失，状态异常"
-            )
-            return "error"
-
-        self.logger.info(
-            f"[起号_经验副本] 第 {round_idx} 轮: 匹配等待中..."
-        )
-
-        # ── 阶段 3：等待准备按钮出现（匹配成功） ──
-        zhunbei_match = await wait_for_template(
-            self.adapter, self.ui.capture_method, _TPL_ZHUNBEI_LIST,
-            timeout=60.0, interval=2.0,
-            log=self.logger, label=f"经验副本R{round_idx}-等待准备按钮",
-            popup_handler=self.ui.popup_handler,
-        )
-        if not zhunbei_match:
-            self.logger.warning(
-                f"[起号_经验副本] 第 {round_idx} 轮: "
-                f"等待准备按钮超时(60s)，匹配失败"
+                f"等待准备按钮超时({cooldown_window + match_timeout:.0f}s)，匹配失败"
             )
             return "error"
 
@@ -390,7 +423,7 @@ class InitExpDungeonExecutor(BaseExecutor):
             for tpl in _TPL_ZHUNBEI_LIST:
                 m = match_template(screenshot, tpl)
                 if m:
-                    cx, cy = m.center
+                    cx, cy = m.random_point()
                     self.logger.info(
                         f"[起号_经验副本] 第 {round_idx} 轮: "
                         f"点击准备按钮 ({cx}, {cy})"

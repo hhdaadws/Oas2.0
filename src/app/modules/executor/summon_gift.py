@@ -277,7 +277,7 @@ class SummonGiftExecutor(BaseExecutor):
             }
 
         # 5. 有红点，点击进入召唤礼包界面
-        sx, sy = shangdian_match.center
+        sx, sy = shangdian_match.random_point()
         self.logger.info(f"[召唤礼包] 检测到红点，点击召唤商店 ({sx}, {sy})")
         self.adapter.adb.tap(self.adapter.cfg.adb_addr, sx, sy)
         await asyncio.sleep(1.5)
@@ -330,7 +330,7 @@ class SummonGiftExecutor(BaseExecutor):
                 )
                 if mianfei_match:
                     # 找到免费按钮，点击购买
-                    mx, my = mianfei_match.center
+                    mx, my = mianfei_match.random_point()
                     self.logger.info(
                         f"[召唤礼包] Phase A: 检测到免费按钮，点击 ({mx}, {my})"
                     )
@@ -348,7 +348,7 @@ class SummonGiftExecutor(BaseExecutor):
                             ss, "assets/ui/templates/queren_mianfei.png"
                         )
                         if queren_match:
-                            qx, qy = queren_match.center
+                            qx, qy = queren_match.random_point()
                             self.logger.info(
                                 f"[召唤礼包] Phase A: 点击确认购买 ({qx}, {qy})"
                             )
@@ -417,7 +417,7 @@ class SummonGiftExecutor(BaseExecutor):
         if screenshot is not None:
             back_match = match_template(screenshot, "assets/ui/templates/back.png")
             if back_match:
-                bx, by = back_match.center
+                bx, by = back_match.random_point()
                 self.adapter.adb.tap(self.adapter.cfg.adb_addr, bx, by)
                 self.logger.info(f"[召唤礼包] 点击返回按钮 ({bx}, {by})")
             else:

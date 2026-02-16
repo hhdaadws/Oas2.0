@@ -193,7 +193,7 @@ async def run_explore_chapter(
                 try:
                     kunnan_m = match_template(screenshot, "assets/ui/templates/nandu_kunnan.png")
                     if kunnan_m:
-                        cx, cy = kunnan_m.center
+                        cx, cy = kunnan_m.random_point()
                         adapter.adb.tap(adapter.cfg.adb_addr, cx, cy)
                         if log:
                             log.info(f"{tag} 切换到困难难度 ({cx}, {cy})")
@@ -305,7 +305,7 @@ async def run_explore_chapter(
                     )
 
                 # 点击 BOSS
-                bx, by = boss_m.center
+                bx, by = boss_m.random_point()
                 adapter.adb.tap(adapter.cfg.adb_addr, bx, by)
                 if log:
                     log.info(f"{tag} 点击 BOSS ({bx}, {by})")
@@ -391,7 +391,7 @@ async def run_explore_chapter(
         _MAX_MARKER_CLICK_RETRIES = 3
         marker_click_ok = False
 
-        tx, ty = target.center
+        tx, ty = target.random_point()
         adapter.adb.tap(adapter.cfg.adb_addr, tx, ty)
         if log:
             log.info(
@@ -435,7 +435,7 @@ async def run_explore_chapter(
                 break
 
             retry_target = retry_targets[0]
-            tx, ty = retry_target.center
+            tx, ty = retry_target.random_point()
             adapter.adb.tap(adapter.cfg.adb_addr, tx, ty)
             if log:
                 log.info(

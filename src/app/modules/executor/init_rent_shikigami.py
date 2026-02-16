@@ -275,7 +275,7 @@ class InitRentShikigamiExecutor(BaseExecutor):
                 continue
 
             # 点击式神
-            cx, cy = m.center
+            cx, cy = m.random_point()
             self.adapter.adb.tap(self.adapter.cfg.adb_addr, cx, cy)
             self.logger.info(
                 f"[起号_租借式神] 点击 {cand['name']}({cand['star']}★) ({cx}, {cy})"

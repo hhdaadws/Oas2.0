@@ -10,9 +10,10 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel
 
 from ....db.base import get_db
-from ....db.models import Emulator, SystemConfig
+from ....db.models import Emulator, GameAccount, SystemConfig
 from ....core.logger import logger
 from ....core.config import settings
+from ....core.constants import AccountStatus, build_default_task_config, build_default_explore_progress
 from ...emu.adb import Adb
 from ...emu.adapter import AdapterConfig, EmulatorAdapter
 
@@ -387,3 +388,93 @@ async def delete_device_login_data(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"删除失败: {str(e)}"
         )
+
+
+class BatchCreateRequest(BaseModel):
+    """批量建号请求"""
+    zone: str  # 区服
+
+
+class BatchCreateResponse(BaseModel):
+    """批量建号响应"""
+    success: bool
+    message: str
+    created: List[str] = []
+    skipped: List[str] = []
+
+
+@router.post("/batch-create", response_model=BatchCreateResponse)
+async def batch_create_accounts(
+    req: BatchCreateRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    从已抓取的普通账号列表批量创建游戏账号。
+
+    - 扫描 putonglogindata/ 目录获取所有已抓取账号 ID
+    - 已存在的 login_id 自动跳过
+    - 新账号的 task_config 继承系统配置的默认失败延迟
+    """
+    base_path = Path(PUTONG_DIR)
+    if not base_path.exists():
+        return BatchCreateResponse(
+            success=True,
+            message="无已抓取的普通账号",
+            created=[],
+            skipped=[],
+        )
+
+    # 收集所有已抓取的账号 ID
+    pulled_ids = [item.name for item in base_path.iterdir() if item.is_dir()]
+    if not pulled_ids:
+        return BatchCreateResponse(
+            success=True,
+            message="无已抓取的普通账号",
+            created=[],
+            skipped=[],
+        )
+
+    # 查询数据库中已存在的 login_id
+    existing_ids = {
+        row.login_id
+        for row in db.query(GameAccount.login_id)
+        .filter(GameAccount.login_id.in_(pulled_ids))
+        .all()
+    }
+
+    # 读取全局默认失败延迟
+    syscfg = db.query(SystemConfig).order_by(SystemConfig.id.asc()).first()
+    fail_delays = (syscfg.default_fail_delays or {}) if syscfg else {}
+
+    created = []
+    skipped = []
+
+    for account_id in pulled_ids:
+        if account_id in existing_ids:
+            skipped.append(account_id)
+            continue
+
+        game_account = GameAccount(
+            login_id=account_id,
+            zone=req.zone,
+            progress="ok",
+            status=AccountStatus.ACTIVE,
+            task_config=build_default_task_config(fail_delays),
+            explore_progress=build_default_explore_progress(),
+        )
+        db.add(game_account)
+        created.append(account_id)
+
+    if created:
+        db.commit()
+
+    total = len(created) + len(skipped)
+    message = f"共 {total} 个账号，创建 {len(created)} 个，跳过 {len(skipped)} 个"
+    logger.info(f"批量建号完成: {message}")
+
+    return BatchCreateResponse(
+        success=True,
+        message=message,
+        created=created,
+        skipped=skipped,
+    )

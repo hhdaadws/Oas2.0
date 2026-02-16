@@ -7,6 +7,7 @@
 """
 from __future__ import annotations
 
+import random
 import re
 from dataclasses import dataclass
 from enum import Enum
@@ -223,6 +224,11 @@ class ChallengeMarker:
     match_score: float                             # 模板匹配得分
     avg_v: float                                   # 环形区域平均亮度 V（调试用）
     bright_ratio: float                            # 环形区域亮像素比例（调试用）
+
+    def random_point(self, jitter: int = 8) -> Tuple[int, int]:
+        cx, cy = self.center
+        return (cx + random.randint(-jitter, jitter),
+                cy + random.randint(-jitter, jitter))
 
 
 @dataclass

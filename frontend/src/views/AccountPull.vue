@@ -89,10 +89,22 @@
       <template #header>
         <div class="card-header">
           <span>已抓取账号</span>
-          <el-radio-group v-model="listType" @change="fetchAccounts">
-            <el-radio-button value="gouxie">勾协账号</el-radio-button>
-            <el-radio-button value="putong">普通账号</el-radio-button>
-          </el-radio-group>
+          <div style="display: flex; align-items: center; gap: 12px;">
+            <el-button
+              v-if="listType === 'putong'"
+              type="primary"
+              plain
+              size="small"
+              :disabled="!accounts.length"
+              @click="batchCreateDialogVisible = true"
+            >
+              批量建号
+            </el-button>
+            <el-radio-group v-model="listType" @change="fetchAccounts">
+              <el-radio-button value="gouxie">勾协账号</el-radio-button>
+              <el-radio-button value="putong">普通账号</el-radio-button>
+            </el-radio-group>
+          </div>
         </div>
       </template>
 
@@ -139,6 +151,28 @@
       <template #footer>
         <el-button @click="createAccountDialogVisible = false">跳过</el-button>
         <el-button type="primary" @click="handleConfirmCreateAccount" :loading="creatingAccount">创建</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 批量建号对话框 -->
+    <el-dialog
+      v-model="batchCreateDialogVisible"
+      title="批量建号"
+      width="400px"
+    >
+      <p style="margin-bottom: 16px; color: #606266;">
+        将为当前列表中的 <strong>{{ accounts.length }}</strong> 个普通账号批量创建游戏账号，已存在的账号将自动跳过。
+      </p>
+      <el-form label-width="80px">
+        <el-form-item label="区服" required>
+          <el-select v-model="batchCreateZone" placeholder="请选择区服" style="width: 100%;">
+            <el-option v-for="z in ZONES" :key="z" :label="z" :value="z" />
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="batchCreateDialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="handleBatchCreate" :loading="batchCreating">确认创建</el-button>
       </template>
     </el-dialog>
   </div>
@@ -190,6 +224,11 @@ const createAccountForm = reactive({
   login_id: '',
   zone: '樱之华'
 })
+
+// 批量建号
+const batchCreateDialogVisible = ref(false)
+const batchCreating = ref(false)
+const batchCreateZone = ref('樱之华')
 
 // 通过 API 持久化抓取后建号配置
 const loadPostPullSettings = async () => {
@@ -407,6 +446,37 @@ const handleDeleteLoginData = async () => {
       console.error('删除登录数据失败:', error)
       ElMessage.error('删除登录数据失败')
     }
+  }
+}
+
+// 批量建号
+const handleBatchCreate = async () => {
+  if (!batchCreateZone.value) {
+    ElMessage.warning('请选择区服')
+    return
+  }
+  batchCreating.value = true
+  try {
+    const response = await apiRequest('/api/account-pull/batch-create', {
+      method: 'POST',
+      body: JSON.stringify({ zone: batchCreateZone.value })
+    })
+    const data = await response.json()
+    if (response.ok && data.success) {
+      if (data.created.length > 0) {
+        ElMessage.success(data.message)
+      } else {
+        ElMessage.info(data.message)
+      }
+      batchCreateDialogVisible.value = false
+    } else {
+      ElMessage.error(data.detail || data.message || '批量建号失败')
+    }
+  } catch (error) {
+    console.error('批量建号失败:', error)
+    ElMessage.error('批量建号失败')
+  } finally {
+    batchCreating.value = false
   }
 }
 

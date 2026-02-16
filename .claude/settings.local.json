@@ -168,7 +168,8 @@
       "Bash(\"D:\\\\Users\\\\ASUS\\\\anaconda3\\\\envs\\\\timeocr\\\\Scripts\\\\uvicorn.exe\" app.main:app --host 127.0.0.1 --port 9001)",
       "Bash(PYTHONPATH=src \"D:\\\\Users\\\\ASUS\\\\anaconda3\\\\envs\\\\timeocr\\\\python.exe\":*)",
       "Bash(PYTHONPATH=src \"D:\\\\Users\\\\ASUS\\\\anaconda3\\\\envs\\\\timeocr\\\\Scripts\\\\uvicorn.exe\":*)",
-      "Bash(node -e:*)"
+      "Bash(node -e:*)",
+      "Bash(venv/Scripts/pytest:*)"
     ],
     "deny": [],
     "ask": []

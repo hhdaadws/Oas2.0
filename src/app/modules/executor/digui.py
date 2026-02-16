@@ -309,9 +309,10 @@ class DiGuiExecutor(BaseExecutor):
 
             cx, cy = target.center
             clicked_positions.append((cx, cy))
-            self.adapter.adb.tap(self.adapter.cfg.adb_addr, cx, cy)
+            tx, ty = target.random_point()
+            self.adapter.adb.tap(self.adapter.cfg.adb_addr, tx, ty)
             self.logger.info(
-                f"[地鬼] 第 {round_idx} 轮点击挑战按钮 ({cx}, {cy})"
+                f"[地鬼] 第 {round_idx} 轮点击挑战按钮 ({tx}, {ty})"
             )
             await asyncio.sleep(1.5)
 

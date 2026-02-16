@@ -655,7 +655,7 @@ class ExploreExecutor(BaseExecutor):
 
         第3排(row=2)的卡片点击坐标偏上，避免点到底部 UI。
         """
-        cx, cy = card.center
+        cx, cy = card.random_point()
         if card.row == 2:
             cy -= _ROW2_Y_OFFSET
         return (cx, cy)

@@ -15,7 +15,7 @@ from loguru import logger
 
 from ..vision.template import match_template
 from ..vision.utils import load_image, to_gray
-from .popups import DismissType, PopupDef, PopupRegistry, popup_registry
+from .popups import DismissType, JihaoPopupException, PopupDef, PopupRegistry, popup_registry
 
 if TYPE_CHECKING:
     from ..emu.adapter import EmulatorAdapter
@@ -99,7 +99,7 @@ class PopupHandler:
                         m = match_template(roi_img, action.template_path, **kwargs)
                         if m:
                             # 坐标需要加回 ROI 偏移
-                            cx, cy = m.center
+                            cx, cy = m.random_point()
                             self.adapter.adb.tap(addr, cx + rx, cy + ry)
                         else:
                             self._log.warning(
@@ -109,7 +109,7 @@ class PopupHandler:
                     else:
                         m = match_template(ss, action.template_path, **kwargs)
                         if m:
-                            self.adapter.adb.tap(addr, *m.center)
+                            self.adapter.adb.tap(addr, *m.random_point())
                         else:
                             self._log.warning(
                                 "弹窗 {} 关闭按钮模板未匹配",
@@ -124,7 +124,7 @@ class PopupHandler:
                     threshold = tpl.threshold or 0.85
                     m = match_template(ss, tpl.path, threshold=threshold)
                     if m:
-                        self.adapter.adb.tap(addr, *m.center)
+                        self.adapter.adb.tap(addr, *m.random_point())
 
             elif action.type == DismissType.BACK_KEY:
                 self.adapter.adb.shell(addr, "input keyevent KEYCODE_BACK")
@@ -165,6 +165,11 @@ class PopupHandler:
             popup = self.scan(image)
             if popup is None:
                 break
+
+            # 祭号弹窗：不关闭，直接抛异常由上层处理
+            if popup.id == "jihao":
+                self._log.warning("检测到祭号弹窗，抛出异常")
+                raise JihaoPopupException()
 
             self._log.info(
                 "第 {} 轮弹窗处理: {} ({})",

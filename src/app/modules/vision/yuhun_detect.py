@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+import random
 from dataclasses import dataclass
 from enum import Enum
 from typing import List, Optional, Tuple
@@ -31,6 +32,13 @@ class YuHunLevel:
     center: Tuple[int, int]                    # 格子中心坐标 (x, y)
     roi: Tuple[int, int, int, int]             # (x, y, w, h) 检测区域
     avg_hsv: Tuple[float, float, float]        # 平均 HSV 值（调试用）
+
+    def random_point(self, margin: float = 0.2) -> Tuple[int, int]:
+        rx, ry, rw, rh = self.roi
+        margin = max(0.0, min(margin, 0.45))
+        mx, my = int(rw * margin), int(rh * margin)
+        return (random.randint(rx + mx, rx + rw - 1 - mx),
+                random.randint(ry + my, ry + rh - 1 - my))
 
 
 # ── 关卡框布局常量（960×540 分辨率）──

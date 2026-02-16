@@ -28,6 +28,7 @@ logs/
 
 # Screenshots and artifacts
 screenshots/
+fail_screenshots/
 artifacts/
 
 # Backup

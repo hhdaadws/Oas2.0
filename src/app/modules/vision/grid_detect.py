@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+import random
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
@@ -45,6 +46,9 @@ class GridPosition:
     def center(self) -> Tuple[int, int]:
         return self.match.center
 
+    def random_point(self, margin: float = 0.2) -> Tuple[int, int]:
+        return self.match.random_point(margin)
+
 
 @dataclass
 class CellInfo:
@@ -54,6 +58,12 @@ class CellInfo:
     bottom: int                   # 格子底部 y
     center: Tuple[int, int]       # 格子中心坐标 (x, y)
     height: int                   # 格子高度
+
+    def random_point(self) -> Tuple[int, int]:
+        cx, cy = self.center
+        margin_y = max(1, self.height // 5)
+        return (cx + random.randint(-10, 10),
+                random.randint(self.top + margin_y, self.bottom - margin_y))
 
 
 @dataclass

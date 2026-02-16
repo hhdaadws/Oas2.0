@@ -171,7 +171,7 @@ class LiaoShopExecutor(BaseExecutor):
             self.logger.warning("[寮商店] 未检测到黑碎模板")
             return False
 
-        cx, cy = heisui_match.center
+        cx, cy = heisui_match.random_point()
         self.adapter.adb.tap(self.adapter.cfg.adb_addr, cx, cy)
         self.logger.info(f"[寮商店] 点击黑碎: ({cx}, {cy})")
         await asyncio.sleep(1.5)
@@ -216,7 +216,7 @@ class LiaoShopExecutor(BaseExecutor):
             self.logger.warning("[寮商店] 未检测到蓝票模板")
             return False, 0
 
-        cx, cy = lanpiao_match.center
+        cx, cy = lanpiao_match.random_point()
         self.adapter.adb.tap(self.adapter.cfg.adb_addr, cx, cy)
         self.logger.info(f"[寮商店] 点击蓝票: ({cx}, {cy})")
         await asyncio.sleep(1.5)

@@ -255,8 +255,8 @@ class DelegateHelpExecutor(BaseExecutor):
             self.logger.info("[弥助] 未检测到已完成委派，跳过奖励领取")
             return
 
-        # 点击 wancheng 中心下方 20px
-        cx, cy = result.center
+        # 点击 wancheng 区域内随机位置，偏下 20px
+        cx, cy = result.random_point()
         self.adapter.adb.tap(self.adapter.cfg.adb_addr, cx, cy + 20)
         self.logger.info(f"[弥助] 检测到已完成委派，点击 ({cx}, {cy + 20})")
         await asyncio.sleep(1.5)
@@ -286,7 +286,7 @@ class DelegateHelpExecutor(BaseExecutor):
         if screenshot is not None:
             wr = match_template(screenshot, "assets/ui/templates/wanchengrenwu.png")
             if wr:
-                wrx, wry = wr.center
+                wrx, wry = wr.random_point()
                 self.adapter.adb.tap(self.adapter.cfg.adb_addr, wrx, wry)
                 self.logger.info(f"[弥助] 点击完成任务按钮 ({wrx}, {wry})")
                 await asyncio.sleep(1.5)

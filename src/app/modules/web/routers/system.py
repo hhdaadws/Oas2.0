@@ -18,17 +18,18 @@ router = APIRouter(prefix="/api/system", tags=["system"])
 
 
 class SystemSettings(BaseModel):
-    adb_path: str
-    mumu_manager_path: str
-    nemu_folder: str
-    pkg_name: str
-    launch_mode: str
-    capture_method: str
-    ipc_dll_path: str
-    activity_name: str
+    adb_path: Optional[str] = None
+    mumu_manager_path: Optional[str] = None
+    nemu_folder: Optional[str] = None
+    pkg_name: Optional[str] = None
+    launch_mode: Optional[str] = None
+    capture_method: Optional[str] = None
+    ipc_dll_path: Optional[str] = None
+    activity_name: Optional[str] = None
     python_path: Optional[str] = None
     pull_post_mode: str = "none"
     pull_default_zone: str = "樱之华"
+    save_fail_screenshot: bool = False
 
 
 class SystemSettingsUpdate(BaseModel):
@@ -36,13 +37,14 @@ class SystemSettingsUpdate(BaseModel):
     mumu_manager_path: Optional[str] = None
     nemu_folder: Optional[str] = None
     pkg_name: Optional[str] = None
-    launch_mode: Optional[str] = None  # adb|ipc|mumu
-    capture_method: Optional[str] = None  # adb|ipc
+    launch_mode: Optional[str] = None
+    capture_method: Optional[str] = None
     ipc_dll_path: Optional[str] = None
     activity_name: Optional[str] = None
     python_path: Optional[str] = None
-    pull_post_mode: Optional[str] = None  # none|auto|confirm
+    pull_post_mode: Optional[str] = None
     pull_default_zone: Optional[str] = None
+    save_fail_screenshot: Optional[bool] = None
 
 
 class CaptureBenchmarkRequest(BaseModel):
@@ -61,6 +63,7 @@ def _serialize_settings() -> Dict[str, str]:
         "ipc_dll_path": settings.ipc_dll_path,
         "activity_name": settings.activity_name,
         "python_path": None,
+        "save_fail_screenshot": False,
     }
 
 
@@ -81,6 +84,7 @@ async def get_settings(db: Session = Depends(get_db)) -> SystemSettings:
             python_path=row.python_path or None,
             pull_post_mode=row.pull_post_mode or "none",
             pull_default_zone=row.pull_default_zone or "樱之华",
+            save_fail_screenshot=bool(row.save_fail_screenshot) if row.save_fail_screenshot is not None else False,
         )
     return SystemSettings(**_serialize_settings())
 
@@ -129,6 +133,8 @@ async def update_settings(body: SystemSettingsUpdate, db: Session = Depends(get_
         apply["pull_post_mode"] = body.pull_post_mode
     if body.pull_default_zone is not None:
         apply["pull_default_zone"] = body.pull_default_zone
+    if body.save_fail_screenshot is not None:
+        apply["save_fail_screenshot"] = body.save_fail_screenshot
 
     if not apply:
         return {"message": "未提供任何需要更新的配置"}
@@ -147,6 +153,7 @@ async def update_settings(body: SystemSettingsUpdate, db: Session = Depends(get_
             "ipc_dll_path": row.ipc_dll_path,
             "activity_name": row.activity_name,
             "python_path": row.python_path,
+            "save_fail_screenshot": row.save_fail_screenshot,
         },
     }
 

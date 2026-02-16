@@ -157,7 +157,7 @@ class CollectMailExecutor(BaseExecutor):
             }
 
         # 4. 点击一键领取
-        yx, yy = yijian_result.center
+        yx, yy = yijian_result.random_point()
         self.adapter.adb.tap(self.adapter.cfg.adb_addr, yx, yy)
         self.logger.info(f"[领取邮件] 点击一键领取: ({yx}, {yy})")
 
@@ -202,7 +202,7 @@ class CollectMailExecutor(BaseExecutor):
                 exit_result = match_template(screenshot2, "assets/ui/templates/exit.png")
                 if exit_result:
                     self.logger.info("[领取邮件] 检测到 exit 按钮，点击退出")
-                    ex, ey = exit_result.center
+                    ex, ey = exit_result.random_point()
                     self.adapter.adb.tap(self.adapter.cfg.adb_addr, ex, ey)
                     self.logger.info(f"[领取邮件] 点击 exit: ({ex}, {ey})")
                     handled = True

@@ -3,17 +3,20 @@ from __future__ import annotations
 
 import os
 import threading
+from pathlib import Path
 
 from ...core.config import settings
 from ...core.logger import logger
 
 # ── 在导入 PaddleOCR 之前设置环境变量，防止自动下载模型 ──
-os.environ.setdefault('PADDLEX_HOME', settings.ocr_model_dir)
-os.environ.setdefault('PPOCR_HOME', settings.ocr_model_dir)
-os.environ.setdefault('HUB_HOME', settings.ocr_model_dir)
-os.environ.setdefault('PADDLE_HOME', settings.ocr_model_dir)
+_ocr_dir = str(Path(settings.ocr_model_dir).resolve())
+os.environ.setdefault('PADDLEX_HOME', _ocr_dir)
+os.environ.setdefault('PPOCR_HOME', _ocr_dir)
+os.environ.setdefault('HUB_HOME', _ocr_dir)
+os.environ.setdefault('PADDLE_HOME', _ocr_dir)
 os.environ.setdefault('PADDLEX_DOWNLOAD', '0')
 os.environ.setdefault('USE_PADDLEX', '0')
+os.environ.setdefault('PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK', 'True')
 
 _ocr_instance = None
 _ocr_lock = threading.Lock()

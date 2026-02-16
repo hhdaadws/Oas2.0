@@ -10,6 +10,7 @@
 """
 from __future__ import annotations
 
+import random
 from dataclasses import dataclass
 from typing import List, Tuple
 
@@ -51,6 +52,12 @@ class BattleCellInfo:
     bottom: int                   # 格子底部 y
     center: Tuple[int, int]       # 格子中心坐标 (x, y)，可直接 tap
     height: int                   # 格子高度
+
+    def random_point(self) -> Tuple[int, int]:
+        cx, cy = self.center
+        margin_y = max(1, self.height // 5)
+        return (cx + random.randint(-10, 10),
+                random.randint(self.top + margin_y, self.bottom - margin_y))
 
 
 def detect_battle_column_cells(

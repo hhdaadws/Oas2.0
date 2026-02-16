@@ -173,6 +173,22 @@ class ExecutorService:
 
         async with self._lock:
             if submitted:
+                # 双重检查：防止同一账号被重复 dispatch
+                if batch.account_id in self._running_accounts:
+                    self._log.warning(
+                        f"账号 {batch.account_id} 已在运行中，跳过 dispatch"
+                    )
+                    self._remove_pending_batch(batch.account_id)
+                    self._queued_accounts.discard(batch.account_id)
+                    for intent in batch.intents:
+                        self._queued_keys.discard(
+                            (intent.account_id, intent.task_type)
+                        )
+                    self._metrics["dispatch_fail"] += 1
+                    if self._pending:
+                        self._have_items.set()
+                    return False
+
                 self._remove_pending_batch(batch.account_id)
                 batch.state = "running"
                 self._running_accounts.add(batch.account_id)

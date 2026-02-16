@@ -72,6 +72,13 @@
           <el-input v-model="form.activity_name" placeholder="例如 .MainActivity（adb intent 启动时使用）" />
         </el-form-item>
 
+        <el-form-item label="保存失败截图">
+          <el-switch v-model="form.save_fail_screenshot" />
+          <span style="margin-left: 8px; color: #909399; font-size: 12px;">
+            开启后，任务失败时自动截图保存到 fail_screenshots 目录
+          </span>
+        </el-form-item>
+
         <el-form-item>
           <el-button @click="load" :loading="loading">刷新</el-button>
           <el-button type="primary" @click="save" :loading="loading">保存</el-button>
@@ -130,7 +137,8 @@ const form = reactive({
   launch_mode: 'adb_monkey',
   capture_method: 'adb',
   ipc_dll_path: '',
-  activity_name: '.MainActivity'
+  activity_name: '.MainActivity',
+  save_fail_screenshot: false
 })
 const loading = ref(false)
 const emulators = ref([])

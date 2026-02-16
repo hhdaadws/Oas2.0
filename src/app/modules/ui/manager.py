@@ -75,7 +75,7 @@ class UIManager(UIManagerProtocol):
         for label, tpl_path in [("exit", EXIT_TEMPLATE), ("back", BACK_TEMPLATE)]:
             m = match_template(image, tpl_path)
             if m is not None:
-                cx, cy = m.center
+                cx, cy = m.random_point()
                 logger.info("_try_click_exit_or_back: 检测到 {} 按钮 score={:.3f}，点击 ({}, {})", label, m.score, cx, cy)
                 self.adapter.tap(cx, cy)
                 return True

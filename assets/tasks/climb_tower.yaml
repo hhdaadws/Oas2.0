@@ -61,8 +61,8 @@ ticket:
   roi: [583, 13, 49, 21]
   # 可选关键词过滤（不填则直接解析 OCR 全文）
   keyword: ""
-  # 战斗次数上限（防止 OCR 误读导致无限循环）
-  max_battles: 10
+  # 战斗次数安全上限（防止 OCR 持续失败导致无限循环）
+  max_battles: 999
   # OCR 失败时的默认门票数（null 表示直接失败）
   fallback: null
 
@@ -76,7 +76,7 @@ rent:
   # 借用按钮模板（找同一水平线的进行点击）
   borrow_button: "assets/ui/templates/climb/shishen_jieyong.png"
   # 退出租借界面的按钮模板
-  exit_template: "assets/ui/templates/exit_dark.png"
+  exit_template: "assets/ui/templates/exit.png"
   # 同一水平线的 Y 坐标容差（像素）
   y_tolerance: 30
   # 等待超时
@@ -85,6 +85,8 @@ rent:
 # === 阵容锁定管理 ===
 # 使用 zhenrong_lock.png 模板检测锁定状态
 lock:
+  # 锁定状态模板（爬塔专用）
+  lock_template: "assets/ui/templates/climb/pata_lock.png"
   # 锁定/解锁切换的点击坐标
   toggle_pos: [611, 501]
   # 锁图标搜索区域 (x, y, w, h)
@@ -98,11 +100,11 @@ lock:
 # 首次战斗需要手动配置阵容（拖拽式神到指定位置）
 first_battle_lineup:
   # 进入阵容配置界面的点击坐标（战斗模块标准坐标）
-  config_btn: [462, 446]
+  config_btn: [493, 400]
   # 上阵式神模板（在阵容配置界面底部列表中搜索）
   shangzhen_template: "assets/ui/templates/climb/shangzhen_shishen_1.png"
   # 式神放置位置1（租借式神 → 此坐标）
-  lineup_pos_1: [127, 281]
+  lineup_pos_1: [20, 260]
   # 式神放置位置2（座敷童子 → 此坐标）
   lineup_pos_2: [297, 295]
   # 拖拽持续时间（毫秒）

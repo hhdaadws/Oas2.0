@@ -205,7 +205,7 @@ async def _switch_battle_lineup(
         return False
 
     target_group = groups[group - 1]
-    cx, cy = target_group.center
+    cx, cy = target_group.random_point()
     adapter.adb.tap(addr, cx, cy)
     if log:
         log.info(f"{tag} 点击分组 {group} ({cx}, {cy})")
@@ -236,7 +236,7 @@ async def _switch_battle_lineup(
         return False
 
     target_lineup = lineups[position - 1]
-    cx, cy = target_lineup.center
+    cx, cy = target_lineup.random_point()
     adapter.adb.tap(addr, cx, cy)
     if log:
         log.info(f"{tag} 点击阵容 {position} ({cx}, {cy})")
@@ -301,21 +301,21 @@ async def _manual_setup_lineup(
             log.warning(f"{tag} 等待准备界面超时")
         return False
 
-    # 2+3. 点击进入阵容配置界面 + 等待加载（重试 3 次）
+    # 2+3. 点击进入阵容配置界面 + 等待加载（持续重试最多 20 次）
     config_btn = manual_lineup.config_btn or _LINEUP_CONFIG_BTN
     zhenrong_ready = False
-    for attempt in range(1, 4):
+    for attempt in range(1, 21):
         adapter.adb.tap(addr, *config_btn)
         if log:
             log.info(
-                f"{tag} 点击进入阵容配置 {config_btn} (attempt={attempt}/3)"
+                f"{tag} 点击进入阵容配置 {config_btn} (attempt={attempt}/20)"
             )
         await asyncio.sleep(1.5)
 
         m = await wait_for_template(
             adapter, capture_method, _TPL_TAG_ZHENRONG,
-            timeout=8.0, interval=0.5,
-            log=log, label=f"手动阵容-等待阵容界面(attempt={attempt}/3)",
+            timeout=3.0, interval=0.5,
+            log=log, label=f"手动阵容-等待阵容界面(attempt={attempt}/20)",
             popup_handler=popup_handler,
         )
         if m:
@@ -323,12 +323,12 @@ async def _manual_setup_lineup(
             break
         if log:
             log.warning(
-                f"{tag} 阵容配置界面未加载 (attempt={attempt}/3)"
+                f"{tag} 阵容配置界面未加载 (attempt={attempt}/20)"
             )
 
     if not zhenrong_ready:
         if log:
-            log.warning(f"{tag} 阵容配置界面加载失败，已重试 3 次")
+            log.warning(f"{tag} 阵容配置界面加载失败，已重试 20 次")
         return False
 
     # 4. 在底部式神列表中找到并拖动租借式神到位置1
@@ -336,7 +336,7 @@ async def _manual_setup_lineup(
     if manual_lineup.rental_shikigami:
         for tpl_path, name, star in manual_lineup.rental_shikigami:
             found = False
-            for cap_attempt in range(1, 3):  # 每个式神 2 次截图重试
+            for cap_attempt in range(1, 11):  # 每个式神 10 次截图重试
                 screenshot = adapter.capture(capture_method)
                 if screenshot is None:
                     await asyncio.sleep(0.3)
@@ -345,7 +345,12 @@ async def _manual_setup_lineup(
                 if m:
                     cx, cy = m.center
                     tx, ty = manual_lineup.lineup_pos_1 or _LINEUP_POS_1
-                    adapter.swipe(cx, cy, tx, ty, _DRAG_DUR_MS)
+                    try:
+                        adapter.swipe(cx, cy, tx, ty, _DRAG_DUR_MS)
+                    except Exception as e:
+                        if log:
+                            log.warning(f"{tag} 拖动式神 swipe 失败: {e}")
+                        break
                     if log:
                         log.info(
                             f"{tag} 拖动 {name}({star}★) "
@@ -355,7 +360,7 @@ async def _manual_setup_lineup(
                     rental_placed = True
                     found = True
                     break
-                if cap_attempt < 2:
+                if cap_attempt < 10:
                     await asyncio.sleep(0.5)
             if found:
                 break
@@ -401,7 +406,12 @@ async def _manual_setup_lineup(
             if m:
                 cx, cy = m.center
                 tx, ty = manual_lineup.lineup_pos_2 or _LINEUP_POS_2
-                adapter.swipe(cx, cy, tx, ty, _DRAG_DUR_MS)
+                try:
+                    adapter.swipe(cx, cy, tx, ty, _DRAG_DUR_MS)
+                except Exception as e:
+                    if log:
+                        log.warning(f"{tag} 拖动座敷童子 swipe 失败: {e}")
+                    break
                 if log:
                     log.info(
                         f"{tag} 拖动座敷童子 ({cx},{cy}) → ({tx},{ty})"
@@ -412,7 +422,12 @@ async def _manual_setup_lineup(
 
             # 向左滑动搜索
             sx, sy = _ZUOFU_SEARCH_START
-            adapter.swipe(sx, sy, sx - _ZUOFU_SWIPE_DIST, sy, _ZUOFU_SWIPE_DUR_MS)
+            try:
+                adapter.swipe(sx, sy, sx - _ZUOFU_SWIPE_DIST, sy, _ZUOFU_SWIPE_DUR_MS)
+            except Exception as e:
+                if log:
+                    log.warning(f"{tag} 搜索座敷童子 swipe 失败: {e}")
+                break
             if log:
                 log.info(
                     f"{tag} 向左滑动搜索座敷童子 (第{swipe_idx + 1}次)"
@@ -558,7 +573,7 @@ async def run_battle(
         for tpl in _TPL_ZHUNBEI_LIST:
             m_zhunbei = match_template(screenshot, tpl)
             if m_zhunbei:
-                cx, cy = m_zhunbei.center
+                cx, cy = m_zhunbei.random_point()
                 if log:
                     log.info(
                         f"{tag} 检测到准备按钮 {Path(tpl).name}，"
@@ -628,7 +643,7 @@ async def run_battle(
             _TPL_TANSUO_SHEZHI = "assets/ui/templates/tansuo_shezhi.png"
             if is_jiangli:
                 # 奖励界面已出现，直接获取坐标开始点击
-                click_x, click_y = m_jiangli_check.center
+                click_x, click_y = m_jiangli_check.random_point()
                 click_x += 100  # 偏右点击，避免点到奖励图标本身
             else:
                 # 等待奖励界面出现
@@ -639,7 +654,7 @@ async def run_battle(
                     popup_handler=popup_handler,
                 )
                 if m_jiangli:
-                    click_x, click_y = m_jiangli.center
+                    click_x, click_y = m_jiangli.random_point()
                     click_x += 100  # 偏右点击，避免点到奖励图标本身
                 else:
                     if log:

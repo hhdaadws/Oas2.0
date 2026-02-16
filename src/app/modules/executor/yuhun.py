@@ -265,7 +265,7 @@ class YuHunExecutor(BaseExecutor):
             }
 
         if target_lv.state != LevelState.SELECTED:
-            cx, cy = target_lv.center
+            cx, cy = target_lv.random_point()
             self.adapter.adb.tap(self.adapter.cfg.adb_addr, cx, cy)
             self.logger.info(
                 f"[御魂] 点击选中第 {target_level} 层 ({cx}, {cy})"
@@ -538,7 +538,7 @@ class YuHunExecutor(BaseExecutor):
 
             # 选中该层
             if battle_lv.state != LevelState.SELECTED:
-                cx, cy = battle_lv.center
+                cx, cy = battle_lv.random_point()
                 self.adapter.adb.tap(self.adapter.cfg.adb_addr, cx, cy)
                 self.logger.info(
                     f"[御魂-解锁] 选中层级 {battle_level} ({cx}, {cy})"

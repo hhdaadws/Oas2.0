@@ -18,10 +18,12 @@ from ...core.timeutils import (
     format_beijing_time,
     get_next_fixed_time,
     now_beijing,
+    parse_beijing_time,
 )
 from ...db.base import SessionLocal
 from ...db.models import Emulator, GameAccount, SystemConfig, Task
 from ..ui.manager import AccountExpiredException
+from ..ui.popups import JihaoPopupException
 from ..emu.adapter import EmulatorAdapter
 from .base import MockExecutor
 from .collect_login_gift import CollectLoginGiftExecutor
@@ -80,6 +82,8 @@ _EXECUTOR_HAS_OWN_UPDATE = {
 _MIZHU_FIXED_TIMES = ["00:00", "06:00", "12:00", "18:00"]
 # 勾协固定时间点
 _GOUXIE_FIXED_TIMES = ["18:00", "21:00"]
+# 对弈竞猜固定时间窗口（10:00 起，每 2 小时一个窗口）
+_DUIYI_FIXED_TIMES = ["10:00", "12:00", "14:00", "16:00", "18:00", "20:00", "22:00"]
 
 
 class WorkerActor:
@@ -292,6 +296,7 @@ class WorkerActor:
                     task_name = intent.task_type.value if isinstance(intent.task_type, TaskType) else str(intent.task_type)
                     db_log(account_id, f"{task_name}任务执行失败", level="WARNING")
                     self._update_next_time_on_failure(intent, account_id)
+                    self._save_fail_screenshot(intent, shared_adapter, reason="task_failed")
                 # 提取 adapter/ui 供后续任务复用
                 if not shared_adapter and hasattr(self, '_last_executor_adapter'):
                     shared_adapter = self._last_executor_adapter
@@ -306,12 +311,29 @@ class WorkerActor:
                 task_name = intent.task_type.value if isinstance(intent.task_type, TaskType) else str(intent.task_type)
                 db_log(intent.account_id, f"{task_name}任务空闲超时 ({self._stale_timeout_sec}s 无活动)", level="ERROR")
                 self._update_next_time_on_failure(intent, account_id)
+                self._save_fail_screenshot(intent, shared_adapter, reason="stale_timeout")
+            except JihaoPopupException:
+                batch_success = False
+                abort = True
+                self._log.warning(f"检测到祭号弹窗，关闭游戏并批量延后任务: account={intent.account_id}")
+                db_log(intent.account_id, "检测到祭号弹窗，关闭游戏并批量延后任务", level="WARNING")
+                self._save_fail_screenshot(intent, shared_adapter, reason="jihao_popup")
+                self._delay_all_tasks_on_jihao(account_id)
+                if shared_adapter:
+                    try:
+                        shared_adapter.adb.force_stop(
+                            shared_adapter.cfg.adb_addr, self._PKG_NAME
+                        )
+                    except Exception as e:
+                        self._log.error(f"祭号弹窗关闭游戏失败: {e}")
+                break
             except AccountExpiredException:
                 batch_success = False
                 abort = True
                 self._log.warning(f"账号失效: account={intent.account_id}")
                 self._mark_account_invalid(intent.account_id)
                 db_log(intent.account_id, "账号登录失效，已标记为无效", level="ERROR")
+                self._save_fail_screenshot(intent, shared_adapter, reason="account_expired")
                 break
             except Exception as exc:
                 batch_success = False
@@ -319,6 +341,7 @@ class WorkerActor:
                 task_name = intent.task_type.value if isinstance(intent.task_type, TaskType) else str(intent.task_type)
                 db_log(intent.account_id, f"{task_name}任务异常: {str(exc)[:200]}", level="ERROR")
                 self._update_next_time_on_failure(intent, account_id)
+                self._save_fail_screenshot(intent, shared_adapter, reason=str(exc)[:50])
 
         return batch_success, shared_adapter, shared_ui, abort
 
@@ -637,6 +660,95 @@ class WorkerActor:
         except Exception as e:
             self._log.error(f"更新失败延迟 next_time 失败: task={config_key}, account={account_id}, error={e}")
 
+    def _delay_all_tasks_on_jihao(self, account_id: int) -> None:
+        """祭号弹窗出现后，批量延后所有即将到期的任务。
+
+        对每个已启用且有 next_time 的任务：
+        - 读取该任务的 fail_delay（默认 30 分钟）
+        - 如果 next_time <= 当前时间 + fail_delay（已到期或即将到期），
+          则将 next_time 设为 当前时间 + fail_delay
+        """
+        try:
+            with SessionLocal() as db:
+                account = db.query(GameAccount).filter(GameAccount.id == account_id).first()
+                if not account:
+                    return
+                cfg = account.task_config or {}
+                bj_now = now_beijing()
+                updated_count = 0
+                for task_name, task_cfg in cfg.items():
+                    if not isinstance(task_cfg, dict):
+                        continue
+                    if task_cfg.get("enabled") is not True:
+                        continue
+                    next_time_str = task_cfg.get("next_time")
+                    if not next_time_str:
+                        continue
+                    fail_delay = task_cfg.get("fail_delay", 30)
+                    if fail_delay <= 0:
+                        continue
+                    try:
+                        current_next = parse_beijing_time(next_time_str)
+                    except Exception:
+                        continue
+                    deadline = bj_now + timedelta(minutes=fail_delay)
+                    if current_next <= deadline:
+                        new_next_time = format_beijing_time(bj_now + timedelta(minutes=fail_delay))
+                        task_cfg["next_time"] = new_next_time
+                        updated_count += 1
+                if updated_count > 0:
+                    account.task_config = cfg
+                    flag_modified(account, "task_config")
+                    db.commit()
+                    self._log.info(f"祭号弹窗: 已延后 {updated_count} 个任务 (account={account_id})")
+        except Exception as e:
+            self._log.error(f"祭号弹窗批量延后失败: account={account_id}, error={e}")
+
+    def _save_fail_screenshot(
+        self,
+        intent: TaskIntent,
+        shared_adapter,
+        reason: str = "",
+    ) -> None:
+        """任务失败时尝试保存模拟器截图。
+
+        截图保存失败不影响主流程，所有异常静默捕获。
+        """
+        if not self.syscfg or not getattr(self.syscfg, 'save_fail_screenshot', False):
+            return
+        if not shared_adapter:
+            self._log.debug("无法保存失败截图：adapter 未初始化")
+            return
+        try:
+            from pathlib import Path
+
+            capture_method = getattr(self.syscfg, 'capture_method', None) or 'adb'
+            png_data = shared_adapter.capture(method=capture_method)
+            if not png_data:
+                self._log.warning("保存失败截图：截图数据为空")
+                return
+
+            task_name = (
+                intent.task_type.value
+                if isinstance(intent.task_type, TaskType)
+                else str(intent.task_type)
+            )
+            ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+            safe_reason = reason.replace(" ", "_").replace("/", "_").replace("\\", "_")[:50] if reason else "fail"
+
+            fail_dir = Path("fail_screenshots")
+            fail_dir.mkdir(parents=True, exist_ok=True)
+
+            filename = f"{intent.account_id}_{task_name}_{ts}_{safe_reason}.png"
+            filepath = fail_dir / filename
+
+            with open(filepath, "wb") as f:
+                f.write(png_data)
+
+            self._log.info(f"失败截图已保存: {filepath}")
+        except Exception as exc:
+            self._log.warning(f"保存失败截图异常（不影响主流程）: {exc}")
+
     def _make_interrupt_callback(self, account: GameAccount, executor_ref):
         """创建中断回调闭包，供长任务执行器在 yield point 调用。
 
@@ -712,6 +824,10 @@ class WorkerActor:
         if task_type == TaskType.COOP:
             # 勾协: 下一个 18:00/21:00
             return get_next_fixed_time(bj_now_str, _GOUXIE_FIXED_TIMES)
+
+        if task_type == TaskType.DUIYI_JINGCAI:
+            # 对弈竞猜: 下一个 2 小时窗口（10:00-22:00）
+            return get_next_fixed_time(bj_now_str, _DUIYI_FIXED_TIMES)
 
         if task_type in (
             TaskType.CLIMB_TOWER,

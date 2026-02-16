@@ -28,6 +28,7 @@ def init_db():
     _fix_fanhe_jiuhu_level_zero()
     _migrate_rest_config_enabled_column()
     _ensure_performance_indexes()
+    _migrate_save_fail_screenshot_column()
 
 
 def _migrate_login_id_unique_constraint():
@@ -352,6 +353,26 @@ def _migrate_global_task_switches_column():
         try:
             from ..core.logger import logger
             logger.error(f"global_task_switches 列迁移失败: {e}")
+        except Exception:
+            pass
+
+
+def _migrate_save_fail_screenshot_column():
+    """确保 system_config 表包含 save_fail_screenshot 列。"""
+    try:
+        if engine.url.get_backend_name() != 'sqlite':
+            return
+        with engine.begin() as conn:
+            cols = [r[1] for r in conn.exec_driver_sql("PRAGMA table_info('system_config')").fetchall()]
+            if not cols or 'save_fail_screenshot' in cols:
+                return
+            conn.exec_driver_sql(
+                "ALTER TABLE system_config ADD COLUMN save_fail_screenshot BOOLEAN DEFAULT 0"
+            )
+    except Exception as e:
+        try:
+            from ..core.logger import logger
+            logger.error(f"save_fail_screenshot 列迁移失败: {e}")
         except Exception:
             pass
 

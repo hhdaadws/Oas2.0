@@ -109,6 +109,7 @@ class TaskConfigUpdate(BaseModel):
     collect_fanhe_jiuhu: Optional[Dict[str, Any]] = Field(default=None, alias="领取饭盒酒壶")
     yuhun: Optional[Dict[str, Any]] = Field(default=None, alias="御魂")
     douji: Optional[Dict[str, Any]] = Field(default=None, alias="斗技")
+    duiyi_jingcai: Optional[Dict[str, Any]] = Field(default=None, alias="对弈竞猜")
 
 
 class RestConfigUpdate(BaseModel):
