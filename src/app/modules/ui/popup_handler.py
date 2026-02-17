@@ -9,16 +9,19 @@
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING, Optional
+import inspect
+from typing import TYPE_CHECKING, Optional, Union
 
 from loguru import logger
 
 from ..vision.template import match_template
-from ..vision.utils import load_image, to_gray
+from ..vision.async_template import async_match_template
+from ..vision.utils import ImageLike, load_image, to_gray
 from .popups import DismissType, JihaoPopupException, PopupDef, PopupRegistry, popup_registry
 
 if TYPE_CHECKING:
     from ..emu.adapter import EmulatorAdapter
+    from ..emu.async_adapter import AsyncEmulatorAdapter
 
 
 class PopupHandler:
@@ -26,7 +29,7 @@ class PopupHandler:
 
     def __init__(
         self,
-        adapter: EmulatorAdapter,
+        adapter: "Union[EmulatorAdapter, AsyncEmulatorAdapter]",
         capture_method: str = "adb",
         registry: PopupRegistry | None = None,
     ) -> None:
@@ -35,13 +38,38 @@ class PopupHandler:
         self.registry = registry or popup_registry
         self._log = logger.bind(module="PopupHandler")
 
-    def scan(self, image: bytes) -> Optional[PopupDef]:
-        """扫描截图中是否存在已注册的弹窗。
+    # ── 异步适配辅助方法 ──
+
+    async def _capture(self):
+        """截图并直接返回 BGR ndarray。"""
+        result = self.adapter.capture_ndarray(self.capture_method)
+        if inspect.isawaitable(result):
+            return await result
+        return result
+
+    async def _adb_tap(self, addr: str, x: int, y: int) -> None:
+        # AsyncEmulatorAdapter 没有直接的 adb.tap，统一用 adapter.tap
+        from ..emu.async_adapter import AsyncEmulatorAdapter
+        if isinstance(self.adapter, AsyncEmulatorAdapter):
+            await self.adapter.tap(x, y)
+        else:
+            self.adapter.adb.tap(addr, x, y)
+
+    async def _adb_shell(self, addr: str, cmd: str) -> None:
+        from ..emu.async_adapter import AsyncEmulatorAdapter
+        if isinstance(self.adapter, AsyncEmulatorAdapter):
+            from ...core.thread_pool import run_in_io
+            await run_in_io(self.adapter.adb.shell, addr, cmd)
+        else:
+            self.adapter.adb.shell(addr, cmd)
+
+    def scan(self, image: ImageLike) -> Optional[PopupDef]:
+        """扫描截图中是否存在已注册的弹窗（同步，CPU 密集）。
 
         按优先级顺序匹配，找到第一个即返回（短路）。
 
         Args:
-            image: 截图的 bytes 数据
+            image: 截图数据（bytes / ndarray / path）
 
         Returns:
             匹配到的 PopupDef，未匹配返回 None
@@ -70,6 +98,12 @@ class PopupHandler:
                 continue
         return None
 
+    async def async_scan(self, image: ImageLike) -> Optional[PopupDef]:
+        """异步版 scan，将 CPU 密集的模板匹配 offload 到计算线程池。"""
+        import functools
+        from ...core.thread_pool import run_in_compute
+        return await run_in_compute(functools.partial(self.scan, image))
+
     async def dismiss(self, popup: PopupDef) -> bool:
         """执行弹窗关闭动作序列。
 
@@ -83,12 +117,13 @@ class PopupHandler:
 
         for action in popup.dismiss_actions:
             if action.type == DismissType.TAP:
-                self.adapter.adb.tap(addr, action.tap_x, action.tap_y)
+                await self._adb_tap(addr, action.tap_x, action.tap_y)
 
             elif action.type == DismissType.TAP_TEMPLATE:
                 # 重新截图，模板匹配找到按钮后点击
-                ss = self.adapter.capture(self.capture_method)
-                if ss and action.template_path:
+                ss = await self._capture()
+                tap_ok = False
+                if ss is not None and action.template_path:
                     kwargs = {}
                     if action.template_threshold != 0.85:
                         kwargs["threshold"] = action.template_threshold
@@ -96,38 +131,51 @@ class PopupHandler:
                         big = load_image(ss)
                         rx, ry, rw, rh = action.template_roi
                         roi_img = big[ry:ry + rh, rx:rx + rw]
-                        m = match_template(roi_img, action.template_path, **kwargs)
+                        m = await async_match_template(roi_img, action.template_path, **kwargs)
                         if m:
                             # 坐标需要加回 ROI 偏移
                             cx, cy = m.random_point()
-                            self.adapter.adb.tap(addr, cx + rx, cy + ry)
+                            await self._adb_tap(addr, cx + rx, cy + ry)
+                            tap_ok = True
                         else:
                             self._log.warning(
                                 "弹窗 {} 关闭按钮模板未匹配 (ROI)",
                                 popup.label,
                             )
                     else:
-                        m = match_template(ss, action.template_path, **kwargs)
+                        m = await async_match_template(ss, action.template_path, **kwargs)
                         if m:
-                            self.adapter.adb.tap(addr, *m.random_point())
+                            await self._adb_tap(addr, *m.random_point())
+                            tap_ok = True
                         else:
                             self._log.warning(
                                 "弹窗 {} 关闭按钮模板未匹配",
                                 popup.label,
                             )
 
+                # 点击成功后等待模板消失
+                if tap_ok and action.wait_disappear:
+                    await self._wait_template_disappear(
+                        action.template_path,
+                        action.template_roi,
+                        action.template_threshold,
+                        timeout_ms=action.wait_disappear_timeout_ms,
+                        poll_ms=action.wait_disappear_poll_ms,
+                        label=popup.label,
+                    )
+
             elif action.type == DismissType.TAP_SELF:
                 # 重新截图匹配弹窗检测模板，点击其位置
-                ss = self.adapter.capture(self.capture_method)
-                if ss:
+                ss = await self._capture()
+                if ss is not None:
                     tpl = popup.detect_template
                     threshold = tpl.threshold or 0.85
-                    m = match_template(ss, tpl.path, threshold=threshold)
+                    m = await async_match_template(ss, tpl.path, threshold=threshold)
                     if m:
-                        self.adapter.adb.tap(addr, *m.random_point())
+                        await self._adb_tap(addr, *m.random_point())
 
             elif action.type == DismissType.BACK_KEY:
-                self.adapter.adb.shell(addr, "input keyevent KEYCODE_BACK")
+                await self._adb_shell(addr, "input keyevent KEYCODE_BACK")
 
             # 动作后等待
             if action.post_delay_ms > 0:
@@ -136,9 +184,48 @@ class PopupHandler:
         self._log.info("弹窗 {} 关闭动作执行完毕", popup.label)
         return True
 
+    async def _wait_template_disappear(
+        self,
+        template_path: str,
+        roi: tuple | None = None,
+        threshold: float = 0.85,
+        *,
+        timeout_ms: int = 5000,
+        poll_ms: int = 500,
+        label: str = "",
+    ) -> bool:
+        """轮询等待指定模板从画面中消失。"""
+        elapsed = 0
+        kwargs = {}
+        if threshold != 0.85:
+            kwargs["threshold"] = threshold
+
+        while elapsed < timeout_ms:
+            await asyncio.sleep(poll_ms / 1000.0)
+            elapsed += poll_ms
+
+            ss = await self._capture()
+            if ss is None:
+                continue
+
+            if roi:
+                big = load_image(ss)
+                rx, ry, rw, rh = roi
+                roi_img = big[ry:ry + rh, rx:rx + rw]
+                m = await async_match_template(roi_img, template_path, **kwargs)
+            else:
+                m = await async_match_template(ss, template_path, **kwargs)
+
+            if m is None:
+                self._log.info("弹窗 {} 模板已消失 ({}ms)", label, elapsed)
+                return True
+
+        self._log.warning("弹窗 {} 等待模板消失超时 ({}ms)", label, timeout_ms)
+        return False
+
     async def check_and_dismiss(
         self,
-        image: bytes | None = None,
+        image=None,
         *,
         max_rounds: int = 3,
     ) -> int:
@@ -147,7 +234,7 @@ class PopupHandler:
         支持连续多轮处理（关闭一个弹窗后可能露出另一个弹窗）。
 
         Args:
-            image: 截图（None 则自动截图）
+            image: 截图（None 则自动截图），支持 bytes / ndarray
             max_rounds: 最大处理轮数（防止死循环）
 
         Returns:
@@ -158,11 +245,11 @@ class PopupHandler:
         for round_idx in range(max_rounds):
             # 第一轮可复用传入的截图，后续轮次重新截图
             if image is None or round_idx > 0:
-                image = self.adapter.capture(self.capture_method)
+                image = await self._capture()
             if image is None:
                 break
 
-            popup = self.scan(image)
+            popup = await self.async_scan(image)
             if popup is None:
                 break
 

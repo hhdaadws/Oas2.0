@@ -4,7 +4,7 @@
 import sys
 import secrets as _secrets
 from pathlib import Path
-from typing import List, Optional
+from typing import Optional
 from pydantic_settings import BaseSettings
 from pydantic import Field
 
@@ -75,9 +75,14 @@ class Settings(BaseSettings):
     # 备份
     backup_interval_days: int = Field(default=3, env="BACKUP_INTERVAL_DAYS")
     backup_retention_count: int = Field(default=3, env="BACKUP_RETENTION_COUNT")
-    
-    # 区服配置（固定）
-    zones: List[str] = ["樱之华", "春之樱", "两情相悦", "枫之舞"]
+
+    # 线程池（多模拟器并发优化，0 表示自动计算）
+    io_thread_pool_size: int = Field(default=0, env="IO_THREAD_POOL_SIZE")
+    compute_thread_pool_size: int = Field(default=0, env="COMPUTE_THREAD_POOL_SIZE")
+
+    # OCR 实例池（支持并行推理）
+    ocr_pool_size: int = Field(default=2, env="OCR_POOL_SIZE")
+    digit_ocr_pool_size: int = Field(default=2, env="DIGIT_OCR_POOL_SIZE")
     
     class Config:
         env_file = str(BASE_DIR / ".env")
@@ -85,7 +90,7 @@ class Settings(BaseSettings):
         extra = "ignore"
     
     @property
-    def coop_time_list(self) -> List[str]:
+    def coop_time_list(self) -> list[str]:
         """获取勾协时间列表"""
         return [t.strip() for t in self.coop_times.split(",")]
 

@@ -125,7 +125,7 @@ class CollectMailExecutor(BaseExecutor):
         # 3. 截图检测一键领取按钮 (yijianlingqu.png)
         from ..vision.template import match_template
 
-        screenshot = self.adapter.capture(self.ui.capture_method)
+        screenshot = await self._capture()
         if screenshot is None:
             self.logger.warning("[领取邮件] 截图失败")
             return {
@@ -136,7 +136,7 @@ class CollectMailExecutor(BaseExecutor):
 
         # 弹窗检测
         if await self.ui.popup_handler.check_and_dismiss(screenshot) > 0:
-            screenshot = self.adapter.capture(self.ui.capture_method)
+            screenshot = await self._capture()
             if screenshot is None:
                 return {
                     "status": TaskStatus.FAILED,
@@ -158,7 +158,7 @@ class CollectMailExecutor(BaseExecutor):
 
         # 4. 点击一键领取
         yx, yy = yijian_result.random_point()
-        self.adapter.adb.tap(self.adapter.cfg.adb_addr, yx, yy)
+        await self._tap(yx, yy)
         self.logger.info(f"[领取邮件] 点击一键领取: ({yx}, {yy})")
 
         await asyncio.sleep(2.0)
@@ -180,11 +180,11 @@ class CollectMailExecutor(BaseExecutor):
             self.logger.warning("[领取邮件] 未检测到确定按钮，继续尝试关闭奖励弹窗")
 
         # 6. 检测奖励弹窗 (jiangli.png) 或退出按钮 (exit.png) 并处理
-        screenshot2 = self.adapter.capture(self.ui.capture_method)
+        screenshot2 = await self._capture()
         if screenshot2 is not None:
             # 弹窗检测
             if await self.ui.popup_handler.check_and_dismiss(screenshot2) > 0:
-                screenshot2 = self.adapter.capture(self.ui.capture_method)
+                screenshot2 = await self._capture()
 
         handled = False
         if screenshot2 is not None:
@@ -194,7 +194,7 @@ class CollectMailExecutor(BaseExecutor):
                 from ..vision.utils import random_point_in_circle
 
                 close_x, close_y = random_point_in_circle(20, 20, 20)
-                self.adapter.adb.tap(self.adapter.cfg.adb_addr, close_x, close_y)
+                await self._tap(close_x, close_y)
                 self.logger.info(f"[领取邮件] 随机点击 ({close_x}, {close_y}) 关闭弹窗")
                 handled = True
 
@@ -203,7 +203,7 @@ class CollectMailExecutor(BaseExecutor):
                 if exit_result:
                     self.logger.info("[领取邮件] 检测到 exit 按钮，点击退出")
                     ex, ey = exit_result.random_point()
-                    self.adapter.adb.tap(self.adapter.cfg.adb_addr, ex, ey)
+                    await self._tap(ex, ey)
                     self.logger.info(f"[领取邮件] 点击 exit: ({ex}, {ey})")
                     handled = True
 
@@ -212,7 +212,7 @@ class CollectMailExecutor(BaseExecutor):
             from ..vision.utils import random_point_in_circle
 
             close_x, close_y = random_point_in_circle(20, 20, 20)
-            self.adapter.adb.tap(self.adapter.cfg.adb_addr, close_x, close_y)
+            await self._tap(close_x, close_y)
 
         await asyncio.sleep(1.0)
 

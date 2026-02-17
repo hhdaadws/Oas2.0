@@ -44,7 +44,6 @@
             <el-tag :type="row.window.completed ? 'success' : 'primary'" size="small">{{ row.window.used }}/2</el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="zone" label="区服" width="120" />
         <el-table-column label="过期" width="200">
           <template #default="{ row }">
             <el-tag v-if="row.expired" type="danger" size="small">已过期</el-tag>
@@ -73,9 +72,6 @@
         <el-form-item label="登录ID" required>
           <el-input v-model="addForm.login_id" placeholder="请输入登录ID" />
         </el-form-item>
-        <el-form-item label="区服">
-          <el-input v-model="addForm.zone" placeholder="可选" />
-        </el-form-item>
         <el-form-item label="过期日期">
           <el-date-picker v-model="addForm.expire_date" type="date" placeholder="YYYY-MM-DD" format="YYYY-MM-DD" value-format="YYYY-MM-DD" />
         </el-form-item>
@@ -94,9 +90,6 @@
       <el-form :model="editForm" label-width="90px">
         <el-form-item label="登录ID">
           <el-input v-model="editForm.login_id" disabled />
-        </el-form-item>
-        <el-form-item label="区服">
-          <el-input v-model="editForm.zone" />
         </el-form-item>
         <el-form-item label="过期日期">
           <el-date-picker v-model="editForm.expire_date" type="date" placeholder="YYYY-MM-DD" format="YYYY-MM-DD" value-format="YYYY-MM-DD" />
@@ -126,10 +119,10 @@ const keyword = ref('')
 let searchTimer = null
 
 const addDialogVisible = ref(false)
-const addForm = ref({ login_id: '', zone: '', expire_date: '', note: '' })
+const addForm = ref({ login_id: '', expire_date: '', note: '' })
 
 const editDialogVisible = ref(false)
-const editForm = ref({ id: 0, login_id: '', zone: '', expire_date: '', note: '' })
+const editForm = ref({ id: 0, login_id: '', expire_date: '', note: '' })
 
 const dateAfterDays = (days) => {
   const d = new Date()
@@ -163,7 +156,7 @@ const onSelectionChange = (rows) => {
 }
 
 const openAddDialog = () => {
-  addForm.value = { login_id: '', zone: '', expire_date: dateAfterDays(31), note: '' }
+  addForm.value = { login_id: '', expire_date: dateAfterDays(31), note: '' }
   addDialogVisible.value = true
 }
 
@@ -183,13 +176,13 @@ const handleAdd = async () => {
 }
 
 const openEditDialog = (row) => {
-  editForm.value = { id: row.id, login_id: row.login_id, zone: row.zone || '', expire_date: row.expire_date || '', note: row.note || '' }
+  editForm.value = { id: row.id, login_id: row.login_id, expire_date: row.expire_date || '', note: row.note || '' }
   editDialogVisible.value = true
 }
 
 const handleEditSave = async () => {
   try {
-    await updateCoopAccount(editForm.value.id, { zone: editForm.value.zone, expire_date: editForm.value.expire_date, note: editForm.value.note })
+    await updateCoopAccount(editForm.value.id, { expire_date: editForm.value.expire_date, note: editForm.value.note })
     ElMessage.success('已保存')
     editDialogVisible.value = false
     fetchList()

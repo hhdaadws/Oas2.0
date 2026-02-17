@@ -20,7 +20,7 @@ from ..vision.explore_detect import (
 )
 from ..vision.template import match_template
 from .battle import ManualLineupInfo, run_battle, VICTORY, DEFEAT
-from .helpers import click_template, wait_for_template
+from .helpers import click_template, wait_for_template, _adapter_capture, _adapter_tap
 
 if TYPE_CHECKING:
     from ..emu.adapter import EmulatorAdapter
@@ -78,7 +78,7 @@ async def _ensure_explore_lock_state(
         True 表示状态已正确
     """
     tag = "[探索-锁定]"
-    screenshot = adapter.capture(capture_method)
+    screenshot = await _adapter_capture(adapter, capture_method)
     if screenshot is None:
         if log:
             log.warning(f"{tag} 截图失败")
@@ -97,12 +97,12 @@ async def _ensure_explore_lock_state(
     # 需要切换：重试最多 3 次
     for attempt in range(1, 4):
         lx, ly = _EXPLORE_LOCK_TOGGLE
-        adapter.adb.tap(adapter.cfg.adb_addr, lx, ly)
+        await _adapter_tap(adapter, lx, ly)
         if log:
             log.info(f"{tag} 点击 ({lx}, {ly}) 切换 (attempt={attempt})")
         await asyncio.sleep(1.0)
 
-        screenshot = adapter.capture(capture_method)
+        screenshot = await _adapter_capture(adapter, capture_method)
         if screenshot is not None:
             new_state = detect_explore_lock(screenshot)
             if new_state.locked == should_lock:
@@ -152,7 +152,7 @@ async def run_explore_chapter(
     m = None
     for attempt in range(1, 4):
         ex, ey = _ENTER_EXPLORE_BTN
-        adapter.adb.tap(adapter.cfg.adb_addr, ex, ey)
+        await _adapter_tap(adapter, ex, ey)
         if log:
             log.info(
                 f"{tag} 点击进入探索 ({ex}, {ey}) (attempt={attempt}/3)"
@@ -179,7 +179,7 @@ async def run_explore_chapter(
     # ── 3. 难度处理 ──
     if difficulty == "hard" and m:
         # 检测困难是否锁定
-        screenshot = adapter.capture(capture_method)
+        screenshot = await _adapter_capture(adapter, capture_method)
         if screenshot is not None:
             lock_m = match_template(screenshot, _TPL_NANDU_KUNNAN_LOCK)
             if lock_m:
@@ -194,7 +194,7 @@ async def run_explore_chapter(
                     kunnan_m = match_template(screenshot, "assets/ui/templates/nandu_kunnan.png")
                     if kunnan_m:
                         cx, cy = kunnan_m.random_point()
-                        adapter.adb.tap(adapter.cfg.adb_addr, cx, cy)
+                        await _adapter_tap(adapter, cx, cy)
                         if log:
                             log.info(f"{tag} 切换到困难难度 ({cx}, {cy})")
                         await asyncio.sleep(0.8)
@@ -260,7 +260,7 @@ async def run_explore_chapter(
         await asyncio.sleep(1.0)
 
         # 截图检测标记
-        screenshot = adapter.capture(capture_method)
+        screenshot = await _adapter_capture(adapter, capture_method)
         if screenshot is None:
             if log:
                 log.warning(f"{tag} 截图失败，结束战斗循环")
@@ -306,7 +306,7 @@ async def run_explore_chapter(
 
                 # 点击 BOSS
                 bx, by = boss_m.random_point()
-                adapter.adb.tap(adapter.cfg.adb_addr, bx, by)
+                await _adapter_tap(adapter, bx, by)
                 if log:
                     log.info(f"{tag} 点击 BOSS ({bx}, {by})")
                 await asyncio.sleep(1.5)
@@ -364,7 +364,7 @@ async def run_explore_chapter(
                 cy = random.randint(_MAP_CLICK_TOP, _MAP_CLICK_BOTTOM)
                 if log:
                     log.info(f"{tag} 无可战斗标记，点击 ({cx}, {cy}) 移动 (第{move_count}/{_MAX_MAP_CLICKS}次)")
-                adapter.adb.tap(adapter.cfg.adb_addr, cx, cy)
+                await _adapter_tap(adapter, cx, cy)
                 await asyncio.sleep(_MAP_CLICK_SETTLE)
                 continue
             else:
@@ -392,7 +392,7 @@ async def run_explore_chapter(
         marker_click_ok = False
 
         tx, ty = target.random_point()
-        adapter.adb.tap(adapter.cfg.adb_addr, tx, ty)
+        await _adapter_tap(adapter, tx, ty)
         if log:
             log.info(
                 f"{tag} 点击标记 #{target.index} ({tx}, {ty}) "
@@ -402,7 +402,7 @@ async def run_explore_chapter(
 
         # 验证点击是否生效（tansuo_shezhi 消失表示已进入战斗准备）
         for click_retry in range(_MAX_MARKER_CLICK_RETRIES):
-            verify_shot = adapter.capture(capture_method)
+            verify_shot = await _adapter_capture(adapter, capture_method)
             if verify_shot is None:
                 if log:
                     log.warning(f"{tag} 点击验证截图失败")
@@ -436,7 +436,7 @@ async def run_explore_chapter(
 
             retry_target = retry_targets[0]
             tx, ty = retry_target.random_point()
-            adapter.adb.tap(adapter.cfg.adb_addr, tx, ty)
+            await _adapter_tap(adapter, tx, ty)
             if log:
                 log.info(
                     f"{tag} 重新点击标记 #{retry_target.index} ({tx}, {ty}) "
@@ -445,7 +445,7 @@ async def run_explore_chapter(
             await asyncio.sleep(1.5)
         else:
             # for 正常结束（未 break），做最终验证
-            final_shot = adapter.capture(capture_method)
+            final_shot = await _adapter_capture(adapter, capture_method)
             if final_shot is not None:
                 still_on_map = match_template(final_shot, _TPL_TANSUO_SHEZHI)
                 if not still_on_map:
@@ -521,7 +521,7 @@ async def run_explore_chapter(
                 map_recovered = True
                 break
             # 重试前点击屏幕中央尝试关闭残留弹窗
-            adapter.adb.tap(adapter.cfg.adb_addr, 480, 270)
+            await _adapter_tap(adapter, 480, 270)
             if log:
                 log.warning(
                     f"{tag} 地图未恢复，点击屏幕中央后重试 "

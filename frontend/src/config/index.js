@@ -57,7 +57,12 @@ export const API_ENDPOINTS = {
     settings: '/api/system/settings',
     captureBenchmark: '/api/system/capture/benchmark',
     failDelays: '/api/system/fail-delays',
-    taskSwitches: '/api/system/task-switches'
+    taskSwitches: '/api/system/task-switches',
+    taskEnabledDefaults: '/api/system/task-enabled-defaults',
+    globalRest: '/api/system/global-rest',
+    defaultRestConfig: '/api/system/default-rest-config',
+    duiyiAnswers: '/api/system/duiyi-answers',
+    duiyiRewardCoord: '/api/system/duiyi-reward-coord'
   }
 }
 

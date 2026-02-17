@@ -25,7 +25,7 @@ from ..vision.template import match_template
 from ..vision.utils import random_point_in_circle
 from .base import BaseExecutor
 from .db_logger import emit as db_log
-from .helpers import click_template, wait_for_template
+from .helpers import click_template, wait_for_template, _adapter_capture, _adapter_tap
 
 PKG_NAME = "com.netease.onmyoji.wyzymnqsd_cps"
 
@@ -152,16 +152,16 @@ class InitFanheUpgradeExecutor(BaseExecutor):
             return "jiuhu"
         return None
 
-    def _detect_current_screen(self) -> Optional[str]:
+    async def _detect_current_screen(self) -> Optional[str]:
         """截图检测当前界面是 FANHE 还是 JIUHU。
 
         Returns:
             "FANHE" / "JIUHU" / None（无法识别）
         """
-        screenshot = self.adapter.capture(self.ui.capture_method)
+        screenshot = await self._capture()
         if screenshot is None:
             return None
-        result = self.ui.detect_ui(screenshot)
+        result = await self._detect_ui(screenshot)
         if result.ui in ("FANHE", "JIUHU"):
             return result.ui
         return None
@@ -215,17 +215,17 @@ class InitFanheUpgradeExecutor(BaseExecutor):
             }
 
         # 4. 点击进入饭盒/酒壶区域（可能随机进入其中之一）
-        self.adapter.tap(_JIEJIE_TAP_X, _JIEJIE_TAP_Y)
+        await self._tap(_JIEJIE_TAP_X, _JIEJIE_TAP_Y)
         await asyncio.sleep(1.5)
 
         # 5. 检测当前进入了哪个界面
-        current_screen = self._detect_current_screen()
+        current_screen = await self._detect_current_screen()
         self.logger.info(f"[起号_升级饭盒] 进入界面: {current_screen}，目标: {target_screen}")
 
         if current_screen is None:
             # 重试一次检测
             await asyncio.sleep(1.0)
-            current_screen = self._detect_current_screen()
+            current_screen = await self._detect_current_screen()
             if current_screen is None:
                 self.logger.error("[起号_升级饭盒] 无法识别当前界面")
                 return {
@@ -339,13 +339,13 @@ class InitFanheUpgradeExecutor(BaseExecutor):
 
             # 9b. 弹窗已出现，等待 UI 稳定后截图
             await asyncio.sleep(0.5)
-            screenshot = self.adapter.capture(self.ui.capture_method)
+            screenshot = await self._capture()
             if screenshot is None:
                 self.logger.warning("[起号_升级饭盒] 截图失败，退出升级")
                 break
 
             # 9c. 用同一张截图 OCR 当前勋章和所需勋章
-            asset_val, need_val = self._ocr_xunzhang_from_screenshot(screenshot)
+            asset_val, need_val = await self._ocr_xunzhang_from_screenshot(screenshot)
 
             self.logger.info(
                 f"[起号_升级饭盒] 勋章: 拥有={asset_val}, 需要={need_val}"
@@ -415,18 +415,14 @@ class InitFanheUpgradeExecutor(BaseExecutor):
         await asyncio.sleep(1.0)
 
         # 如果还在升级弹窗中，可能需要先关闭
-        screenshot = self.adapter.capture(self.ui.capture_method)
+        screenshot = await self._capture()
         if screenshot is not None:
             exit_pink = match_template(
                 screenshot, "assets/ui/templates/exit_pink.png", threshold=0.7
             )
             if exit_pink:
                 epx, epy = exit_pink.random_point()
-                self.adapter.adb.tap(
-                    self.adapter.cfg.adb_addr,
-                    epx,
-                    epy,
-                )
+                await self._tap(epx, epy)
                 await asyncio.sleep(1.0)
 
         # OCR 最终等级并更新 DB
@@ -464,12 +460,12 @@ class InitFanheUpgradeExecutor(BaseExecutor):
     async def _ocr_level(self) -> Optional[int]:
         """OCR 等级（饭盒/酒壶共用同一 ROI）"""
         try:
-            from ..ocr.recognize import ocr_digits
+            from ..ocr.async_recognize import async_ocr_digits
 
-            screenshot = self.adapter.capture(self.ui.capture_method)
+            screenshot = await self._capture()
             if screenshot is None:
                 return None
-            result = ocr_digits(screenshot, roi=_LEVEL_ROI)
+            result = await async_ocr_digits(screenshot, roi=_LEVEL_ROI)
             raw = result.text.strip() if hasattr(result, "text") else ""
             if not raw and hasattr(result, "boxes") and result.boxes:
                 raw = result.boxes[0].text.strip()
@@ -481,12 +477,12 @@ class InitFanheUpgradeExecutor(BaseExecutor):
     async def _ocr_asset_xunzhang(self) -> Optional[int]:
         """OCR 当前拥有的勋章数"""
         try:
-            from ..ocr.recognize import ocr_digits
+            from ..ocr.async_recognize import async_ocr_digits
 
-            screenshot = self.adapter.capture(self.ui.capture_method)
+            screenshot = await self._capture()
             if screenshot is None:
                 return None
-            result = ocr_digits(screenshot, roi=_ASSET_XUNZHANG_ROI)
+            result = await async_ocr_digits(screenshot, roi=_ASSET_XUNZHANG_ROI)
             raw = result.text.strip() if hasattr(result, "text") else ""
             if not raw and hasattr(result, "boxes") and result.boxes:
                 raw = result.boxes[0].text.strip()
@@ -498,12 +494,12 @@ class InitFanheUpgradeExecutor(BaseExecutor):
     async def _ocr_need_xunzhang(self) -> Optional[int]:
         """OCR 升级所需的勋章数"""
         try:
-            from ..ocr.recognize import ocr_digits
+            from ..ocr.async_recognize import async_ocr_digits
 
-            screenshot = self.adapter.capture(self.ui.capture_method)
+            screenshot = await self._capture()
             if screenshot is None:
                 return None
-            result = ocr_digits(screenshot, roi=_NEED_XUNZHANG_ROI)
+            result = await async_ocr_digits(screenshot, roi=_NEED_XUNZHANG_ROI)
             raw = result.text.strip() if hasattr(result, "text") else ""
             if not raw and hasattr(result, "boxes") and result.boxes:
                 raw = result.boxes[0].text.strip()
@@ -512,7 +508,7 @@ class InitFanheUpgradeExecutor(BaseExecutor):
             self.logger.error(f"[起号_升级饭盒] OCR 所需勋章失败: {e}")
             return None
 
-    def _ocr_xunzhang_from_screenshot(
+    async def _ocr_xunzhang_from_screenshot(
         self, screenshot
     ) -> tuple[Optional[int], Optional[int]]:
         """从同一张截图 OCR 当前拥有勋章数和升级所需勋章数。
@@ -521,17 +517,17 @@ class InitFanheUpgradeExecutor(BaseExecutor):
             (asset_val, need_val) 元组
         """
         try:
-            from ..ocr.recognize import ocr_digits
+            from ..ocr.async_recognize import async_ocr_digits
 
             # 当前拥有的勋章数
-            result_asset = ocr_digits(screenshot, roi=_ASSET_XUNZHANG_ROI)
+            result_asset = await async_ocr_digits(screenshot, roi=_ASSET_XUNZHANG_ROI)
             raw_asset = result_asset.text.strip() if hasattr(result_asset, "text") else ""
             if not raw_asset and hasattr(result_asset, "boxes") and result_asset.boxes:
                 raw_asset = result_asset.boxes[0].text.strip()
             asset_val = _parse_number(raw_asset)
 
             # 升级所需的勋章数
-            result_need = ocr_digits(screenshot, roi=_NEED_XUNZHANG_ROI)
+            result_need = await async_ocr_digits(screenshot, roi=_NEED_XUNZHANG_ROI)
             raw_need = result_need.text.strip() if hasattr(result_need, "text") else ""
             if not raw_need and hasattr(result_need, "boxes") and result_need.boxes:
                 raw_need = result_need.boxes[0].text.strip()
@@ -640,7 +636,7 @@ class InitFanheUpgradeExecutor(BaseExecutor):
 
         clicks = 0
         for _ in range(max_clicks):
-            screenshot = adapter.capture(capture_method)
+            screenshot = await _adapter_capture(adapter, capture_method)
             if screenshot is None:
                 await asyncio.sleep(interval)
                 continue
@@ -649,7 +645,7 @@ class InitFanheUpgradeExecutor(BaseExecutor):
                 break
 
             rx, ry = random_point_in_circle(480, 400, 40)
-            adapter.adb.tap(adapter.cfg.adb_addr, rx, ry)
+            await _adapter_tap(adapter, rx, ry)
             clicks += 1
             await asyncio.sleep(interval)
 

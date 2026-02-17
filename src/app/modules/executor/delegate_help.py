@@ -239,14 +239,14 @@ class DelegateHelpExecutor(BaseExecutor):
         from ..vision.template import match_template
         from ..vision.utils import random_point_in_circle
 
-        screenshot = self.adapter.capture(self.ui.capture_method)
+        screenshot = await self._capture()
         if screenshot is None:
             return
 
         # 弹窗检测
         if self.ui:
             if await self.ui.popup_handler.check_and_dismiss(screenshot) > 0:
-                screenshot = self.adapter.capture(self.ui.capture_method)
+                screenshot = await self._capture()
                 if screenshot is None:
                     return
 
@@ -257,47 +257,47 @@ class DelegateHelpExecutor(BaseExecutor):
 
         # 点击 wancheng 区域内随机位置，偏下 20px
         cx, cy = result.random_point()
-        self.adapter.adb.tap(self.adapter.cfg.adb_addr, cx, cy + 20)
+        await self._tap(cx, cy + 20)
         self.logger.info(f"[弥助] 检测到已完成委派，点击 ({cx}, {cy + 20})")
         await asyncio.sleep(1.5)
 
         # 循环点击屏幕中间偏下，等待 wanchengrenwu.png 出现（对话结束标志）
         for _ in range(20):
-            screenshot = self.adapter.capture(self.ui.capture_method)
+            screenshot = await self._capture()
             if screenshot is not None:
                 # 弹窗检测
                 if self.ui and await self.ui.popup_handler.check_and_dismiss(screenshot) > 0:
-                    screenshot = self.adapter.capture(self.ui.capture_method)
+                    screenshot = await self._capture()
                 if screenshot is not None:
                     wancheng_renwu = match_template(screenshot, "assets/ui/templates/wanchengrenwu.png")
                 if wancheng_renwu:
                     self.logger.info("[弥助] 检测到完成任务弹窗，对话结束")
                     break
             rx, ry = random_point_in_circle(480, 400, 60)
-            self.adapter.adb.tap(self.adapter.cfg.adb_addr, rx, ry)
+            await self._tap(rx, ry)
             await asyncio.sleep(1.0)
 
         # 点击 wanchengrenwu
-        screenshot = self.adapter.capture(self.ui.capture_method)
+        screenshot = await self._capture()
         if screenshot is not None:
             # 弹窗检测
             if self.ui and await self.ui.popup_handler.check_and_dismiss(screenshot) > 0:
-                screenshot = self.adapter.capture(self.ui.capture_method)
+                screenshot = await self._capture()
         if screenshot is not None:
             wr = match_template(screenshot, "assets/ui/templates/wanchengrenwu.png")
             if wr:
                 wrx, wry = wr.random_point()
-                self.adapter.adb.tap(self.adapter.cfg.adb_addr, wrx, wry)
+                await self._tap(wrx, wry)
                 self.logger.info(f"[弥助] 点击完成任务按钮 ({wrx}, {wry})")
                 await asyncio.sleep(1.5)
 
         # 等待 jiangli.png 出现并关闭奖励弹窗
         for _ in range(10):
-            screenshot = self.adapter.capture(self.ui.capture_method)
+            screenshot = await self._capture()
             if screenshot is not None:
                 # 弹窗检测
                 if self.ui and await self.ui.popup_handler.check_and_dismiss(screenshot) > 0:
-                    screenshot = self.adapter.capture(self.ui.capture_method)
+                    screenshot = await self._capture()
                 if screenshot is not None:
                     jiangli = match_template(screenshot, "assets/ui/templates/jiangli.png")
                 if jiangli:
@@ -307,7 +307,7 @@ class DelegateHelpExecutor(BaseExecutor):
 
         await asyncio.sleep(0.5)
         close_x, close_y = random_point_in_circle(20, 20, 20)
-        self.adapter.adb.tap(self.adapter.cfg.adb_addr, close_x, close_y)
+        await self._tap(close_x, close_y)
         self.logger.info(f"[弥助] 点击 ({close_x}, {close_y}) 关闭奖励弹窗")
         await asyncio.sleep(1.0)
 

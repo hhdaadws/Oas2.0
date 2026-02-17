@@ -29,7 +29,7 @@ from ...core.constants import TaskStatus
 from ...db.base import SessionLocal
 from ...db.models import Emulator, GameAccount, SystemConfig, Task
 from ..emu.adapter import AdapterConfig, EmulatorAdapter
-from ..ocr.recognize import ocr_digits
+from ..ocr.async_recognize import async_ocr_digits
 from ..ui.assets import parse_number, AssetType
 from ..ui.manager import UIManager
 from .base import BaseExecutor
@@ -97,18 +97,18 @@ class ExploreExecutor(BaseExecutor):
         self.adapter: Optional[EmulatorAdapter] = None
         self.ui: Optional[UIManager] = None
 
-    def _read_tupo_ticket(self) -> Optional[int]:
+    async def _read_tupo_ticket(self) -> Optional[int]:
         """OCR 读取结界突破界面右上角的突破票数量并更新数据库。"""
         import time
         for attempt in range(1, 4):
-            screenshot = self.adapter.capture(self.ui.capture_method)
+            screenshot = await self._capture()
             if screenshot is None:
                 self.logger.warning(
                     f"[探索突破] 截图失败，无法读取突破票 (attempt={attempt}/3)"
                 )
                 time.sleep(0.3)
                 continue
-            result = ocr_digits(screenshot, roi=_TUPO_TICKET_ROI)
+            result = await async_ocr_digits(screenshot, roi=_TUPO_TICKET_ROI)
             raw = result.text.strip()
             value = parse_number(raw)
             self.logger.info(
@@ -286,7 +286,7 @@ class ExploreExecutor(BaseExecutor):
             await self._check_and_run_interrupts()
 
             # 6b. 读取当前体力
-            current_stamina = self._read_stamina_from_current_ui()
+            current_stamina = await self._read_stamina_from_current_ui()
 
             # 6c. 体力 < 阈值 → 执行突破 → 停止
             if (
@@ -334,7 +334,7 @@ class ExploreExecutor(BaseExecutor):
 
             # 6d. 体力 >= 阈值 → 读突破票
             if sub_tupo:
-                ticket_count = self._read_tupo_ticket_from_current_ui()
+                ticket_count = await self._read_tupo_ticket_from_current_ui()
                 if ticket_count is not None and ticket_count >= _MIN_TUPO_TICKET:
                     self.logger.info(
                         f"[探索突破] 突破票={ticket_count}，先执行结界突破"
@@ -405,7 +405,7 @@ class ExploreExecutor(BaseExecutor):
 
     async def _ensure_back_to_tansuo(self) -> None:
         """如果当前在难度选择面板（检测到 tansuo_tansuo.png），点击 exit.png 返回 TANSUO。"""
-        screenshot = self.adapter.capture(self.ui.capture_method)
+        screenshot = await self._capture()
         if screenshot is None:
             return
         m = _match_template(screenshot, _TPL_TANSUO_TANSUO)
@@ -481,7 +481,7 @@ class ExploreExecutor(BaseExecutor):
         )
         return manual_lineup
 
-    def _read_stamina_from_current_ui(self) -> Optional[int]:
+    async def _read_stamina_from_current_ui(self) -> Optional[int]:
         """根据当前界面在不同 ROI 读取体力数值。
 
         探索退出后可能在 TANSUO 界面或难度选择界面，体力显示位置不同。
@@ -489,7 +489,7 @@ class ExploreExecutor(BaseExecutor):
         """
         import time
         for attempt in range(1, 4):
-            screenshot = self.adapter.capture(self.ui.capture_method)
+            screenshot = await self._capture()
             if screenshot is None:
                 self.logger.warning(
                     f"[探索突破] 体力截图失败 (attempt={attempt}/3)"
@@ -508,7 +508,7 @@ class ExploreExecutor(BaseExecutor):
                 roi = _STAMINA_ROI_TANSUO
                 ui_label = "TANSUO 界面"
 
-            result = ocr_digits(screenshot, roi=roi)
+            result = await async_ocr_digits(screenshot, roi=roi)
             raw = result.text.strip()
             value = parse_number(raw)
             self.logger.info(
@@ -520,7 +520,7 @@ class ExploreExecutor(BaseExecutor):
             time.sleep(0.3)
         return None
 
-    def _read_tupo_ticket_from_current_ui(self) -> Optional[int]:
+    async def _read_tupo_ticket_from_current_ui(self) -> Optional[int]:
         """根据当前界面在不同 ROI 读取突破票数量。
 
         通过检测 tansuo_tansuo.png 模板判断当前界面：
@@ -529,7 +529,7 @@ class ExploreExecutor(BaseExecutor):
         """
         import time
         for attempt in range(1, 4):
-            screenshot = self.adapter.capture(self.ui.capture_method)
+            screenshot = await self._capture()
             if screenshot is None:
                 self.logger.warning(
                     f"[探索突破] 截图失败，无法读取突破票 (attempt={attempt}/3)"
@@ -546,7 +546,7 @@ class ExploreExecutor(BaseExecutor):
                 roi = _TANSUO_TICKET_ROI
                 ui_label = "TANSUO 界面"
 
-            result = ocr_digits(screenshot, roi=roi)
+            result = await async_ocr_digits(screenshot, roi=roi)
             raw = result.text.strip()
             value = parse_number(raw)
             self.logger.info(
@@ -583,12 +583,12 @@ class ExploreExecutor(BaseExecutor):
             return await self._handle_prerequisites_and_tupo()
 
         self.logger.info("[探索突破] 已到达结界突破界面")
-        ticket_count = self._read_tupo_ticket()
+        ticket_count = await self._read_tupo_ticket()
         return await self._run_tupo_loop(ticket_count)
 
     async def _handle_prerequisites_and_tupo(self) -> Dict[str, Any]:
         """处理寮相关前置条件后进入结界突破。"""
-        detect_result = self.ui.detect_ui()
+        detect_result = await self._detect_ui()
         self.logger.warning(
             f"[探索突破] 导航到结界突破失败，"
             f"当前 UI={detect_result.ui}，检查前置条件"
@@ -645,7 +645,7 @@ class ExploreExecutor(BaseExecutor):
             }
 
         self.logger.info("[探索突破] 已进入结界突破界面")
-        ticket_count = self._read_tupo_ticket()
+        ticket_count = await self._read_tupo_ticket()
         return await self._run_tupo_loop(ticket_count)
 
     # ── 结界突破战斗逻辑 ──
@@ -669,7 +669,7 @@ class ExploreExecutor(BaseExecutor):
         Returns:
             True 表示状态已正确，False 表示操作失败
         """
-        screenshot = self.adapter.capture(self.ui.capture_method)
+        screenshot = await self._capture()
         if screenshot is None:
             self.logger.warning("[结界突破] 截图失败，无法检测锁定状态")
             return False
@@ -690,7 +690,7 @@ class ExploreExecutor(BaseExecutor):
             if lock_x == 0 and lock_y == 0:
                 lock_x, lock_y = 626, 450
 
-            self.adapter.adb.tap(self.adapter.cfg.adb_addr, lock_x, lock_y)
+            await self._tap(lock_x, lock_y)
             self.logger.info(
                 f"[结界突破] 点击锁图标 ({lock_x}, {lock_y}) "
                 f"切换锁定状态 (attempt={attempt})"
@@ -698,7 +698,7 @@ class ExploreExecutor(BaseExecutor):
             await asyncio.sleep(1.0)
 
             # 验证
-            screenshot = self.adapter.capture(self.ui.capture_method)
+            screenshot = await self._capture()
             if screenshot is not None:
                 new_state = detect_jiekai_lock(screenshot)
                 if new_state.locked == should_lock:
@@ -757,7 +757,7 @@ class ExploreExecutor(BaseExecutor):
         max_card_retries = 3
         for attempt in range(1, max_card_retries + 1):
             cx, cy = self._get_card_click_pos(card)
-            self.adapter.adb.tap(self.adapter.cfg.adb_addr, cx, cy)
+            await self._tap(cx, cy)
             self.logger.info(f"{tag} 点击卡片 ({cx}, {cy}) (attempt={attempt})")
             await asyncio.sleep(1.5)
 
@@ -801,7 +801,7 @@ class ExploreExecutor(BaseExecutor):
             self.logger.info(f"{tag} 退出循环 {exit_round + 1}/4")
 
             # 点击卡片
-            self.adapter.adb.tap(self.adapter.cfg.adb_addr, cx, cy)
+            await self._tap(cx, cy)
             self.logger.info(f"{tag} 点击卡片 ({cx}, {cy})")
             await asyncio.sleep(1.5)
 
@@ -866,7 +866,7 @@ class ExploreExecutor(BaseExecutor):
 
         # 5. 再次点击卡片，正常战斗
         self.logger.info(f"{tag} 退出循环结束，开始正常战斗")
-        self.adapter.adb.tap(self.adapter.cfg.adb_addr, cx, cy)
+        await self._tap(cx, cy)
         self.logger.info(f"{tag} 点击卡片 ({cx}, {cy})")
         await asyncio.sleep(1.5)
 
@@ -890,7 +890,7 @@ class ExploreExecutor(BaseExecutor):
             True 表示需要刷新
         """
         await asyncio.sleep(1.0)
-        screenshot = self.adapter.capture(self.ui.capture_method)
+        screenshot = await self._capture()
         if screenshot is None:
             return False
 
@@ -952,7 +952,7 @@ class ExploreExecutor(BaseExecutor):
                 continue
 
             self.logger.info("[结界突破] 网格刷新成功")
-            self._read_tupo_ticket()
+            await self._read_tupo_ticket()
             return True
 
         self.logger.warning("[结界突破] 网格刷新重试 2 次均失败")
@@ -1035,7 +1035,7 @@ class ExploreExecutor(BaseExecutor):
             screenshot = None
             grid = None
             for grid_attempt in range(1, 4):
-                screenshot = self.adapter.capture(self.ui.capture_method)
+                screenshot = await self._capture()
                 if screenshot is None:
                     self.logger.warning(
                         f"[结界突破] 截图失败 (attempt={grid_attempt}/3)"
@@ -1085,7 +1085,7 @@ class ExploreExecutor(BaseExecutor):
             need_break = False
             for card_idx, card in enumerate(available):
                 # 每次战斗前检查突破票
-                current_ticket = self._read_tupo_ticket()
+                current_ticket = await self._read_tupo_ticket()
                 if current_ticket is not None and current_ticket <= 0:
                     self.logger.info("[结界突破] 突破票耗尽，终止")
                     need_break = True

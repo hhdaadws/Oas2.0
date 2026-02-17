@@ -151,14 +151,14 @@ class AddFriendExecutor(BaseExecutor):
         friends_added = 0
         for i in range(MAX_ADD_FRIEND_LOOPS):
             # 截图检测 jiahaoyou.png
-            screenshot = self.adapter.capture(self.ui.capture_method)
+            screenshot = await self._capture()
             if screenshot is None:
                 self.logger.warning("[加好友] 截图失败，中断循环")
                 break
 
             # 弹窗检测
             if await self.ui.popup_handler.check_and_dismiss(screenshot) > 0:
-                screenshot = self.adapter.capture(self.ui.capture_method)
+                screenshot = await self._capture()
                 if screenshot is None:
                     break
 
@@ -173,7 +173,7 @@ class AddFriendExecutor(BaseExecutor):
 
             # 点击 jiahaoyou 区域内随机位置
             jx, jy = jiahaoyou_match.random_point()
-            self.adapter.adb.tap(self.adapter.cfg.adb_addr, jx, jy)
+            await self._tap(jx, jy)
             self.logger.info(f"[加好友] 点击加好友: ({jx}, {jy}) (第 {i + 1} 次)")
             await asyncio.sleep(1.5)
 
@@ -190,7 +190,7 @@ class AddFriendExecutor(BaseExecutor):
             )
             if shenqing_match:
                 sx, sy = shenqing_match.random_point()
-                self.adapter.adb.tap(self.adapter.cfg.adb_addr, sx, sy)
+                await self._tap(sx, sy)
                 self.logger.info(f"[加好友] 点击申请: ({sx}, {sy})")
                 friends_added += 1
                 await asyncio.sleep(1.0)

@@ -77,7 +77,7 @@ async def perform_signin(
     # 修复：lingquchenggong 被 exit 遮挡导致 verify_gone 误判，
     # 点击 exit 后 lingquchenggong 重新出现的问题
     if popup_handler is not None:
-        screenshot = adapter.capture(capture_method)
+        screenshot = adapter.capture_ndarray(capture_method)
         if screenshot is not None:
             dismissed = await popup_handler.check_and_dismiss(screenshot)
             if dismissed > 0 and log:

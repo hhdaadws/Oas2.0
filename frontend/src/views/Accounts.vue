@@ -2,10 +2,6 @@
   <div class="accounts">
     <!-- 操作栏 -->
     <el-card class="action-bar">
-      <el-button type="primary" @click="showAddEmailDialog">
-        <el-icon><Plus /></el-icon>
-        添加邮箱账号
-      </el-button>
       <el-button @click="showAddGameDialog">
         <el-icon><Plus /></el-icon>
         添加ID账号
@@ -13,6 +9,9 @@
       <el-button @click="fetchAccounts">
         <el-icon><Refresh /></el-icon>
         刷新
+      </el-button>
+      <el-button @click="handleSelectAll">
+        {{ isAllSelected ? '取消全选' : '全选' }}
       </el-button>
       <el-button type="danger" plain :disabled="selectedGameIds.length === 0" @click="handleBatchDelete">
         批量删除
@@ -63,10 +62,7 @@
           >
             <template #default="{ node, data }">
               <span class="tree-node">
-                <el-icon v-if="data.type === 'email'">
-                  <Message />
-                </el-icon>
-                <el-icon v-else>
+                <el-icon>
                   <User />
                 </el-icon>
                 <span>{{ data.label }}</span>
@@ -88,20 +84,6 @@
                   {{ data.remark.length > 6 ? data.remark.substring(0, 6) + '...' : data.remark }}
                 </el-tag>
                 <el-popconfirm
-                  v-if="data.type === 'email'"
-                  width="260"
-                  confirm-button-text="删除"
-                  confirm-button-type="danger"
-                  cancel-button-text="取消"
-                  title="删除该邮箱及其下所有ID账号？此操作不可恢复"
-                  @confirm="() => handleDeleteEmail(data.email)"
-                >
-                  <template #reference>
-                    <el-button link type="danger" size="small">删除</el-button>
-                  </template>
-                </el-popconfirm>
-                <el-popconfirm
-                  v-else
                   width="220"
                   confirm-button-text="删除"
                   confirm-button-type="danger"
@@ -135,9 +117,6 @@
           <el-descriptions :column="2" border>
             <el-descriptions-item label="账号ID">
               {{ selectedAccount.login_id }}
-            </el-descriptions-item>
-            <el-descriptions-item label="区服">
-              {{ selectedAccount.zone }}
             </el-descriptions-item>
             <el-descriptions-item label="账号类型">
               <el-select
@@ -1221,6 +1200,17 @@
 
           <!-- 休息配置 -->
           <el-divider>休息配置</el-divider>
+          <el-alert
+            v-if="!globalRestEnabled"
+            type="warning"
+            :closable="false"
+            show-icon
+            style="margin-bottom: 16px"
+          >
+            <template #title>
+              全局休息开关已关闭，所有账号的休息设置不会生效。如需启用请前往系统配置页修改。
+            </template>
+          </el-alert>
           <el-form label-width="100px">
             <el-form-item label="启用休息">
               <el-switch v-model="restConfig.enabled" @change="updateRestConfigData" />
@@ -1275,31 +1265,6 @@
       </el-col>
     </el-row>
 
-    <!-- 添加邮箱账号对话框 -->
-    <el-dialog
-      v-model="emailDialogVisible"
-      title="添加邮箱账号"
-      width="400px"
-    >
-      <el-form :model="emailForm" label-width="80px">
-        <el-form-item label="邮箱" required>
-          <el-input v-model="emailForm.email" placeholder="请输入邮箱" />
-        </el-form-item>
-        <el-form-item label="密码" required>
-          <el-input
-            v-model="emailForm.password"
-            type="password"
-            placeholder="请输入密码"
-            show-password
-          />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="emailDialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="handleAddEmail">确定</el-button>
-      </template>
-    </el-dialog>
-
     <!-- 添加游戏账号对话框 -->
     <el-dialog
       v-model="gameDialogVisible"
@@ -1309,14 +1274,6 @@
       <el-form :model="gameForm" label-width="80px">
         <el-form-item label="账号ID" required>
           <el-input v-model="gameForm.login_id" placeholder="请输入账号ID" />
-        </el-form-item>
-        <el-form-item label="区服" required>
-          <el-select v-model="gameForm.zone" placeholder="请选择区服">
-            <el-option label="樱之华" value="樱之华" />
-            <el-option label="春之樱" value="春之樱" />
-            <el-option label="两情相悦" value="两情相悦" />
-            <el-option label="枫之舞" value="枫之舞" />
-          </el-select>
         </el-form-item>
         <el-form-item label="等级">
           <el-input-number v-model="gameForm.level" :min="1" :max="999" />
@@ -1366,7 +1323,6 @@
 import { ref, reactive, computed, onMounted } from 'vue'
 import {
   getAccounts,
-  createEmailAccount,
   createGameAccount,
   updateAccount,
   updateTaskConfig,
@@ -1374,13 +1330,16 @@ import {
   getRestConfig,
   getRestPlan,
   deleteGameAccount,
-  deleteEmailAccount,
   deleteGameAccounts,
   getLineupConfig,
   updateLineupConfig,
   updateShikigamiConfig
 } from '@/api/accounts'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { API_ENDPOINTS, apiRequest } from '@/config'
+
+// 全局休息开关状态
+const globalRestEnabled = ref(true)
 
 // 数据
 const accountTree = ref([])
@@ -1433,15 +1392,9 @@ const restConfig = reactive({
 const restPlan = ref({})
 
 // 对话框
-const emailDialogVisible = ref(false)
 const gameDialogVisible = ref(false)
-const emailForm = reactive({
-  email: '',
-  password: ''
-})
 const gameForm = reactive({
   login_id: '',
-  zone: '樱之华',
   level: 1,
   stamina: 0
 })
@@ -1486,9 +1439,7 @@ const filteredAccountTree = computed(() => {
   const sf = statusFilter.value
 
   const matchNode = (node) => {
-    // 状态筛选
     if (sf && node.status !== sf) return false
-    // 关键字搜索
     if (q) {
       const loginMatch = String(node.login_id ?? '').toLowerCase().includes(q)
       const remarkMatch = String(node.remark ?? '').toLowerCase().includes(q)
@@ -1498,21 +1449,7 @@ const filteredAccountTree = computed(() => {
   }
 
   if (!q && !sf) return accountTree.value
-
-  const result = []
-  for (const node of accountTree.value) {
-    if (node.type === 'email') {
-      const children = (node.children || []).filter((c) => matchNode(c))
-      if (children.length > 0) {
-        result.push({ ...node, children })
-      }
-    } else if (node.type === 'game') {
-      if (matchNode(node)) {
-        result.push(node)
-      }
-    }
-  }
-  return result
+  return accountTree.value.filter(node => matchNode(node))
 })
 
 // 获取账号列表
@@ -1527,25 +1464,10 @@ const fetchAccounts = async () => {
 
 // 格式化账号树
 const formatAccountTree = (data) => {
-  return data.map(item => {
-    if (item.type === 'email') {
-      return {
-        ...item,
-        // 为邮箱节点补一个唯一 id，避免 el-tree node-key 缺失导致勾选异常
-        id: `email:${item.email}`,
-        label: item.email,
-        children: (item.children || []).map(child => ({
-          ...child,
-          label: child.login_id
-        }))
-      }
-    } else {
-      return {
-        ...item,
-        label: item.login_id
-      }
-    }
-  })
+  return data.map(item => ({
+    ...item,
+    label: item.login_id
+  }))
 }
 
 // 勾选变化，收集被选中的游戏账号ID
@@ -1555,6 +1477,23 @@ const handleTreeCheck = () => {
     .map(k => (typeof k === 'string' && /^\d+$/.test(k)) ? Number(k) : k)
     .filter(k => typeof k === 'number')
   selectedGameIds.value = ids
+}
+
+// 是否已全选（基于筛选后的列表）
+const isAllSelected = computed(() => {
+  const total = filteredAccountTree.value.length
+  return total > 0 && selectedGameIds.value.length === total
+})
+
+// 全选/取消全选
+const handleSelectAll = () => {
+  if (isAllSelected.value) {
+    accountTreeRef.value.setCheckedKeys([])
+  } else {
+    const allIds = filteredAccountTree.value.map(item => item.id)
+    accountTreeRef.value.setCheckedKeys(allIds)
+  }
+  handleTreeCheck()
 }
 
 // 批量删除
@@ -1899,9 +1838,6 @@ const updateAccountInfo = async () => {
           }
           break
         }
-        if (node.children) {
-          updateAccountInTree(node.children)
-        }
       }
     }
     updateAccountInTree(accountTree.value)
@@ -2164,9 +2100,6 @@ const updateTaskConfigData = async () => {
           node.task_config = mergedConfig
           break
         }
-        if (node.children) {
-          updateAccountInTree(node.children)
-        }
       }
     }
     updateAccountInTree(accountTree.value)
@@ -2216,7 +2149,6 @@ const updateRestConfigData = async () => {
           }
           break
         }
-        if (node.children) updateInTree(node.children)
       }
     }
     updateInTree(accountTree.value)
@@ -2227,42 +2159,17 @@ const updateRestConfigData = async () => {
   }
 }
 
-// 显示添加邮箱对话框
-const showAddEmailDialog = () => {
-  emailForm.email = ''
-  emailForm.password = ''
-  emailDialogVisible.value = true
-}
-
 // 显示添加游戏对话框
 const showAddGameDialog = () => {
   gameForm.login_id = ''
-  gameForm.zone = '樱之华'
   gameForm.level = 1
   gameForm.stamina = 0
   gameDialogVisible.value = true
 }
 
-// 添加邮箱账号
-const handleAddEmail = async () => {
-  if (!emailForm.email || !emailForm.password) {
-    ElMessage.warning('请填写完整信息')
-    return
-  }
-
-  try {
-    await createEmailAccount(emailForm)
-    ElMessage.success('邮箱账号添加成功，已创建起号任务')
-    emailDialogVisible.value = false
-    fetchAccounts()
-  } catch (error) {
-    ElMessage.error('添加失败')
-  }
-}
-
 // 添加游戏账号
 const handleAddGame = async () => {
-  if (!gameForm.login_id || !gameForm.zone) {
+  if (!gameForm.login_id) {
     ElMessage.warning('请填写完整信息')
     return
   }
@@ -2285,19 +2192,6 @@ const getStatusType = (status) => {
 // 获取状态文本
 const getStatusText = (status) => {
   return status === 1 ? '正常' : '失效'
-}
-
-// 删除邮箱账号
-const handleDeleteEmail = async (email) => {
-  try {
-    await deleteEmailAccount(email)
-    ElMessage.success('邮箱及其ID账号已删除')
-    selectedAccount.value = null
-    restPlan.value = {}
-    await fetchAccounts()
-  } catch (e) {
-    ElMessage.error('删除失败')
-  }
 }
 
 // 删除游戏账号
@@ -2368,7 +2262,6 @@ const updateShikigamiData = async () => {
             node.shikigami_config = response.config
             break
           }
-          if (node.children) updateInTree(node.children)
         }
       }
       updateInTree(accountTree.value)
@@ -2380,6 +2273,11 @@ const updateShikigamiData = async () => {
 
 onMounted(() => {
   fetchAccounts()
+  // 加载全局休息开关状态
+  apiRequest(API_ENDPOINTS.system.globalRest)
+    .then(resp => resp.json())
+    .then(data => { globalRestEnabled.value = data.enabled ?? true })
+    .catch(() => {})
 })
 </script>
 

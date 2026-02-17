@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import functools
 from typing import Optional, Tuple
 
 from ..vision import match_template, DEFAULT_THRESHOLD
@@ -107,6 +108,13 @@ class UIDetector:
         # 如果设置了 tag，使用 tag 模板的分数作为界面识别分数
         final_score = tag_score if has_tag else score
         return final_score, {"anchors": anchors}
+
+    async def async_detect(self, image: bytes, *, threshold: Optional[float] = None) -> UIDetectResult:
+        """异步版本的 detect，将整个检测 offload 到计算线程池。"""
+        from ...core.thread_pool import run_in_compute
+        return await run_in_compute(
+            functools.partial(self.detect, image, threshold=threshold)
+        )
 
 
 __all__ = ["UIDetector"]

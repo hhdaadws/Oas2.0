@@ -233,7 +233,7 @@ class YuHunExecutor(BaseExecutor):
         await self._scroll_to_level_visible(target_level)
         await asyncio.sleep(0.8)
 
-        screenshot = self.adapter.capture(self.ui.capture_method)
+        screenshot = await self._capture()
         if screenshot is None:
             self.logger.error("[御魂] 截图失败")
             return {
@@ -266,7 +266,7 @@ class YuHunExecutor(BaseExecutor):
 
         if target_lv.state != LevelState.SELECTED:
             cx, cy = target_lv.random_point()
-            self.adapter.adb.tap(self.adapter.cfg.adb_addr, cx, cy)
+            await self._tap(cx, cy)
             self.logger.info(
                 f"[御魂] 点击选中第 {target_level} 层 ({cx}, {cy})"
             )
@@ -361,9 +361,9 @@ class YuHunExecutor(BaseExecutor):
         prev_screenshot = None
         for attempt in range(6):
             # 手指从低y拖到高y = 列表向上滚（回到顶部）
-            self.adapter.swipe(_SWIPE_X, 150, _SWIPE_X, 400, _SWIPE_DUR_MS)
+            await self._swipe(_SWIPE_X, 150, _SWIPE_X, 400, _SWIPE_DUR_MS)
             await asyncio.sleep(0.6)
-            screenshot = self.adapter.capture(self.ui.capture_method)
+            screenshot = await self._capture()
             if screenshot is not None and prev_screenshot is not None:
                 # 对比列表区域 ROI 的像素差异
                 roi_curr = screenshot[100:420, 80:220]
@@ -383,7 +383,7 @@ class YuHunExecutor(BaseExecutor):
         每次滚动 3 层而非 4 层，留 1 层重叠作为安全边距。
         """
         # 手指从高y拖到低y = 列表向下滚（显示更下面的层级）
-        self.adapter.swipe(_SWIPE_X, 385, _SWIPE_X, 130, _SWIPE_DUR_MS)
+        await self._swipe(_SWIPE_X, 385, _SWIPE_X, 130, _SWIPE_DUR_MS)
         await asyncio.sleep(_SCROLL_SETTLE)
 
     @staticmethod
@@ -425,7 +425,7 @@ class YuHunExecutor(BaseExecutor):
         current_start = 1
 
         for vp in range(3):  # 最多 3 个视口: start=1, 4, 7
-            screenshot = self.adapter.capture(self.ui.capture_method)
+            screenshot = await self._capture()
             if screenshot is None:
                 self.logger.error("[御魂-扫描] 截图失败")
                 break
@@ -474,7 +474,7 @@ class YuHunExecutor(BaseExecutor):
             current_start = 1
 
             for vp in range(3):
-                screenshot = self.adapter.capture(self.ui.capture_method)
+                screenshot = await self._capture()
                 if screenshot is None:
                     self.logger.error("[御魂-解锁] 截图失败")
                     return False
@@ -516,7 +516,7 @@ class YuHunExecutor(BaseExecutor):
             await self._scroll_to_level_visible(battle_level)
             await asyncio.sleep(0.8)
 
-            screenshot = self.adapter.capture(self.ui.capture_method)
+            screenshot = await self._capture()
             if screenshot is None:
                 self.logger.error("[御魂-解锁] 截图失败")
                 return False
@@ -539,7 +539,7 @@ class YuHunExecutor(BaseExecutor):
             # 选中该层
             if battle_lv.state != LevelState.SELECTED:
                 cx, cy = battle_lv.random_point()
-                self.adapter.adb.tap(self.adapter.cfg.adb_addr, cx, cy)
+                await self._tap(cx, cy)
                 self.logger.info(
                     f"[御魂-解锁] 选中层级 {battle_level} ({cx}, {cy})"
                 )

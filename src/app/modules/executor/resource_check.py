@@ -53,8 +53,8 @@ async def check_resources(
 
         read_values[asset_type.value] = value
 
-        # 更新数据库（仅展示用途）
-        _update_asset_in_db(account_id, asset_type, value)
+        # 更新数据库（仅展示用途，fire-and-forget offload）
+        _fire_update_asset(account_id, asset_type, value)
 
         if value < min_amount:
             logger.info(
@@ -63,6 +63,19 @@ async def check_resources(
             all_satisfied = False
 
     return all_satisfied, read_values
+
+
+def _fire_update_asset(account_id: int, asset_type: AssetType, value: int) -> None:
+    """Fire-and-forget: 将资产更新 offload 到线程池。"""
+    import asyncio
+    try:
+        loop = asyncio.get_running_loop()
+        from ...core.thread_pool import get_io_pool
+        loop.run_in_executor(
+            get_io_pool(), _update_asset_in_db, account_id, asset_type, value
+        )
+    except RuntimeError:
+        _update_asset_in_db(account_id, asset_type, value)
 
 
 def _update_asset_in_db(account_id: int, asset_type: AssetType, value: int) -> None:

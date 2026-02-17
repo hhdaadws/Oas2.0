@@ -43,10 +43,13 @@ registry.register(UIDef(
 ))
 
 # 账号失效界面（登录数据过期时出现，替代 ENTER）
+# 不设 tag，取所有模板最大分数用于识别
 registry.register(UIDef(
     id="SHIXIAO",
-    tag="shixiao",
-    templates=[TemplateDef(name="shixiao", path="assets/ui/templates/shixiao.png")],
+    templates=[
+        TemplateDef(name="shixiao", path="assets/ui/templates/shixiao.png"),
+        TemplateDef(name="shixiao_1", path="assets/ui/templates/shixiao_1.png"),
+    ],
 ))
 
 # 庭院界面（家城），tag=jiacheng 用于识别；shangdian/tansuo 仅用于导航锚点

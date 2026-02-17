@@ -425,26 +425,40 @@ TASK_TYPES_WITH_FAIL_DELAY = [
     if isinstance(cfg, dict) and "fail_delay" in cfg
 ]
 
+# 可配置默认 enabled 的任务类型列表（用于新建账号默认启用配置）
+TASK_TYPES_WITH_ENABLED = [
+    name for name, cfg in DEFAULT_TASK_CONFIG.items()
+    if isinstance(cfg, dict) and "enabled" in cfg
+]
 
-def build_default_task_config(fail_delays: dict = None) -> dict:
-    """根据全局 fail_delay 配置生成有效的 DEFAULT_TASK_CONFIG。
+
+def build_default_task_config(fail_delays: dict = None, enabled_overrides: dict = None) -> dict:
+    """根据全局 fail_delay 和 enabled 配置生成有效的 DEFAULT_TASK_CONFIG。
 
     Args:
         fail_delays: 来自 SystemConfig.default_fail_delays 的字典，
                      如 {"寄养": 60, "悬赏": 45}。None 或空时使用硬编码默认值。
+        enabled_overrides: 来自 SystemConfig.default_task_enabled 的字典，
+                          如 {"签到": true, "御魂": false}。None 或空时使用硬编码默认值。
     Returns:
-        完整的 task_config 字典（深拷贝），fail_delay 字段已被覆盖。
+        完整的 task_config 字典（深拷贝），fail_delay 和 enabled 字段已被覆盖。
     """
     config = deepcopy(DEFAULT_TASK_CONFIG)
-    if not fail_delays:
-        return config
-    for task_name, delay in fail_delays.items():
-        if (task_name in config
-                and isinstance(config[task_name], dict)
-                and "fail_delay" in config[task_name]
-                and isinstance(delay, (int, float))
-                and delay > 0):
-            config[task_name]["fail_delay"] = int(delay)
+    if fail_delays:
+        for task_name, delay in fail_delays.items():
+            if (task_name in config
+                    and isinstance(config[task_name], dict)
+                    and "fail_delay" in config[task_name]
+                    and isinstance(delay, (int, float))
+                    and delay > 0):
+                config[task_name]["fail_delay"] = int(delay)
+    if enabled_overrides:
+        for task_name, enabled in enabled_overrides.items():
+            if (task_name in config
+                    and isinstance(config[task_name], dict)
+                    and "enabled" in config[task_name]
+                    and isinstance(enabled, bool)):
+                config[task_name]["enabled"] = enabled
     return config
 
 

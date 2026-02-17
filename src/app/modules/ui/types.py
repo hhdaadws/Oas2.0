@@ -6,7 +6,7 @@ This is a typing-only contract; concrete implementation is provided elsewhere.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol, Optional, Any
+from typing import Protocol, Optional, Any, Coroutine
 
 
 @dataclass
@@ -17,11 +17,11 @@ class UIDetectResult:
 
 
 class UIManagerProtocol(Protocol):
-    def detect_ui(self, image: bytes | None = None) -> UIDetectResult:
+    async def detect_ui(self, image: bytes | None = None) -> UIDetectResult:
         """Detect current UI. If image is None, capture internally."""
         ...
 
-    def ensure_ui(
+    async def ensure_ui(
         self,
         target: str,
         *,

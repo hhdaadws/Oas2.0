@@ -34,6 +34,10 @@ class DismissAction:
     template_threshold: float = 0.85
     # 动作后等待（毫秒），让 UI 完成过渡
     post_delay_ms: int = 1000
+    # 点击后等待模板消失（仅 TAP_TEMPLATE 生效）
+    wait_disappear: bool = False
+    wait_disappear_timeout_ms: int = 5000
+    wait_disappear_poll_ms: int = 500
 
 
 @dataclass

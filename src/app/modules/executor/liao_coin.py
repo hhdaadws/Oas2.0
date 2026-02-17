@@ -136,7 +136,7 @@ class LiaoCoinExecutor(BaseExecutor):
         self.logger.info("[领取寮金币] 已到达寮界面")
 
         # 3. 检测寮金币按钮 (liaojinbi_1.png) 并点击
-        screenshot = self.adapter.capture(self.ui.capture_method)
+        screenshot = await self._capture()
         if screenshot is None:
             self.logger.error("[领取寮金币] 截图失败")
             return {
@@ -147,7 +147,7 @@ class LiaoCoinExecutor(BaseExecutor):
 
         # 弹窗检测
         if await self.ui.popup_handler.check_and_dismiss(screenshot) > 0:
-            screenshot = self.adapter.capture(self.ui.capture_method)
+            screenshot = await self._capture()
             if screenshot is None:
                 return {
                     "status": TaskStatus.FAILED,
@@ -166,15 +166,15 @@ class LiaoCoinExecutor(BaseExecutor):
             }
 
         jx, jy = jinbi_result.random_point()
-        self.adapter.adb.tap(self.adapter.cfg.adb_addr, jx, jy)
+        await self._tap(jx, jy)
         self.logger.info(f"[领取寮金币] 点击寮金币按钮: ({jx}, {jy})")
         await asyncio.sleep(2.0)
 
         # 4. 检测奖励弹窗 (jiangli.png) 并关闭
-        screenshot2 = self.adapter.capture(self.ui.capture_method)
+        screenshot2 = await self._capture()
         # 弹窗检测
         if screenshot2 is not None and await self.ui.popup_handler.check_and_dismiss(screenshot2) > 0:
-            screenshot2 = self.adapter.capture(self.ui.capture_method)
+            screenshot2 = await self._capture()
         jiangli_result = match_template(screenshot2, "assets/ui/templates/jiangli.png")
 
         if jiangli_result:
@@ -184,7 +184,7 @@ class LiaoCoinExecutor(BaseExecutor):
 
         from ..vision.utils import random_point_in_circle
         close_x, close_y = random_point_in_circle(20, 20, 20)
-        self.adapter.adb.tap(self.adapter.cfg.adb_addr, close_x, close_y)
+        await self._tap(close_x, close_y)
         self.logger.info(f"[领取寮金币] 随机点击 ({close_x}, {close_y}) 关闭弹窗")
         await asyncio.sleep(1.0)
 

@@ -176,7 +176,7 @@ class CollectFanheJiuhuExecutor(BaseExecutor):
             return
 
         for loop_idx in range(MAX_FILL_LOOPS):
-            screenshot = self.adapter.capture(self.ui.capture_method)
+            screenshot = await self._capture()
             if screenshot is None:
                 self.logger.warning("[领取饭盒酒壶] 截图失败，退出育成补充")
                 break
@@ -256,12 +256,12 @@ class CollectFanheJiuhuExecutor(BaseExecutor):
     async def _dismiss_jiangli(self, step_label: str) -> None:
         """关闭 jiangli.png 奖励弹窗"""
         await asyncio.sleep(1.5)
-        screenshot = self.adapter.capture(self.ui.capture_method)
+        screenshot = await self._capture()
 
         if screenshot is not None:
             # 先让 popup_handler 处理可能的其他弹窗
             if await self.ui.popup_handler.check_and_dismiss(screenshot) > 0:
-                screenshot = self.adapter.capture(self.ui.capture_method)
+                screenshot = await self._capture()
 
         if screenshot is not None:
             jiangli = match_template(screenshot, "assets/ui/templates/jiangli.png")
@@ -276,7 +276,7 @@ class CollectFanheJiuhuExecutor(BaseExecutor):
         from ..vision.utils import random_point_in_circle
 
         close_x, close_y = random_point_in_circle(20, 20, 20)
-        self.adapter.adb.tap(self.adapter.cfg.adb_addr, close_x, close_y)
+        await self._tap(close_x, close_y)
         self.logger.info(
             f"[领取饭盒酒壶] [{step_label}] 随机点击 ({close_x}, {close_y}) 关闭弹窗"
         )

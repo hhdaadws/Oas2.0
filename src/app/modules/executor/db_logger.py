@@ -48,6 +48,7 @@ def emit(
     """
     try:
         loop = asyncio.get_running_loop()
-        loop.run_in_executor(None, _write_log_sync, account_id, type_, level, message)
+        from ...core.thread_pool import get_io_pool
+        loop.run_in_executor(get_io_pool(), _write_log_sync, account_id, type_, level, message)
     except RuntimeError:
         _write_log_sync(account_id, type_, level, message)

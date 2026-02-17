@@ -121,6 +121,157 @@
         </el-form-item>
       </el-form>
     </el-card>
+
+    <el-card style="margin-top: 16px">
+      <template #header>
+        <span>新建账号任务默认启用</span>
+      </template>
+      <el-alert type="info" :closable="false" show-icon style="margin-bottom: 16px">
+        <template #title>
+          配置新建账号时各任务的默认开启/关闭状态。修改后仅影响后续新建的账号，不影响已有账号。
+        </template>
+      </el-alert>
+      <el-form label-width="140px" class="config-form">
+        <el-form-item
+          v-for="taskName in taskEnabledNames"
+          :key="taskName"
+          :label="taskName"
+        >
+          <el-switch
+            v-model="taskEnabledForm[taskName]"
+            active-text="开启"
+            inactive-text="关闭"
+          />
+        </el-form-item>
+        <el-form-item>
+          <el-button @click="loadTaskEnabledDefaults" :loading="taskEnabledLoading">刷新</el-button>
+          <el-button type="primary" @click="saveTaskEnabledDefaults" :loading="taskEnabledLoading">保存</el-button>
+        </el-form-item>
+      </el-form>
+    </el-card>
+
+    <el-card style="margin-top: 16px">
+      <template #header>
+        <span>全局休息开关</span>
+      </template>
+      <el-alert type="warning" :closable="false" show-icon style="margin-bottom: 16px">
+        <template #title>
+          关闭后所有账号的休息功能将强制失效，即使账号单独开启了休息也不会生效。
+        </template>
+      </el-alert>
+      <el-form label-width="140px" class="config-form">
+        <el-form-item label="全局休息">
+          <el-switch
+            v-model="globalRestForm.enabled"
+            active-text="开启"
+            inactive-text="关闭"
+          />
+        </el-form-item>
+        <el-form-item>
+          <el-button @click="loadGlobalRest" :loading="globalRestLoading">刷新</el-button>
+          <el-button type="primary" @click="saveGlobalRest" :loading="globalRestLoading">保存</el-button>
+        </el-form-item>
+      </el-form>
+    </el-card>
+
+    <el-card style="margin-top: 16px">
+      <template #header>
+        <span>新建账号默认休息配置</span>
+      </template>
+      <el-alert type="info" :closable="false" show-icon style="margin-bottom: 16px">
+        <template #title>
+          配置新建账号时休息功能的默认设置。修改后仅影响后续新建的账号，不影响已有账号。
+        </template>
+      </el-alert>
+      <el-form label-width="140px" class="config-form">
+        <el-form-item label="默认启用休息">
+          <el-switch
+            v-model="defaultRestForm.enabled"
+            active-text="开启"
+            inactive-text="关闭"
+          />
+        </el-form-item>
+        <el-form-item label="休息模式">
+          <el-radio-group v-model="defaultRestForm.mode">
+            <el-radio label="random">随机（2-3小时）</el-radio>
+            <el-radio label="custom">自定义</el-radio>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item v-if="defaultRestForm.mode === 'custom'" label="开始时间">
+          <el-time-picker
+            v-model="defaultRestForm.start_time"
+            format="HH:mm"
+            value-format="HH:mm"
+            placeholder="选择时间"
+          />
+        </el-form-item>
+        <el-form-item label="持续时长">
+          <el-input-number
+            v-model="defaultRestForm.duration"
+            :min="1"
+            :max="5"
+          />
+          <span style="margin-left: 8px; color: #909399;">小时</span>
+        </el-form-item>
+        <el-form-item>
+          <el-button @click="loadDefaultRestConfig" :loading="defaultRestLoading">刷新</el-button>
+          <el-button type="primary" @click="saveDefaultRestConfig" :loading="defaultRestLoading">保存</el-button>
+        </el-form-item>
+      </el-form>
+    </el-card>
+
+    <el-card style="margin-top: 16px">
+      <template #header>
+        <span>对弈竞猜答案配置</span>
+        <el-tag v-if="duiyiDate" type="success" size="small" style="margin-left: 8px">
+          {{ duiyiDate }}
+        </el-tag>
+        <el-tag v-else type="info" size="small" style="margin-left: 8px">今日未配置</el-tag>
+      </template>
+      <el-alert type="info" :closable="false" show-icon style="margin-bottom: 16px">
+        <template #title>
+          配置今日每个时间窗口的答案（左/右）。未配置答案的窗口不会执行。每日答案独立，次日自动清空。
+        </template>
+      </el-alert>
+      <el-form label-width="140px" class="config-form">
+        <el-form-item
+          v-for="w in duiyiWindows"
+          :key="w.key"
+          :label="w.label"
+        >
+          <el-radio-group v-model="duiyiAnswersForm[w.key]">
+            <el-radio :value="null">不配置</el-radio>
+            <el-radio value="左">左</el-radio>
+            <el-radio value="右">右</el-radio>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item>
+          <el-button @click="loadDuiyiAnswers" :loading="duiyiAnswersLoading">刷新</el-button>
+          <el-button type="primary" @click="saveDuiyiAnswers" :loading="duiyiAnswersLoading">保存</el-button>
+        </el-form-item>
+      </el-form>
+      <el-divider />
+      <h4 style="margin-bottom: 12px">领取奖励点击区域</h4>
+      <el-alert type="info" :closable="false" show-icon style="margin-bottom: 16px">
+        <template #title>
+          配置领取胜利奖励时的点击区域（左上角和右下角坐标），识别到赢了后在此区域内随机点击。未配置则使用模板匹配位置。
+        </template>
+      </el-alert>
+      <el-form label-width="140px" class="config-form">
+        <el-form-item label="左上角 (x1, y1)">
+          <el-input-number v-model="duiyiRewardCoordForm.x1" :min="0" :max="959" :step="1" controls-position="right" style="width: 120px" />
+          <el-input-number v-model="duiyiRewardCoordForm.y1" :min="0" :max="539" :step="1" controls-position="right" style="width: 120px; margin-left: 12px" />
+        </el-form-item>
+        <el-form-item label="右下角 (x2, y2)">
+          <el-input-number v-model="duiyiRewardCoordForm.x2" :min="0" :max="959" :step="1" controls-position="right" style="width: 120px" />
+          <el-input-number v-model="duiyiRewardCoordForm.y2" :min="0" :max="539" :step="1" controls-position="right" style="width: 120px; margin-left: 12px" />
+        </el-form-item>
+        <el-form-item>
+          <el-button @click="loadDuiyiRewardCoord" :loading="duiyiRewardCoordLoading">刷新</el-button>
+          <el-button type="primary" @click="saveDuiyiRewardCoord" :loading="duiyiRewardCoordLoading">保存</el-button>
+        </el-form-item>
+      </el-form>
+    </el-card>
   </div>
 </template>
 
@@ -150,6 +301,45 @@ const benchmarkResult = ref(null)
 const failDelayForm = reactive({})
 const failDelayLoading = ref(false)
 const failDelayTaskNames = computed(() => Object.keys(failDelayForm))
+
+// 新建账号默认任务启用配置
+const taskEnabledForm = reactive({})
+const taskEnabledLoading = ref(false)
+const taskEnabledNames = computed(() => Object.keys(taskEnabledForm))
+
+// 全局休息开关
+const globalRestForm = reactive({ enabled: true })
+const globalRestLoading = ref(false)
+
+// 新建账号默认休息配置
+const defaultRestForm = reactive({
+  enabled: false,
+  mode: 'random',
+  start_time: null,
+  duration: 2
+})
+const defaultRestLoading = ref(false)
+
+// 对弈竞猜答案配置
+const duiyiWindows = [
+  { key: '10:00', label: '10:00-12:00' },
+  { key: '12:00', label: '12:00-14:00' },
+  { key: '14:00', label: '14:00-16:00' },
+  { key: '16:00', label: '16:00-18:00' },
+  { key: '18:00', label: '18:00-20:00' },
+  { key: '20:00', label: '20:00-22:00' },
+  { key: '22:00', label: '22:00-00:00' },
+]
+const duiyiAnswersForm = reactive({
+  '10:00': null, '12:00': null, '14:00': null, '16:00': null,
+  '18:00': null, '20:00': null, '22:00': null,
+})
+const duiyiAnswersLoading = ref(false)
+const duiyiDate = ref(null)
+
+// 对弈竞猜领奖点击区域
+const duiyiRewardCoordForm = reactive({ x1: null, y1: null, x2: null, y2: null })
+const duiyiRewardCoordLoading = ref(false)
 
 const fetchEmulators = async () => {
   try {
@@ -254,8 +444,211 @@ const saveFailDelays = async () => {
   }
 }
 
+const loadTaskEnabledDefaults = async () => {
+  taskEnabledLoading.value = true
+  try {
+    const resp = await apiRequest(API_ENDPOINTS.system.taskEnabledDefaults)
+    const data = await resp.json()
+    Object.keys(taskEnabledForm).forEach(k => delete taskEnabledForm[k])
+    Object.assign(taskEnabledForm, data.enabled || {})
+  } catch (e) {
+    ElMessage.error('加载默认任务启用配置失败')
+  } finally {
+    taskEnabledLoading.value = false
+  }
+}
+
+const saveTaskEnabledDefaults = async () => {
+  taskEnabledLoading.value = true
+  try {
+    const resp = await apiRequest(API_ENDPOINTS.system.taskEnabledDefaults, {
+      method: 'PUT',
+      body: JSON.stringify({ enabled: { ...taskEnabledForm } })
+    })
+    if (!resp.ok) {
+      const data = await resp.json()
+      throw new Error(data?.detail || '保存失败')
+    }
+    ElMessage.success('默认任务启用配置保存成功')
+  } catch (e) {
+    ElMessage.error(e.message || '保存失败')
+  } finally {
+    taskEnabledLoading.value = false
+  }
+}
+
+// 全局休息开关
+const loadGlobalRest = async () => {
+  globalRestLoading.value = true
+  try {
+    const resp = await apiRequest(API_ENDPOINTS.system.globalRest)
+    const data = await resp.json()
+    globalRestForm.enabled = data.enabled ?? true
+  } catch (e) {
+    ElMessage.error('加载全局休息开关失败')
+  } finally {
+    globalRestLoading.value = false
+  }
+}
+
+const saveGlobalRest = async () => {
+  globalRestLoading.value = true
+  try {
+    const resp = await apiRequest(API_ENDPOINTS.system.globalRest, {
+      method: 'PUT',
+      body: JSON.stringify({ enabled: globalRestForm.enabled })
+    })
+    if (!resp.ok) {
+      const data = await resp.json()
+      throw new Error(data?.detail || '保存失败')
+    }
+    ElMessage.success('全局休息开关保存成功')
+  } catch (e) {
+    ElMessage.error(e.message || '保存失败')
+  } finally {
+    globalRestLoading.value = false
+  }
+}
+
+// 新建账号默认休息配置
+const loadDefaultRestConfig = async () => {
+  defaultRestLoading.value = true
+  try {
+    const resp = await apiRequest(API_ENDPOINTS.system.defaultRestConfig)
+    const data = await resp.json()
+    defaultRestForm.enabled = data.enabled ?? false
+    defaultRestForm.mode = data.mode || 'random'
+    defaultRestForm.start_time = data.start_time || null
+    defaultRestForm.duration = data.duration ?? 2
+  } catch (e) {
+    ElMessage.error('加载默认休息配置失败')
+  } finally {
+    defaultRestLoading.value = false
+  }
+}
+
+const saveDefaultRestConfig = async () => {
+  defaultRestLoading.value = true
+  try {
+    const resp = await apiRequest(API_ENDPOINTS.system.defaultRestConfig, {
+      method: 'PUT',
+      body: JSON.stringify({
+        enabled: defaultRestForm.enabled,
+        mode: defaultRestForm.mode,
+        start_time: defaultRestForm.start_time,
+        duration: defaultRestForm.duration
+      })
+    })
+    if (!resp.ok) {
+      const data = await resp.json()
+      throw new Error(data?.detail || '保存失败')
+    }
+    ElMessage.success('默认休息配置保存成功')
+  } catch (e) {
+    ElMessage.error(e.message || '保存失败')
+  } finally {
+    defaultRestLoading.value = false
+  }
+}
+
+// 对弈竞猜答案配置
+const loadDuiyiAnswers = async () => {
+  duiyiAnswersLoading.value = true
+  try {
+    const resp = await apiRequest(API_ENDPOINTS.system.duiyiAnswers)
+    const data = await resp.json()
+    duiyiDate.value = data.date || null
+    const answers = data.answers || {}
+    for (const w of duiyiWindows) {
+      duiyiAnswersForm[w.key] = answers[w.key] ?? null
+    }
+  } catch (e) {
+    ElMessage.error('加载对弈竞猜答案配置失败')
+  } finally {
+    duiyiAnswersLoading.value = false
+  }
+}
+
+const saveDuiyiAnswers = async () => {
+  duiyiAnswersLoading.value = true
+  try {
+    const resp = await apiRequest(API_ENDPOINTS.system.duiyiAnswers, {
+      method: 'PUT',
+      body: JSON.stringify({ answers: { ...duiyiAnswersForm } })
+    })
+    const data = await resp.json()
+    if (!resp.ok) {
+      throw new Error(data?.detail || '保存失败')
+    }
+    duiyiDate.value = data.date || null
+    ElMessage.success('对弈竞猜答案配置保存成功')
+  } catch (e) {
+    ElMessage.error(e.message || '保存失败')
+  } finally {
+    duiyiAnswersLoading.value = false
+  }
+}
+
+// 对弈竞猜领奖点击区域
+const loadDuiyiRewardCoord = async () => {
+  duiyiRewardCoordLoading.value = true
+  try {
+    const resp = await apiRequest(API_ENDPOINTS.system.duiyiRewardCoord)
+    const data = await resp.json()
+    duiyiRewardCoordForm.x1 = data.x1 ?? null
+    duiyiRewardCoordForm.y1 = data.y1 ?? null
+    duiyiRewardCoordForm.x2 = data.x2 ?? null
+    duiyiRewardCoordForm.y2 = data.y2 ?? null
+  } catch (e) {
+    ElMessage.error('加载领奖坐标配置失败')
+  } finally {
+    duiyiRewardCoordLoading.value = false
+  }
+}
+
+const saveDuiyiRewardCoord = async () => {
+  const { x1, y1, x2, y2 } = duiyiRewardCoordForm
+  if (x1 == null || y1 == null || x2 == null || y2 == null) {
+    ElMessage.warning('请填写完整的坐标')
+    return
+  }
+  if (x1 >= x2) {
+    ElMessage.warning('x1 必须小于 x2')
+    return
+  }
+  if (y1 >= y2) {
+    ElMessage.warning('y1 必须小于 y2')
+    return
+  }
+  duiyiRewardCoordLoading.value = true
+  try {
+    const resp = await apiRequest(API_ENDPOINTS.system.duiyiRewardCoord, {
+      method: 'PUT',
+      body: JSON.stringify({ x1, y1, x2, y2 })
+    })
+    const data = await resp.json()
+    if (!resp.ok) {
+      throw new Error(data?.detail || '保存失败')
+    }
+    ElMessage.success('领奖坐标配置保存成功')
+  } catch (e) {
+    ElMessage.error(e.message || '保存失败')
+  } finally {
+    duiyiRewardCoordLoading.value = false
+  }
+}
+
 onMounted(async () => {
-  await Promise.all([load(), fetchEmulators(), loadFailDelays()])
+  await Promise.all([
+    load(),
+    fetchEmulators(),
+    loadFailDelays(),
+    loadTaskEnabledDefaults(),
+    loadGlobalRest(),
+    loadDefaultRestConfig(),
+    loadDuiyiAnswers(),
+    loadDuiyiRewardCoord()
+  ])
 })
 </script>
 

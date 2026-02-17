@@ -17,6 +17,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+import cv2  # type: ignore
+import numpy as np
+
 from loguru import logger as _logger
 
 from .adb import Adb, AdbError
@@ -132,6 +135,23 @@ class EmulatorAdapter:
             return self.ipc.screencap(
                 nemu_folder=self.cfg.nemu_folder, instance_id=self.cfg.instance_id
             )
+        else:
+            raise ValueError("未知截图方式：%s" % method)
+
+    def capture_ndarray(self, method: str = "adb") -> np.ndarray:
+        """截图并直接返回 BGR ndarray，避免 PNG encode/decode 往返。"""
+        EmulatorAdapter._heartbeat[self.cfg.adb_addr] = time.monotonic()
+        if method == "ipc":
+            return self.ipc.screencap_ndarray(
+                nemu_folder=self.cfg.nemu_folder, instance_id=self.cfg.instance_id
+            )
+        elif method == "adb":
+            png = self.adb.screencap(self.cfg.adb_addr)
+            arr = np.frombuffer(png, dtype=np.uint8)
+            mat = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+            if mat is None:
+                raise ValueError("ADB 截图解码失败")
+            return mat
         else:
             raise ValueError("未知截图方式：%s" % method)
 

@@ -15,7 +15,7 @@ from ..vision.grid_detect import (
     GRID_ROI,
 )
 from ..vision.template import match_template
-from .helpers import click_template, wait_for_template
+from .helpers import click_template, wait_for_template, _adapter_capture, _adapter_tap, _adapter_swipe
 
 if TYPE_CHECKING:
     from ..emu.adapter import EmulatorAdapter
@@ -56,7 +56,6 @@ async def switch_lineup(
         True 表示切换成功，False 表示失败。
     """
     tag = "[阵容切换]"
-    addr = adapter.cfg.adb_addr
 
     # 1. 导航到式神界面
     if log:
@@ -96,7 +95,7 @@ async def switch_lineup(
         return False
 
     # 4. 截图识别右侧分组列
-    screenshot = adapter.capture(capture_method)
+    screenshot = await _adapter_capture(adapter, capture_method)
     if screenshot is None:
         if log:
             log.error(f"{tag} 截图失败")
@@ -110,11 +109,11 @@ async def switch_lineup(
 
     # 5. 从上往下划分组列，回到顶部
     swipe_x = (RIGHT_COL_X_START + RIGHT_COL_X_END) // 2
-    adapter.swipe(swipe_x, RIGHT_COL_Y_START + 50, swipe_x, RIGHT_COL_Y_END - 50, dur_ms=500)
+    await _adapter_swipe(adapter, swipe_x, RIGHT_COL_Y_START + 50, swipe_x, RIGHT_COL_Y_END - 50, dur_ms=500)
     await asyncio.sleep(0.8)
 
     # 重新截图检测分组
-    screenshot = adapter.capture(capture_method)
+    screenshot = await _adapter_capture(adapter, capture_method)
     if screenshot is None:
         if log:
             log.error(f"{tag} 上划后截图失败")
@@ -135,11 +134,11 @@ async def switch_lineup(
     cx, cy = target_cell.random_point()
     if log:
         log.info(f"{tag} 点击分组 {group}: ({cx}, {cy})")
-    adapter.adb.tap(addr, cx, cy)
+    await _adapter_tap(adapter, cx, cy)
     await asyncio.sleep(1.5)
 
     # 7. 截图识别左侧阵容行
-    screenshot = adapter.capture(capture_method)
+    screenshot = await _adapter_capture(adapter, capture_method)
     if screenshot is None:
         if log:
             log.error(f"{tag} 截图失败（分组点击后）")
@@ -155,11 +154,11 @@ async def switch_lineup(
     grid_cx = GRID_ROI[0] + GRID_ROI[2] // 2
     grid_top = GRID_ROI[1]
     grid_bottom = GRID_ROI[1] + GRID_ROI[3]
-    adapter.swipe(grid_cx, grid_top + 30, grid_cx, grid_bottom - 30, dur_ms=500)
+    await _adapter_swipe(adapter, grid_cx, grid_top + 30, grid_cx, grid_bottom - 30, dur_ms=500)
     await asyncio.sleep(0.8)
 
     # 重新截图检测阵容行
-    screenshot = adapter.capture(capture_method)
+    screenshot = await _adapter_capture(adapter, capture_method)
     if screenshot is None:
         if log:
             log.error(f"{tag} 上划后截图失败")
@@ -180,7 +179,7 @@ async def switch_lineup(
     px, py = target_pos.random_point()
     if log:
         log.info(f"{tag} 点击阵容 {position} (行 {target_pos.row}): ({px}, {py})")
-    adapter.adb.tap(addr, px, py)
+    await _adapter_tap(adapter, px, py)
     await asyncio.sleep(1.5)
 
     # 10. 点击确定（如果未出现确定按钮，说明当前阵容已是目标阵容，无需切换）

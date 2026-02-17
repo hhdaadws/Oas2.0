@@ -8,7 +8,7 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING, Any
 
-from .helpers import click_template, wait_for_template
+from .helpers import click_template, wait_for_template, _adapter_tap
 
 if TYPE_CHECKING:
     from ..emu.adapter import EmulatorAdapter
@@ -46,10 +46,9 @@ async def awaken_shikigami(
         True 觉醒成功，False 失败
     """
     tag = f"[{label}] " if label else ""
-    addr = adapter.cfg.adb_addr
 
     # 1. 点击觉醒入口坐标
-    adapter.adb.tap(addr, 935, 269)
+    await _adapter_tap(adapter, 935, 269)
     if log:
         log.info(f"{tag}点击觉醒入口 (935, 269)")
     await asyncio.sleep(1.5)

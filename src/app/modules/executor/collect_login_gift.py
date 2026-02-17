@@ -158,23 +158,21 @@ class CollectLoginGiftExecutor(BaseExecutor):
         self.logger.info("[领取登录礼包] 已到达商店界面")
 
         self.logger.info("[领取登录礼包] 点击礼包物")
-        libaowu_result = self.ui.detect_ui()
+        libaowu_result = await self._detect_ui()
         libaowu_anchor = self._extract_anchor_from_debug(libaowu_result, "libaowu")
 
         if libaowu_anchor:
-            self.adapter.adb.tap(
-                self.adapter.cfg.adb_addr, libaowu_anchor[0], libaowu_anchor[1]
-            )
+            await self._tap(libaowu_anchor[0], libaowu_anchor[1])
         else:
             self.logger.warning("[领取登录礼包] 未检测到 libaowu 锚点，尝试固定坐标点击")
-            self.adapter.adb.tap(self.adapter.cfg.adb_addr, 200, 400)
+            await self._tap(200, 400)
 
         await asyncio.sleep(2.0)
 
         self.logger.info("[领取登录礼包] 检测并点击日常按钮")
         from ..vision.template import match_template
 
-        screenshot = self.adapter.capture(self.ui.capture_method)
+        screenshot = await self._capture()
         if screenshot is None:
             self.logger.warning("[领取登录礼包] 截图失败，无法检测日常按钮")
             return {
@@ -185,7 +183,7 @@ class CollectLoginGiftExecutor(BaseExecutor):
 
         # 弹窗检测
         if await self.ui.popup_handler.check_and_dismiss(screenshot) > 0:
-            screenshot = self.adapter.capture(self.ui.capture_method)
+            screenshot = await self._capture()
             if screenshot is None:
                 return {
                     "status": TaskStatus.FAILED,
@@ -196,7 +194,7 @@ class CollectLoginGiftExecutor(BaseExecutor):
         result = match_template(screenshot, "assets/ui/templates/richang.png")
         if result:
             rx, ry = result.random_point()
-            self.adapter.adb.tap(self.adapter.cfg.adb_addr, rx, ry)
+            await self._tap(rx, ry)
             self.logger.info(f"[领取登录礼包] 点击日常按钮: ({rx}, {ry})")
         else:
             self.logger.warning("[领取登录礼包] 未检测到日常按钮")
@@ -210,10 +208,10 @@ class CollectLoginGiftExecutor(BaseExecutor):
 
         # 检测领取按钮 (lingqu.png)
         self.logger.info("[领取登录礼包] 检测领取按钮")
-        screenshot2 = self.adapter.capture(self.ui.capture_method)
+        screenshot2 = await self._capture()
         # 弹窗检测
         if screenshot2 is not None and await self.ui.popup_handler.check_and_dismiss(screenshot2) > 0:
-            screenshot2 = self.adapter.capture(self.ui.capture_method)
+            screenshot2 = await self._capture()
         lingqu_result = match_template(screenshot2, "assets/ui/templates/lingqu.png") if screenshot2 else None
 
         if not lingqu_result:
@@ -228,17 +226,17 @@ class CollectLoginGiftExecutor(BaseExecutor):
 
         # 点击领取按钮
         lx, ly = lingqu_result.random_point()
-        self.adapter.adb.tap(self.adapter.cfg.adb_addr, lx, ly)
+        await self._tap(lx, ly)
         self.logger.info(f"[领取登录礼包] 点击领取按钮: ({lx}, {ly})")
 
         await asyncio.sleep(2.0)
 
         # 检测奖励弹窗 (jiangli.png)
         self.logger.info("[领取登录礼包] 检测奖励弹窗")
-        screenshot3 = self.adapter.capture(self.ui.capture_method)
+        screenshot3 = await self._capture()
         # 弹窗检测
         if screenshot3 is not None and await self.ui.popup_handler.check_and_dismiss(screenshot3) > 0:
-            screenshot3 = self.adapter.capture(self.ui.capture_method)
+            screenshot3 = await self._capture()
         jiangli_result = match_template(screenshot3, "assets/ui/templates/jiangli.png") if screenshot3 else None
 
         if jiangli_result:
@@ -250,7 +248,7 @@ class CollectLoginGiftExecutor(BaseExecutor):
         from ..vision.utils import random_point_in_circle
 
         close_x, close_y = random_point_in_circle(20, 20, 20)
-        self.adapter.adb.tap(self.adapter.cfg.adb_addr, close_x, close_y)
+        await self._tap(close_x, close_y)
         self.logger.info(f"[领取登录礼包] 随机点击 ({close_x}, {close_y}) 关闭弹窗")
 
         await asyncio.sleep(1.0)

@@ -169,7 +169,17 @@
       "Bash(PYTHONPATH=src \"D:\\\\Users\\\\ASUS\\\\anaconda3\\\\envs\\\\timeocr\\\\python.exe\":*)",
       "Bash(PYTHONPATH=src \"D:\\\\Users\\\\ASUS\\\\anaconda3\\\\envs\\\\timeocr\\\\Scripts\\\\uvicorn.exe\":*)",
       "Bash(node -e:*)",
-      "Bash(venv/Scripts/pytest:*)"
+      "Bash(venv/Scripts/pytest:*)",
+      "Bash(jingcai \")",
+      "Bash(PYTHONPATH=\"C:\\\\\\\\Users\\\\\\\\caisson15ducats\\\\\\\\projects\\\\\\\\agents-31c234df9e\\\\\\\\src\" \"C:\\\\\\\\Users\\\\\\\\caisson15ducats\\\\\\\\projects\\\\\\\\agents-31c234df9e\\\\\\\\venv\\\\\\\\Scripts\\\\\\\\python.exe\":*)",
+      "Bash(du:*)",
+      "Bash(png \")",
+      "Bash(for f in src/app/core/config.py src/app/db/base.py src/app/modules/executor/service.py)",
+      "Bash(do venv/Scripts/python.exe:*)",
+      "Bash(\"e:\\\\new_oas\\\\Oas2.0\\\\venv\\\\Scripts\\\\python.exe\" -c \"import ast, glob, os; os.chdir\\(r''e:\\\\new_oas\\\\Oas2.0''\\); files = glob.glob\\(''src/app/modules/executor/*.py''\\); [ast.parse\\(open\\(f, encoding=''utf-8''\\).read\\(\\)\\) for f in files]; print\\(f''All {len\\(files\\)} executor files parse OK''\\)\")",
+      "Bash(\"C:/Users/herbwork0p/projects/agents-5e1bb3cc43/venv/Scripts/python.exe\" -c \"import ast; print\\(''ast ok''\\)\")",
+      "Bash(\"e:\\\\new_oas\\\\Oas2.0\\\\venv\\\\Scripts\\\\python.exe\" -c \"import py_compile; py_compile.compile\\(r''e:\\\\new_oas\\\\Oas2.0\\\\src\\\\app\\\\modules\\\\executor\\\\duiyi_jingcai.py'', doraise=True\\); print\\(''ok''\\)\")",
+      "Bash(git reset:*)"
     ],
     "deny": [],
     "ask": []

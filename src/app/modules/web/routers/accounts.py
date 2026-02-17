@@ -12,10 +12,10 @@ import random
 from ....db.base import get_db
 from sqlalchemy import or_
 from ....db.models import (
-    Email,
     GameAccount,
     AccountRestConfig,
     RestPlan,
+    SystemConfig,
     Task,
     TaskRun,
     CoopPool,
@@ -23,7 +23,6 @@ from ....db.models import (
 )
 from ....core.constants import DEFAULT_TASK_CONFIG, DEFAULT_INIT_TASK_CONFIG, AccountStatus, build_default_task_config, build_default_explore_progress
 from ....core.logger import logger
-from ...tasks import scheduler
 from ...lineup import LINEUP_SUPPORTED_TASKS, merge_lineup_with_defaults
 from ...shikigami import merge_shikigami_with_defaults
 
@@ -32,18 +31,10 @@ router = APIRouter(prefix="/api/accounts", tags=["accounts"])
 
 
 # Pydantic模型
-class EmailAccountCreate(BaseModel):
-    """创建邮箱账号"""
-
-    email: str
-    password: str
-
-
 class GameAccountCreate(BaseModel):
     """创建游戏账号"""
 
     login_id: str
-    zone: str
     level: int = 1
     stamina: int = 0
 
@@ -128,6 +119,19 @@ def _get_global_fail_delays(db: Session) -> dict:
     return (row.default_fail_delays or {}) if row else {}
 
 
+def _get_global_task_enabled(db: Session) -> dict:
+    """从数据库读取全局默认任务启用配置。"""
+    from ....db.models import SystemConfig
+    row = db.query(SystemConfig).order_by(SystemConfig.id.asc()).first()
+    return (row.default_task_enabled or {}) if row else {}
+
+
+def _get_default_rest_config(db: Session) -> dict:
+    """从数据库读取新建账号的默认休息配置。"""
+    row = db.query(SystemConfig).order_by(SystemConfig.id.asc()).first()
+    return (row.default_rest_config or {}) if row else {}
+
+
 def _merge_task_config_with_defaults(task_config: Any, fail_delays: dict = None, progress: str = "ok") -> Dict[str, Any]:
     """按"默认 + 现有配置"规则规范化任务配置。
 
@@ -171,83 +175,18 @@ def _merge_task_config_with_defaults(task_config: Any, fail_delays: dict = None,
 @router.get("")
 async def get_accounts(db: Session = Depends(get_db)):
     """
-    获取账号列表（支持树形结构）
+    获取账号列表（平铺列表）
     """
-    # 查询所有邮箱账号
-    emails = db.query(Email).all()
+    accounts = db.query(GameAccount).all()
 
     result = []
     need_commit = False
     fail_delays = _get_global_fail_delays(db)
 
-    for email in emails:
-        email_data = {
-            "type": "email",
-            "email": email.email,
-            "created_at": email.created_at.isoformat(),
-            "children": [],
-        }
-
-        # 查询该邮箱下的游戏账号
-        game_accounts = (
-            db.query(GameAccount).filter(GameAccount.email_fk == email.email).all()
+    for account in accounts:
+        normalized_task_config = _merge_task_config_with_defaults(
+            account.task_config, fail_delays=fail_delays, progress=account.progress
         )
-
-        for account in game_accounts:
-            normalized_task_config = _merge_task_config_with_defaults(
-                account.task_config, fail_delays=fail_delays, progress=account.progress
-            )
-            if account.task_config != normalized_task_config:
-                account.task_config = normalized_task_config
-                account.updated_at = datetime.utcnow()
-                need_commit = True
-
-            rc = account.rest_config
-            rest_config_data = {
-                "enabled": bool(rc.enabled) if rc else True,
-                "mode": rc.mode if rc else "random",
-                "start_time": rc.rest_start if rc else None,
-                "duration": rc.rest_duration if rc else 2,
-            }
-
-            email_data["children"].append(
-                {
-                    "type": "game",
-                    "id": account.id,
-                    "login_id": account.login_id,
-                    "zone": account.zone,
-                    "level": account.level,
-                    "stamina": account.stamina,
-                    "gouyu": account.gouyu,
-                    "lanpiao": account.lanpiao,
-                    "gold": account.gold,
-                    "gongxun": account.gongxun,
-                    "xunzhang": account.xunzhang,
-                    "tupo_ticket": account.tupo_ticket,
-                    "fanhe_level": account.fanhe_level,
-                "jiuhu_level": account.jiuhu_level,
-                    "liao_level": account.liao_level,
-                    "status": account.status,
-                    "progress": account.progress,
-                    "current_task": account.current_task,
-                    "task_config": normalized_task_config,
-                    "lineup_config": account.lineup_config or {},
-                    "shikigami_config": merge_shikigami_with_defaults(account.shikigami_config or {}),
-                    "explore_progress": account.explore_progress or {},
-                    "remark": account.remark or "",
-                    "rest_config": rest_config_data,
-                }
-            )
-
-        result.append(email_data)
-
-    # 查询独立的游戏账号（无邮箱）
-    independent_accounts = (
-        db.query(GameAccount).filter(GameAccount.email_fk == None).all()
-    )
-
-    for account in independent_accounts:
-        normalized_task_config = _merge_task_config_with_defaults(account.task_config, fail_delays=fail_delays, progress=account.progress)
         if account.task_config != normalized_task_config:
             account.task_config = normalized_task_config
             account.updated_at = datetime.utcnow()
@@ -266,7 +205,6 @@ async def get_accounts(db: Session = Depends(get_db)):
                 "type": "game",
                 "id": account.id,
                 "login_id": account.login_id,
-                "zone": account.zone,
                 "level": account.level,
                 "stamina": account.stamina,
                 "gouyu": account.gouyu,
@@ -296,37 +234,12 @@ async def get_accounts(db: Session = Depends(get_db)):
     return result
 
 
-@router.post("/email")
-async def create_email_account(
-    account: EmailAccountCreate, db: Session = Depends(get_db)
-):
-    """
-    添加邮箱账号
-    """
-    # 检查邮箱是否已存在
-    existing = db.query(Email).filter(Email.email == account.email).first()
-    if existing:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="邮箱账号已存在")
-
-    # 创建邮箱账号
-    email_account = Email(email=account.email, password=account.password)
-    db.add(email_account)
-    db.commit()
-
-    # 创建起号任务
-    await scheduler.create_init_task(account.email)
-
-    logger.info(f"创建邮箱账号: {account.email}")
-
-    return {"message": "邮箱账号创建成功", "email": account.email}
-
-
 @router.post("/game")
 async def create_game_account(
     account: GameAccountCreate, db: Session = Depends(get_db)
 ):
     """
-    添加ID账号（独立游戏账号）
+    添加游戏账号
     """
     # 检查login_id是否已存在
     existing = (
@@ -338,15 +251,26 @@ async def create_game_account(
     # 创建游戏账号
     game_account = GameAccount(
         login_id=account.login_id,
-        zone=account.zone,
         level=account.level,
         stamina=account.stamina,
-        progress="ok",  # ID账号默认已完成初始化
+        progress="ok",
         status=AccountStatus.ACTIVE,
-        task_config=build_default_task_config(_get_global_fail_delays(db)),
+        task_config=build_default_task_config(_get_global_fail_delays(db), _get_global_task_enabled(db)),
         explore_progress=build_default_explore_progress(),
     )
     db.add(game_account)
+    db.flush()  # 获取 game_account.id
+
+    # 创建默认休息配置
+    default_rest = _get_default_rest_config(db)
+    rest_config = AccountRestConfig(
+        account_id=game_account.id,
+        enabled=1 if default_rest.get("enabled", False) else 0,
+        mode=default_rest.get("mode", "random"),
+        rest_start=default_rest.get("start_time"),
+        rest_duration=default_rest.get("duration", 2),
+    )
+    db.add(rest_config)
     db.commit()
     db.refresh(game_account)
 
@@ -357,7 +281,6 @@ async def create_game_account(
         "account": {
             "id": game_account.id,
             "login_id": game_account.login_id,
-            "zone": game_account.zone,
         },
     }
 
@@ -382,7 +305,7 @@ async def update_account(
         # progress 发生变化时切换 task_config
         if old_progress != account.progress:
             if account.progress == "ok":
-                account.task_config = build_default_task_config(_get_global_fail_delays(db))
+                account.task_config = build_default_task_config(_get_global_fail_delays(db), _get_global_task_enabled(db))
             else:
                 account.task_config = deepcopy(DEFAULT_INIT_TASK_CONFIG)
             from sqlalchemy.orm.attributes import flag_modified
@@ -647,19 +570,18 @@ async def update_init_status(data: Dict[str, Any], db: Session = Depends(get_db)
     执行器更新起号状态（内部API）
     """
     account_id = data.get("account_id")
-    status = data.get("status")
-    zone = data.get("zone")
+    init_status = data.get("status")
     level = data.get("level", 1)
     message = data.get("message", "")
 
     account = db.query(GameAccount).filter(GameAccount.id == account_id).first()
     if not account:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="账号不存在")
+        raise HTTPException(status_code=404, detail="账号不存在")
 
     # 更新账号状态
-    account.status = status
+    account.status = init_status
     old_progress = account.progress
-    if status == AccountStatus.ACTIVE:
+    if init_status == AccountStatus.ACTIVE:
         account.progress = "ok"
     else:
         account.progress = "init"
@@ -667,21 +589,19 @@ async def update_init_status(data: Dict[str, Any], db: Session = Depends(get_db)
     # progress 发生变化时切换 task_config
     if old_progress != account.progress:
         if account.progress == "ok":
-            account.task_config = build_default_task_config(_get_global_fail_delays(db))
+            account.task_config = build_default_task_config(_get_global_fail_delays(db), _get_global_task_enabled(db))
         else:
             account.task_config = deepcopy(DEFAULT_INIT_TASK_CONFIG)
         from sqlalchemy.orm.attributes import flag_modified
         flag_modified(account, "task_config")
 
-    if zone:
-        account.zone = zone
     if level:
         account.level = level
 
     account.updated_at = datetime.utcnow()
     db.commit()
 
-    logger.info(f"更新起号状态: 账号={account.login_id}, 状态={status}, 消息={message}")
+    logger.info(f"更新起号状态: 账号={account.login_id}, 状态={init_status}, 消息={message}")
 
     return {"success": True, "account": {"id": account.id, "status": account.status}}
 
@@ -733,7 +653,7 @@ def _delete_account_by_id(db: Session, account_id: int) -> None:
 @router.delete("/{account_id}")
 async def delete_account(account_id: int, db: Session = Depends(get_db)):
     """
-    删除单个游戏账号（ID账号）及其关联数据
+    删除单个游戏账号及其关联数据
     """
     account = db.query(GameAccount).filter(GameAccount.id == account_id).first()
     if not account:
@@ -777,31 +697,6 @@ async def batch_delete_accounts(req: BatchDeleteRequest, db: Session = Depends(g
 
     db.commit()
     return {"message": "批量删除完成", "deleted": deleted}
-
-
-@router.delete("/email/{email}")
-async def delete_email_account(email: str, db: Session = Depends(get_db)):
-    """
-    删除邮箱账号及其名下所有游戏账号和关联数据
-    """
-    email_obj = db.query(Email).filter(Email.email == email).first()
-    if not email_obj:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="邮箱账号不存在",
-        )
-
-    # Delete all linked game accounts
-    accounts = db.query(GameAccount).filter(GameAccount.email_fk == email).all()
-    for ga in accounts:
-        _delete_account_by_id(db, ga.id)
-
-    # Delete the email account itself
-    db.delete(email_obj)
-    db.commit()
-
-    logger.info(f"删除邮箱账号及其关联账号: {email}")
-    return {"message": "邮箱账号删除成功"}
 
 
 # ───────── 阵容分组配置 ─────────

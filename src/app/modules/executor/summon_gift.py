@@ -233,7 +233,7 @@ class SummonGiftExecutor(BaseExecutor):
         await asyncio.sleep(1.0)
 
         # 3. 截图，检测 zhaohuan_shangdian.png 及其右上角红点
-        screenshot = self.adapter.capture(self.ui.capture_method)
+        screenshot = await self._capture()
         if screenshot is None:
             self.logger.error("[召唤礼包] 截图失败")
             return {
@@ -245,7 +245,7 @@ class SummonGiftExecutor(BaseExecutor):
         # 弹窗检测
         if await self.ui.popup_handler.check_and_dismiss(screenshot) > 0:
             await asyncio.sleep(1.0)
-            screenshot = self.adapter.capture(self.ui.capture_method)
+            screenshot = await self._capture()
             if screenshot is None:
                 return {
                     "status": TaskStatus.FAILED,
@@ -279,11 +279,11 @@ class SummonGiftExecutor(BaseExecutor):
         # 5. 有红点，点击进入召唤礼包界面
         sx, sy = shangdian_match.random_point()
         self.logger.info(f"[召唤礼包] 检测到红点，点击召唤商店 ({sx}, {sy})")
-        self.adapter.adb.tap(self.adapter.cfg.adb_addr, sx, sy)
+        await self._tap(sx, sy)
         await asyncio.sleep(1.5)
 
         # 6. 确认进入召唤礼包界面
-        screenshot = self.adapter.capture(self.ui.capture_method)
+        screenshot = await self._capture()
         if screenshot is None:
             return {
                 "status": TaskStatus.FAILED,
@@ -295,7 +295,7 @@ class SummonGiftExecutor(BaseExecutor):
         if not libao_tag:
             self.logger.warning("[召唤礼包] 未进入召唤礼包界面，重试一次")
             await asyncio.sleep(1.5)
-            screenshot = self.adapter.capture(self.ui.capture_method)
+            screenshot = await self._capture()
             if screenshot is not None:
                 libao_tag = match_template(
                     screenshot, "assets/ui/templates/libao_tag.png"
@@ -315,14 +315,14 @@ class SummonGiftExecutor(BaseExecutor):
         collected_count = 0
 
         await asyncio.sleep(1.0)
-        screenshot = self.adapter.capture(self.ui.capture_method)
+        screenshot = await self._capture()
         if screenshot is None:
             self.logger.warning("[召唤礼包] Phase A: 截图失败")
         else:
             # 弹窗检测
             if await self.ui.popup_handler.check_and_dismiss(screenshot) > 0:
                 await asyncio.sleep(1.0)
-                screenshot = self.adapter.capture(self.ui.capture_method)
+                screenshot = await self._capture()
 
             if screenshot is not None:
                 mianfei_match = match_template(
@@ -334,13 +334,13 @@ class SummonGiftExecutor(BaseExecutor):
                     self.logger.info(
                         f"[召唤礼包] Phase A: 检测到免费按钮，点击 ({mx}, {my})"
                     )
-                    self.adapter.adb.tap(self.adapter.cfg.adb_addr, mx, my)
+                    await self._tap(mx, my)
                     await asyncio.sleep(1.5)
 
                     # 等待并点击确认按钮 queren_mianfei.png
                     purchase_done = False
                     for retry in range(5):
-                        ss = self.adapter.capture(self.ui.capture_method)
+                        ss = await self._capture()
                         if ss is None:
                             await asyncio.sleep(0.5)
                             continue
@@ -352,9 +352,7 @@ class SummonGiftExecutor(BaseExecutor):
                             self.logger.info(
                                 f"[召唤礼包] Phase A: 点击确认购买 ({qx}, {qy})"
                             )
-                            self.adapter.adb.tap(
-                                self.adapter.cfg.adb_addr, qx, qy
-                            )
+                            await self._tap(qx, qy)
                             purchase_done = True
                             collected_count += 1
                             await asyncio.sleep(2.0)
@@ -376,7 +374,7 @@ class SummonGiftExecutor(BaseExecutor):
         # ====== 7. Phase B: 红点领取循环 ======
         for round_idx in range(_MAX_COLLECT_ROUNDS):
             await asyncio.sleep(1.0)
-            screenshot = self.adapter.capture(self.ui.capture_method)
+            screenshot = await self._capture()
             if screenshot is None:
                 self.logger.warning("[召唤礼包] Phase B: 截图失败，停止扫描")
                 break
@@ -404,7 +402,7 @@ class SummonGiftExecutor(BaseExecutor):
             self.logger.info(
                 f"[召唤礼包] Phase B: 点击红点 ({dot_x}, {dot_y})"
             )
-            self.adapter.adb.tap(self.adapter.cfg.adb_addr, dot_x, dot_y)
+            await self._tap(dot_x, dot_y)
             collected_count += 1
             await asyncio.sleep(1.5)
 
@@ -413,12 +411,12 @@ class SummonGiftExecutor(BaseExecutor):
 
         # 8. 点击 back 返回召唤界面
         self.logger.info("[召唤礼包] 点击返回召唤界面")
-        screenshot = self.adapter.capture(self.ui.capture_method)
+        screenshot = await self._capture()
         if screenshot is not None:
             back_match = match_template(screenshot, "assets/ui/templates/back.png")
             if back_match:
                 bx, by = back_match.random_point()
-                self.adapter.adb.tap(self.adapter.cfg.adb_addr, bx, by)
+                await self._tap(bx, by)
                 self.logger.info(f"[召唤礼包] 点击返回按钮 ({bx}, {by})")
             else:
                 self.logger.warning("[召唤礼包] 未检测到返回按钮")
@@ -434,11 +432,11 @@ class SummonGiftExecutor(BaseExecutor):
 
     async def _dismiss_jiangli(self, step_label: str) -> None:
         """关闭 jiangli.png 奖励弹窗，之后可能出现 chahua.png 也一并关闭"""
-        screenshot = self.adapter.capture(self.ui.capture_method)
+        screenshot = await self._capture()
         if screenshot is not None:
             if await self.ui.popup_handler.check_and_dismiss(screenshot) > 0:
                 await asyncio.sleep(0.5)
-                screenshot = self.adapter.capture(self.ui.capture_method)
+                screenshot = await self._capture()
 
         if screenshot is not None:
             jiangli_result = match_template(
@@ -454,14 +452,14 @@ class SummonGiftExecutor(BaseExecutor):
                 )
 
         close_x, close_y = random_point_in_circle(20, 20, 20)
-        self.adapter.adb.tap(self.adapter.cfg.adb_addr, close_x, close_y)
+        await self._tap(close_x, close_y)
         self.logger.info(
             f"[召唤礼包] {step_label} 随机点击 ({close_x}, {close_y}) 关闭弹窗"
         )
         await asyncio.sleep(1.0)
 
         # 关闭可能出现的插画弹窗 (chahua.png)
-        screenshot = self.adapter.capture(self.ui.capture_method)
+        screenshot = await self._capture()
         if screenshot is not None:
             chahua_result = match_template(
                 screenshot, "assets/ui/templates/chahua.png"
@@ -471,7 +469,7 @@ class SummonGiftExecutor(BaseExecutor):
                     f"[召唤礼包] {step_label} 检测到插画弹窗，点击关闭"
                 )
                 cx, cy = random_point_in_circle(20, 20, 20)
-                self.adapter.adb.tap(self.adapter.cfg.adb_addr, cx, cy)
+                await self._tap(cx, cy)
                 await asyncio.sleep(1.0)
 
     def _update_next_time(self) -> None:

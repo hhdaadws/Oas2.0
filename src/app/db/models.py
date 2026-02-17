@@ -7,28 +7,12 @@ from sqlalchemy.orm import relationship
 from .base import Base
 
 
-class Email(Base):
-    """邮箱账号表"""
-    __tablename__ = "emails"
-    
-    email = Column(String(255), primary_key=True, index=True)
-    password = Column(String(255), nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    
-    # 关系
-    game_accounts = relationship("GameAccount", back_populates="email_account")
-
-
 class GameAccount(Base):
     """游戏账号表"""
     __tablename__ = "game_accounts"
-    
+
     id = Column(Integer, primary_key=True, index=True)
-    # login_id: -1 代表当前尚未生成平台登录数据，仅可通过邮箱触发起号
-    # 不再强制唯一，以便同一邮箱在不同区服初始化阶段均为 -1
     login_id = Column(String(255), nullable=False, index=True)
-    email_fk = Column(String(255), ForeignKey("emails.email"), nullable=True, index=True)
-    zone = Column(String(50), nullable=False)
     level = Column(Integer, default=1)
     stamina = Column(Integer, default=0)
     gouyu = Column(Integer, default=0)       # 勾玉
@@ -52,7 +36,6 @@ class GameAccount(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
     # 关系
-    email_account = relationship("Email", back_populates="game_accounts")
     tasks = relationship("Task", back_populates="account")
     rest_config = relationship("AccountRestConfig", back_populates="account", uselist=False)
     rest_plans = relationship("RestPlan", back_populates="account")
@@ -148,7 +131,6 @@ class CoopAccount(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     login_id = Column(String(255), unique=True, nullable=False, index=True)
-    zone = Column(String(50), nullable=True)
     status = Column(Integer, default=1)  # 1=可用 2=失效
     expire_date = Column(String(10), nullable=True, index=True)  # YYYY-MM-DD（过期日期）
     note = Column(Text, nullable=True)
@@ -284,8 +266,12 @@ class SystemConfig(Base):
     activity_name = Column(String(200), default=".MainActivity")
     python_path = Column(String(1000), nullable=True)  # 额外的 Python 模块搜索路径（分号或逗号分隔）
     pull_post_mode = Column(String(20), default="none")    # 抓取后建号模式: none|auto|confirm
-    pull_default_zone = Column(String(50), default="樱之华")  # 抓取后建号默认区服
     default_fail_delays = Column(JSON, nullable=True)  # 全局默认失败延迟 {"寄养": 30, ...}
+    default_task_enabled = Column(JSON, nullable=True)  # 新建账号任务默认启用 {"签到": false, ...}
     global_task_switches = Column(JSON, nullable=True)  # 全局任务开关 {"召唤礼包": true}
     save_fail_screenshot = Column(Boolean, default=False)  # 任务失败时保存截图
+    global_rest_enabled = Column(Boolean, default=True)  # 全局休息总开关
+    default_rest_config = Column(JSON, nullable=True)  # 新建账号默认休息配置 {"enabled": false, "mode": "random", "duration": 2}
+    duiyi_jingcai_answers = Column(JSON, nullable=True)  # 对弈竞猜每窗口答案 {"10:00": "左", "12:00": "右", ...}
+    duiyi_reward_coord = Column(JSON, nullable=True)  # 对弈竞猜领奖点击区域 {"x1": 0, "y1": 0, "x2": 100, "y2": 100}
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

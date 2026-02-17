@@ -13,6 +13,7 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from ...core.constants import AccountStatus, TaskStatus, TaskType
 from ...core.logger import logger
+from ...core.thread_pool import run_in_db
 from ...core.timeutils import (
     add_hours_to_beijing_time,
     format_beijing_time,
@@ -52,6 +53,7 @@ from .collect_achievement import CollectAchievementExecutor
 from .summon_gift import SummonGiftExecutor
 from .weekly_share import WeeklyShareExecutor
 from .collect_fanhe_jiuhu import CollectFanheJiuhuExecutor
+from .duiyi_jingcai import DuiyiJingcaiExecutor
 from .db_logger import emit as db_log
 from .types import TaskIntent
 
@@ -172,10 +174,26 @@ class WorkerActor:
             self._log.info(f"开始执行批次: account={account_id}, 任务数={len(batch)}")
             db_log(account_id, f"开始执行批次 ({len(batch)}个任务: {task_names})")
 
-            with SessionLocal() as db:
-                account = (
-                    db.query(GameAccount).filter(GameAccount.id == account_id).first()
-                )
+            def _load_account(aid: int):
+                with SessionLocal() as db:
+                    acc = db.query(GameAccount).filter(GameAccount.id == aid).first()
+                    if acc:
+                        db.expunge(acc)
+                    return acc
+
+            def _load_syscfg():
+                with SessionLocal() as db:
+                    cfg = db.query(SystemConfig).first()
+                    if cfg:
+                        db.expunge(cfg)
+                    return cfg
+
+            # 重新加载系统配置（确保 capture_method 等配置实时生效）
+            fresh_syscfg = await run_in_db(_load_syscfg)
+            if fresh_syscfg is not None:
+                self.syscfg = fresh_syscfg
+
+            account = await run_in_db(_load_account, account_id)
 
             if not account:
                 self._log.warning(f"Account not found: {account_id}")
@@ -210,7 +228,7 @@ class WorkerActor:
                         )
                         break
 
-                    new_intents = self._do_rescan(account_id)
+                    new_intents = await self._do_rescan(account_id)
                     if not new_intents:
                         break
 
@@ -288,14 +306,14 @@ class WorkerActor:
                     intent_task, self._stale_timeout_sec
                 )
                 if ok:
-                    self._update_next_time_for_intent(intent, account_id)
+                    await self._update_next_time_for_intent(intent, account_id)
                     task_name = intent.task_type.value if isinstance(intent.task_type, TaskType) else str(intent.task_type)
                     db_log(account_id, f"{task_name}任务执行成功")
                 else:
                     batch_success = False
                     task_name = intent.task_type.value if isinstance(intent.task_type, TaskType) else str(intent.task_type)
                     db_log(account_id, f"{task_name}任务执行失败", level="WARNING")
-                    self._update_next_time_on_failure(intent, account_id)
+                    await self._update_next_time_on_failure(intent, account_id)
                     self._save_fail_screenshot(intent, shared_adapter, reason="task_failed")
                 # 提取 adapter/ui 供后续任务复用
                 if not shared_adapter and hasattr(self, '_last_executor_adapter'):
@@ -310,15 +328,17 @@ class WorkerActor:
                 )
                 task_name = intent.task_type.value if isinstance(intent.task_type, TaskType) else str(intent.task_type)
                 db_log(intent.account_id, f"{task_name}任务空闲超时 ({self._stale_timeout_sec}s 无活动)", level="ERROR")
-                self._update_next_time_on_failure(intent, account_id)
+                await self._update_next_time_on_failure(intent, account_id)
                 self._save_fail_screenshot(intent, shared_adapter, reason="stale_timeout")
             except JihaoPopupException:
+                if not shared_adapter and hasattr(self, '_last_executor_adapter') and self._last_executor_adapter:
+                    shared_adapter = self._last_executor_adapter
                 batch_success = False
                 abort = True
                 self._log.warning(f"检测到祭号弹窗，关闭游戏并批量延后任务: account={intent.account_id}")
                 db_log(intent.account_id, "检测到祭号弹窗，关闭游戏并批量延后任务", level="WARNING")
                 self._save_fail_screenshot(intent, shared_adapter, reason="jihao_popup")
-                self._delay_all_tasks_on_jihao(account_id)
+                await self._delay_all_tasks_on_jihao(account_id)
                 if shared_adapter:
                     try:
                         shared_adapter.adb.force_stop(
@@ -328,10 +348,12 @@ class WorkerActor:
                         self._log.error(f"祭号弹窗关闭游戏失败: {e}")
                 break
             except AccountExpiredException:
+                if not shared_adapter and hasattr(self, '_last_executor_adapter') and self._last_executor_adapter:
+                    shared_adapter = self._last_executor_adapter
                 batch_success = False
                 abort = True
                 self._log.warning(f"账号失效: account={intent.account_id}")
-                self._mark_account_invalid(intent.account_id)
+                await self._mark_account_invalid(intent.account_id)
                 db_log(intent.account_id, "账号登录失效，已标记为无效", level="ERROR")
                 self._save_fail_screenshot(intent, shared_adapter, reason="account_expired")
                 break
@@ -340,45 +362,68 @@ class WorkerActor:
                 self._log.error(f"Intent error: {exc}")
                 task_name = intent.task_type.value if isinstance(intent.task_type, TaskType) else str(intent.task_type)
                 db_log(intent.account_id, f"{task_name}任务异常: {str(exc)[:200]}", level="ERROR")
-                self._update_next_time_on_failure(intent, account_id)
+                await self._update_next_time_on_failure(intent, account_id)
                 self._save_fail_screenshot(intent, shared_adapter, reason=str(exc)[:50])
 
         return batch_success, shared_adapter, shared_ui, abort
 
-    def _do_rescan(self, account_id: int) -> List[TaskIntent]:
-        """通过 rescan_callback 获取新到期任务。"""
+    async def _do_rescan(self, account_id: int) -> List[TaskIntent]:
+        """通过 rescan_callback 获取新到期任务（offload 到线程池）。"""
         if not self.rescan_callback:
             return []
         try:
-            return self.rescan_callback(account_id)
+            return await run_in_db(self.rescan_callback, account_id)
         except Exception as e:
             self._log.error(f"rescan 回调异常: account={account_id}, error={e}")
             return []
 
     def _final_cleanup(self, shared_adapter) -> None:
-        """所有任务（含 re-scan）完成后关闭游戏。"""
-        if shared_adapter:
-            try:
-                shared_adapter.adb.force_stop(
-                    shared_adapter.cfg.adb_addr, self._PKG_NAME
-                )
-                self._log.info("最终 cleanup: 游戏已停止")
-            except Exception as e:
-                self._log.error(f"最终 cleanup 失败: {e}")
-        else:
+        """所有任务（含 re-scan）完成后关闭游戏、删除登录数据。"""
+        if not shared_adapter:
             self._log.info("最终 cleanup: 无 adapter，跳过")
+            return
 
-    def _mark_account_invalid(self, account_id: int) -> None:
-        """将账号状态标记为失效"""
+        adb_addr = shared_adapter.cfg.adb_addr
+
+        # 1. 停止游戏
         try:
-            with SessionLocal() as db:
-                account = db.query(GameAccount).filter(GameAccount.id == account_id).first()
-                if account:
-                    account.status = AccountStatus.INVALID
-                    db.commit()
-                    self._log.info(f"账号已标记为失效: account={account_id}")
+            shared_adapter.adb.force_stop(adb_addr, self._PKG_NAME)
+            self._log.info("最终 cleanup: 游戏已停止")
         except Exception as e:
-            self._log.error(f"标记账号失效失败: account={account_id}, error={e}")
+            self._log.error(f"最终 cleanup 停止游戏失败: {e}")
+
+        # 2. 删除登录数据 (shared_prefs)
+        shared_prefs_path = f"/data/user/0/{self._PKG_NAME}/shared_prefs"
+        try:
+            rooted = shared_adapter.adb.root(adb_addr)
+            if rooted:
+                code, out = shared_adapter.adb.shell(
+                    adb_addr, f"rm -rf {shared_prefs_path}", timeout=30.0
+                )
+                if code == 0:
+                    self._log.info(f"最终 cleanup: 已删除登录数据 {shared_prefs_path}")
+                else:
+                    self._log.warning(
+                        f"最终 cleanup: 删除登录数据失败: {out.strip()}"
+                    )
+            else:
+                self._log.warning("最终 cleanup: adb root 失败，无法删除登录数据")
+        except Exception as e:
+            self._log.error(f"最终 cleanup 删除登录数据失败: {e}")
+
+    async def _mark_account_invalid(self, account_id: int) -> None:
+        """将账号状态标记为失效"""
+        def _do():
+            try:
+                with SessionLocal() as db:
+                    account = db.query(GameAccount).filter(GameAccount.id == account_id).first()
+                    if account:
+                        account.status = AccountStatus.INVALID
+                        db.commit()
+                        self._log.info(f"账号已标记为失效: account={account_id}")
+            except Exception as e:
+                self._log.error(f"标记账号失效失败: account={account_id}, error={e}")
+        await run_in_db(_do)
 
     async def _run_intent(
         self,
@@ -582,6 +627,14 @@ class WorkerActor:
                 emulator_row=self.emulator,
                 system_config=self.syscfg,
             )
+        elif intent.task_type == TaskType.DUIYI_JINGCAI:
+            executor = DuiyiJingcaiExecutor(
+                worker_id=self.emulator.id,
+                emulator_id=self.emulator.id,
+                emulator_row=self.emulator,
+                system_config=self.syscfg,
+                answer=intent.payload.get("answer") if intent.payload else None,
+            )
         else:
             executor = MockExecutor(
                 worker_id=self.emulator.id, emulator_id=self.emulator.id
@@ -594,15 +647,19 @@ class WorkerActor:
             executor.shared_ui = shared_ui
         executor.skip_cleanup = skip_cleanup
 
-        result = await executor.run_task(task=task, account=account)
+        # 自动包装为异步 adapter（offload ADB I/O 到线程池）
+        executor._wrap_async()
 
-        # 保存 adapter/ui 供后续任务复用
-        self._last_executor_adapter = getattr(executor, 'adapter', None)
-        self._last_executor_ui = getattr(executor, 'ui', None)
+        try:
+            result = await executor.run_task(task=task, account=account)
+        finally:
+            # 无论成功或异常，始终保存 adapter/ui（供 cleanup 和后续任务复用）
+            self._last_executor_adapter = getattr(executor, 'adapter', None) or executor.shared_adapter
+            self._last_executor_ui = getattr(executor, 'ui', None) or executor.shared_ui
 
         return result.get("status") in (TaskStatus.SUCCEEDED, TaskStatus.SKIPPED)
 
-    def _update_next_time_for_intent(self, intent: TaskIntent, account_id: int) -> None:
+    async def _update_next_time_for_intent(self, intent: TaskIntent, account_id: int) -> None:
         """任务成功后统一更新 task_config 中的 next_time。
         已有自定义 _update_next_time 的执行器（弥助、领取登录礼包）会跳过。
         """
@@ -615,52 +672,58 @@ class WorkerActor:
         if next_time is None:
             return
 
-        try:
-            with SessionLocal() as db:
-                account = db.query(GameAccount).filter(GameAccount.id == account_id).first()
-                if not account:
-                    return
-                cfg = account.task_config or {}
-                task_cfg = cfg.get(config_key, {})
-                task_cfg["next_time"] = next_time
-                cfg[config_key] = task_cfg
-                account.task_config = cfg
-                flag_modified(account, "task_config")
-                db.commit()
-                self._log.info(f"[{config_key}] next_time 更新为 {next_time} (account={account_id})")
-        except Exception as e:
-            self._log.error(f"更新 next_time 失败: task={config_key}, account={account_id}, error={e}")
+        def _do_update():
+            try:
+                with SessionLocal() as db:
+                    account = db.query(GameAccount).filter(GameAccount.id == account_id).first()
+                    if not account:
+                        return
+                    cfg = account.task_config or {}
+                    task_cfg = cfg.get(config_key, {})
+                    task_cfg["next_time"] = next_time
+                    cfg[config_key] = task_cfg
+                    account.task_config = cfg
+                    flag_modified(account, "task_config")
+                    db.commit()
+                    self._log.info(f"[{config_key}] next_time 更新为 {next_time} (account={account_id})")
+            except Exception as e:
+                self._log.error(f"更新 next_time 失败: task={config_key}, account={account_id}, error={e}")
 
-    def _update_next_time_on_failure(self, intent: TaskIntent, account_id: int) -> None:
+        await run_in_db(_do_update)
+
+    async def _update_next_time_on_failure(self, intent: TaskIntent, account_id: int) -> None:
         """任务失败后，根据 task_config 中的 fail_delay 延迟 next_time。"""
         task_type = TaskType(intent.task_type)
         config_key = task_type.value
 
-        try:
-            with SessionLocal() as db:
-                account = db.query(GameAccount).filter(GameAccount.id == account_id).first()
-                if not account:
-                    return
-                cfg = account.task_config or {}
-                task_cfg = cfg.get(config_key, {})
-                fail_delay = task_cfg.get("fail_delay", 30)
-                if fail_delay <= 0:
-                    return
+        def _do_update():
+            try:
+                with SessionLocal() as db:
+                    account = db.query(GameAccount).filter(GameAccount.id == account_id).first()
+                    if not account:
+                        return
+                    cfg = account.task_config or {}
+                    task_cfg = cfg.get(config_key, {})
+                    fail_delay = task_cfg.get("fail_delay", 30)
+                    if fail_delay <= 0:
+                        return
 
-                bj_now = now_beijing()
-                new_next_time = format_beijing_time(bj_now + timedelta(minutes=fail_delay))
-                task_cfg["next_time"] = new_next_time
-                cfg[config_key] = task_cfg
-                account.task_config = cfg
-                flag_modified(account, "task_config")
-                db.commit()
-                self._log.info(
-                    f"[{config_key}] 任务失败，next_time 延后 {fail_delay} 分钟至 {new_next_time} (account={account_id})"
-                )
-        except Exception as e:
-            self._log.error(f"更新失败延迟 next_time 失败: task={config_key}, account={account_id}, error={e}")
+                    bj_now = now_beijing()
+                    new_next_time = format_beijing_time(bj_now + timedelta(minutes=fail_delay))
+                    task_cfg["next_time"] = new_next_time
+                    cfg[config_key] = task_cfg
+                    account.task_config = cfg
+                    flag_modified(account, "task_config")
+                    db.commit()
+                    self._log.info(
+                        f"[{config_key}] 任务失败，next_time 延后 {fail_delay} 分钟至 {new_next_time} (account={account_id})"
+                    )
+            except Exception as e:
+                self._log.error(f"更新失败延迟 next_time 失败: task={config_key}, account={account_id}, error={e}")
 
-    def _delay_all_tasks_on_jihao(self, account_id: int) -> None:
+        await run_in_db(_do_update)
+
+    async def _delay_all_tasks_on_jihao(self, account_id: int) -> None:
         """祭号弹窗出现后，批量延后所有即将到期的任务。
 
         对每个已启用且有 next_time 的任务：
@@ -668,41 +731,44 @@ class WorkerActor:
         - 如果 next_time <= 当前时间 + fail_delay（已到期或即将到期），
           则将 next_time 设为 当前时间 + fail_delay
         """
-        try:
-            with SessionLocal() as db:
-                account = db.query(GameAccount).filter(GameAccount.id == account_id).first()
-                if not account:
-                    return
-                cfg = account.task_config or {}
-                bj_now = now_beijing()
-                updated_count = 0
-                for task_name, task_cfg in cfg.items():
-                    if not isinstance(task_cfg, dict):
-                        continue
-                    if task_cfg.get("enabled") is not True:
-                        continue
-                    next_time_str = task_cfg.get("next_time")
-                    if not next_time_str:
-                        continue
-                    fail_delay = task_cfg.get("fail_delay", 30)
-                    if fail_delay <= 0:
-                        continue
-                    try:
-                        current_next = parse_beijing_time(next_time_str)
-                    except Exception:
-                        continue
-                    deadline = bj_now + timedelta(minutes=fail_delay)
-                    if current_next <= deadline:
-                        new_next_time = format_beijing_time(bj_now + timedelta(minutes=fail_delay))
-                        task_cfg["next_time"] = new_next_time
-                        updated_count += 1
-                if updated_count > 0:
-                    account.task_config = cfg
-                    flag_modified(account, "task_config")
-                    db.commit()
-                    self._log.info(f"祭号弹窗: 已延后 {updated_count} 个任务 (account={account_id})")
-        except Exception as e:
-            self._log.error(f"祭号弹窗批量延后失败: account={account_id}, error={e}")
+        def _do_delay():
+            try:
+                with SessionLocal() as db:
+                    account = db.query(GameAccount).filter(GameAccount.id == account_id).first()
+                    if not account:
+                        return
+                    cfg = account.task_config or {}
+                    bj_now = now_beijing()
+                    updated_count = 0
+                    for task_name, task_cfg in cfg.items():
+                        if not isinstance(task_cfg, dict):
+                            continue
+                        if task_cfg.get("enabled") is not True:
+                            continue
+                        next_time_str = task_cfg.get("next_time")
+                        if not next_time_str:
+                            continue
+                        fail_delay = task_cfg.get("fail_delay", 30)
+                        if fail_delay <= 0:
+                            continue
+                        try:
+                            current_next = parse_beijing_time(next_time_str)
+                        except Exception:
+                            continue
+                        deadline = bj_now + timedelta(minutes=fail_delay)
+                        if current_next <= deadline:
+                            new_next_time = format_beijing_time(bj_now + timedelta(minutes=fail_delay))
+                            task_cfg["next_time"] = new_next_time
+                            updated_count += 1
+                    if updated_count > 0:
+                        account.task_config = cfg
+                        flag_modified(account, "task_config")
+                        db.commit()
+                        self._log.info(f"祭号弹窗: 已延后 {updated_count} 个任务 (account={account_id})")
+            except Exception as e:
+                self._log.error(f"祭号弹窗批量延后失败: account={account_id}, error={e}")
+
+        await run_in_db(_do_delay)
 
     def _save_fail_screenshot(
         self,
@@ -723,7 +789,15 @@ class WorkerActor:
             from pathlib import Path
 
             capture_method = getattr(self.syscfg, 'capture_method', None) or 'adb'
-            png_data = shared_adapter.capture(method=capture_method)
+            # shared_adapter 可能已被包装为 AsyncEmulatorAdapter，
+            # 此处为同步上下文，需通过底层同步 adapter 截图
+            from ..emu.async_adapter import AsyncEmulatorAdapter
+            sync_adapter = (
+                shared_adapter.sync
+                if isinstance(shared_adapter, AsyncEmulatorAdapter)
+                else shared_adapter
+            )
+            png_data = sync_adapter.capture(method=capture_method)
             if not png_data:
                 self._log.warning("保存失败截图：截图数据为空")
                 return
@@ -742,8 +816,19 @@ class WorkerActor:
             filename = f"{intent.account_id}_{task_name}_{ts}_{safe_reason}.png"
             filepath = fail_dir / filename
 
-            with open(filepath, "wb") as f:
-                f.write(png_data)
+            # png_data 可能是 bytes(PNG) 或 ndarray(BGR)
+            import numpy as np
+            if isinstance(png_data, np.ndarray):
+                import cv2
+                ok, buf = cv2.imencode('.png', png_data)
+                if not ok:
+                    self._log.warning("保存失败截图：PNG 编码失败")
+                    return
+                with open(filepath, "wb") as f:
+                    f.write(buf.tobytes())
+            else:
+                with open(filepath, "wb") as f:
+                    f.write(png_data)
 
             self._log.info(f"失败截图已保存: {filepath}")
         except Exception as exc:
@@ -765,7 +850,7 @@ class WorkerActor:
             if not self.rescan_callback:
                 return []
 
-            due_intents = self.rescan_callback(account.id)
+            due_intents = await run_in_db(self.rescan_callback, account.id)
             higher = [
                 i for i in due_intents
                 if TASK_PRIORITY.get(i.task_type, 0) > current_priority
@@ -797,15 +882,15 @@ class WorkerActor:
                         skip_cleanup=True,
                     )
                     if ok:
-                        self._update_next_time_for_intent(hi, account.id)
+                        await self._update_next_time_for_intent(hi, account.id)
                         self._log.info(f"[中断] {task_name} 执行成功")
                     else:
-                        self._update_next_time_on_failure(hi, account.id)
+                        await self._update_next_time_on_failure(hi, account.id)
                         self._log.warning(f"[中断] {task_name} 执行失败")
                     completed.append(task_name)
                 except Exception as exc:
                     self._log.error(f"[中断] {task_name} 异常: {exc}")
-                    self._update_next_time_on_failure(hi, account.id)
+                    await self._update_next_time_on_failure(hi, account.id)
                     completed.append(task_name)
 
             return completed

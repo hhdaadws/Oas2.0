@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from ....core.config import settings
 from ....core.logger import logger
+from ....core.timeutils import now_beijing
 from ....db.base import get_db
 from ....db.models import SystemConfig
 
@@ -28,7 +29,6 @@ class SystemSettings(BaseModel):
     activity_name: Optional[str] = None
     python_path: Optional[str] = None
     pull_post_mode: str = "none"
-    pull_default_zone: str = "樱之华"
     save_fail_screenshot: bool = False
 
 
@@ -43,7 +43,6 @@ class SystemSettingsUpdate(BaseModel):
     activity_name: Optional[str] = None
     python_path: Optional[str] = None
     pull_post_mode: Optional[str] = None
-    pull_default_zone: Optional[str] = None
     save_fail_screenshot: Optional[bool] = None
 
 
@@ -83,7 +82,6 @@ async def get_settings(db: Session = Depends(get_db)) -> SystemSettings:
             activity_name=row.activity_name or settings.activity_name,
             python_path=row.python_path or None,
             pull_post_mode=row.pull_post_mode or "none",
-            pull_default_zone=row.pull_default_zone or "樱之华",
             save_fail_screenshot=bool(row.save_fail_screenshot) if row.save_fail_screenshot is not None else False,
         )
     return SystemSettings(**_serialize_settings())
@@ -131,8 +129,6 @@ async def update_settings(body: SystemSettingsUpdate, db: Session = Depends(get_
         if body.pull_post_mode not in {"none", "auto", "confirm"}:
             raise HTTPException(status_code=400, detail="pull_post_mode 必须是 none|auto|confirm 之一")
         apply["pull_post_mode"] = body.pull_post_mode
-    if body.pull_default_zone is not None:
-        apply["pull_default_zone"] = body.pull_default_zone
     if body.save_fail_screenshot is not None:
         apply["save_fail_screenshot"] = body.save_fail_screenshot
 
@@ -314,3 +310,228 @@ async def update_task_switches(body: TaskSwitchesUpdate, db: Session = Depends(g
 
     logger.info("全局任务开关已更新")
     return {"message": "保存成功", "switches": row.global_task_switches}
+
+
+# --------------- 新建账号默认任务启用 ---------------
+
+class TaskEnabledConfig(BaseModel):
+    enabled: Dict[str, bool]  # {"签到": false, "御魂": false, ...}
+
+
+@router.get("/task-enabled-defaults")
+async def get_task_enabled_defaults(db: Session = Depends(get_db)):
+    """获取新建账号时各任务的默认启用状态。"""
+    from ....core.constants import TASK_TYPES_WITH_ENABLED, DEFAULT_TASK_CONFIG
+
+    row = db.query(SystemConfig).order_by(SystemConfig.id.asc()).first()
+    saved = (row.default_task_enabled or {}) if row else {}
+    result = {}
+    for task_name in TASK_TYPES_WITH_ENABLED:
+        if task_name in saved and isinstance(saved[task_name], bool):
+            result[task_name] = saved[task_name]
+        else:
+            result[task_name] = DEFAULT_TASK_CONFIG.get(task_name, {}).get("enabled", True)
+    return {"enabled": result}
+
+
+@router.put("/task-enabled-defaults")
+async def update_task_enabled_defaults(body: TaskEnabledConfig, db: Session = Depends(get_db)):
+    """更新新建账号时各任务的默认启用状态。"""
+    from ....core.constants import TASK_TYPES_WITH_ENABLED
+
+    validated = {}
+    for task_name, enabled in body.enabled.items():
+        if task_name not in TASK_TYPES_WITH_ENABLED:
+            continue
+        if not isinstance(enabled, bool):
+            raise HTTPException(status_code=400, detail=f"{task_name} 的 enabled 必须为布尔值")
+        validated[task_name] = enabled
+
+    row = db.query(SystemConfig).order_by(SystemConfig.id.asc()).first()
+    if not row:
+        row = SystemConfig()
+        db.add(row)
+    row.default_task_enabled = validated
+    db.commit()
+    db.refresh(row)
+
+    logger.info("新建账号默认任务启用配置已更新")
+    return {"message": "保存成功", "enabled": validated}
+
+
+# --------------- 全局休息开关 ---------------
+
+class GlobalRestUpdate(BaseModel):
+    enabled: bool
+
+
+@router.get("/global-rest")
+async def get_global_rest(db: Session = Depends(get_db)):
+    """获取全局休息开关状态。"""
+    row = db.query(SystemConfig).order_by(SystemConfig.id.asc()).first()
+    enabled = bool(row.global_rest_enabled) if row and row.global_rest_enabled is not None else True
+    return {"enabled": enabled}
+
+
+@router.put("/global-rest")
+async def update_global_rest(body: GlobalRestUpdate, db: Session = Depends(get_db)):
+    """更新全局休息开关。"""
+    row = db.query(SystemConfig).order_by(SystemConfig.id.asc()).first()
+    if not row:
+        row = SystemConfig()
+        db.add(row)
+    row.global_rest_enabled = body.enabled
+    db.commit()
+    db.refresh(row)
+
+    logger.info(f"全局休息开关已更新: {'开启' if body.enabled else '关闭'}")
+    return {"message": "保存成功", "enabled": bool(row.global_rest_enabled)}
+
+
+# --------------- 新建账号默认休息配置 ---------------
+
+class DefaultRestConfigUpdate(BaseModel):
+    enabled: bool = False
+    mode: str = "random"  # random|custom
+    start_time: Optional[str] = None  # HH:MM
+    duration: int = 2  # 小时数
+
+
+@router.get("/default-rest-config")
+async def get_default_rest_config(db: Session = Depends(get_db)):
+    """获取新建账号的默认休息配置。"""
+    row = db.query(SystemConfig).order_by(SystemConfig.id.asc()).first()
+    saved = (row.default_rest_config or {}) if row else {}
+    return {
+        "enabled": saved.get("enabled", False),
+        "mode": saved.get("mode", "random"),
+        "start_time": saved.get("start_time", None),
+        "duration": saved.get("duration", 2),
+    }
+
+
+@router.put("/default-rest-config")
+async def update_default_rest_config(body: DefaultRestConfigUpdate, db: Session = Depends(get_db)):
+    """更新新建账号的默认休息配置。"""
+    if body.mode not in {"random", "custom"}:
+        raise HTTPException(status_code=400, detail="mode 必须是 random|custom 之一")
+    if body.duration < 1 or body.duration > 5:
+        raise HTTPException(status_code=400, detail="duration 必须在 1-5 之间")
+
+    config = {
+        "enabled": body.enabled,
+        "mode": body.mode,
+        "start_time": body.start_time,
+        "duration": body.duration,
+    }
+
+    row = db.query(SystemConfig).order_by(SystemConfig.id.asc()).first()
+    if not row:
+        row = SystemConfig()
+        db.add(row)
+    row.default_rest_config = config
+    db.commit()
+    db.refresh(row)
+
+    logger.info("新建账号默认休息配置已更新")
+    return {"message": "保存成功", "config": config}
+
+
+# --------------- 对弈竞猜答案配置 ---------------
+
+_DUIYI_WINDOWS = ["10:00", "12:00", "14:00", "16:00", "18:00", "20:00", "22:00"]
+
+
+class DuiyiAnswersUpdate(BaseModel):
+    answers: Dict[str, Optional[str]]  # {"10:00": "左", "12:00": "右", "14:00": null, ...}
+
+
+@router.get("/duiyi-answers")
+async def get_duiyi_answers(db: Session = Depends(get_db)):
+    """获取对弈竞猜每个时间窗口的全局答案配置（仅当天有效）。"""
+    row = db.query(SystemConfig).order_by(SystemConfig.id.asc()).first()
+    saved = (row.duiyi_jingcai_answers or {}) if row else {}
+    today_str = now_beijing().strftime("%Y-%m-%d")
+    saved_date = saved.get("date")
+    is_today = saved_date == today_str
+
+    result = {}
+    for window in _DUIYI_WINDOWS:
+        if is_today:
+            val = saved.get(window)
+            result[window] = val if val in ("左", "右") else None
+        else:
+            result[window] = None
+    return {"date": saved_date if is_today else None, "answers": result}
+
+
+@router.put("/duiyi-answers")
+async def update_duiyi_answers(body: DuiyiAnswersUpdate, db: Session = Depends(get_db)):
+    """更新对弈竞猜每个时间窗口的全局答案配置（自动打上当天日期戳）。"""
+    today_str = now_beijing().strftime("%Y-%m-%d")
+    validated = {"date": today_str}
+    for window, answer in body.answers.items():
+        if window not in _DUIYI_WINDOWS:
+            raise HTTPException(status_code=400, detail=f"无效的时间窗口: {window}")
+        if answer is not None and answer not in ("左", "右"):
+            raise HTTPException(status_code=400, detail=f"{window} 的答案必须是 '左' 或 '右' 或 null")
+        validated[window] = answer
+
+    row = db.query(SystemConfig).order_by(SystemConfig.id.asc()).first()
+    if not row:
+        row = SystemConfig()
+        db.add(row)
+    row.duiyi_jingcai_answers = validated
+    db.commit()
+    db.refresh(row)
+
+    logger.info(f"对弈竞猜答案配置已更新 (date={today_str})")
+    return {"message": "保存成功", "date": today_str, "answers": {k: v for k, v in validated.items() if k != "date"}}
+
+
+# --------------- 对弈竞猜领奖点击区域 ---------------
+
+
+class DuiyiRewardCoordUpdate(BaseModel):
+    x1: int
+    y1: int
+    x2: int
+    y2: int
+
+
+@router.get("/duiyi-reward-coord")
+async def get_duiyi_reward_coord(db: Session = Depends(get_db)):
+    """获取对弈竞猜领取奖励的点击区域坐标。"""
+    row = db.query(SystemConfig).order_by(SystemConfig.id.asc()).first()
+    coord = (row.duiyi_reward_coord or {}) if row else {}
+    return {
+        "x1": coord.get("x1"),
+        "y1": coord.get("y1"),
+        "x2": coord.get("x2"),
+        "y2": coord.get("y2"),
+    }
+
+
+@router.put("/duiyi-reward-coord")
+async def update_duiyi_reward_coord(body: DuiyiRewardCoordUpdate, db: Session = Depends(get_db)):
+    """更新对弈竞猜领取奖励的点击区域坐标。"""
+    # 验证范围: x ∈ [0, 960), y ∈ [0, 540)
+    if not (0 <= body.x1 < 960 and 0 <= body.x2 < 960):
+        raise HTTPException(status_code=400, detail="x 坐标必须在 0-959 范围内")
+    if not (0 <= body.y1 < 540 and 0 <= body.y2 < 540):
+        raise HTTPException(status_code=400, detail="y 坐标必须在 0-539 范围内")
+    if body.x1 >= body.x2:
+        raise HTTPException(status_code=400, detail="x1 必须小于 x2")
+    if body.y1 >= body.y2:
+        raise HTTPException(status_code=400, detail="y1 必须小于 y2")
+
+    row = db.query(SystemConfig).order_by(SystemConfig.id.asc()).first()
+    if not row:
+        row = SystemConfig()
+        db.add(row)
+    row.duiyi_reward_coord = {"x1": body.x1, "y1": body.y1, "x2": body.x2, "y2": body.y2}
+    db.commit()
+    db.refresh(row)
+
+    logger.info(f"对弈竞猜领奖坐标已更新: ({body.x1},{body.y1})-({body.x2},{body.y2})")
+    return {"message": "保存成功", "x1": body.x1, "y1": body.y1, "x2": body.x2, "y2": body.y2}

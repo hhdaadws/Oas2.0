@@ -7,7 +7,7 @@ import cv2
 import numpy as np
 
 from ..vision.utils import ImageLike, load_image
-from .engine import get_ocr_engine, get_digit_ocr_engine
+from .engine import acquire_ocr, acquire_digit_ocr
 from .types import OcrBox, OcrResult
 
 # ROI 类型：(x, y, w, h)，与 TemplateDef.roi 格式一致
@@ -30,7 +30,7 @@ def ocr(
     Returns:
         OcrResult，包含所有识别结果（坐标为大图坐标）
     """
-    engine = get_ocr_engine()
+    engine, lock = acquire_ocr()
     img = load_image(image)
 
     # ROI 裁剪
@@ -41,7 +41,8 @@ def ocr(
         offset_x, offset_y = x, y
 
     # PaddleOCR 3.x: predict() 接受 BGR ndarray，返回 OCRResult 列表
-    results = engine.predict(img)
+    with lock:
+        results = engine.predict(img)
 
     boxes: List[OcrBox] = []
     if results:
@@ -83,7 +84,7 @@ def ocr_digits(
     Returns:
         OcrResult，包含识别结果
     """
-    engine = get_digit_ocr_engine()
+    engine, lock = acquire_digit_ocr()
     img = load_image(image)
 
     if roi:
@@ -92,7 +93,8 @@ def ocr_digits(
 
     # ddddocr 接受 PNG bytes
     _, buf = cv2.imencode(".png", img)
-    text = engine.classification(buf.tobytes())
+    with lock:
+        text = engine.classification(buf.tobytes())
 
     boxes: List[OcrBox] = []
     if text:

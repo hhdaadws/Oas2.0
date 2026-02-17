@@ -43,7 +43,7 @@ class ExecutorService:
         self._started = False
         self._have_items = asyncio.Event()
         self._lock = asyncio.Lock()
-        self._dispatch_window = 8
+        self._dispatch_window = 12
         self._max_batch_retry = 1
         self._queue_wait_samples_ms: List[float] = []
         self._failed_batches: List[dict] = []

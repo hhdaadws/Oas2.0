@@ -479,17 +479,12 @@ const fetchAccountsForLogs = async () => {
     const data = await getAccounts()
     const options = []
     const amap = {}
-    const visit = (nodes) => {
-      for (const n of nodes) {
-        if (n.type === 'email' && Array.isArray(n.children)) {
-          visit(n.children)
-        } else if (n.type === 'game') {
-          amap[n.id] = n.login_id
-          if (n.login_id !== '-1') options.push({ label: n.login_id, value: n.id })
-        }
+    for (const n of data) {
+      if (n.type === 'game') {
+        amap[n.id] = n.login_id
+        if (n.login_id !== '-1') options.push({ label: n.login_id, value: n.id })
       }
     }
-    visit(data)
     accountOptions.value = options
     accountLoginMap.value = amap
   } catch (e) {

@@ -8,15 +8,6 @@ export function getAccounts() {
   })
 }
 
-// 添加邮箱账号
-export function createEmailAccount(data) {
-  return request({
-    url: '/accounts/email',
-    method: 'post',
-    data
-  })
-}
-
 // 添加游戏账号
 export function createGameAccount(data) {
   return request({
@@ -73,14 +64,6 @@ export function getRestPlan(id) {
 export function deleteGameAccount(id) {
   return request({
     url: `/accounts/${id}`,
-    method: 'delete'
-  })
-}
-
-// 删除邮箱账号（及其名下所有ID账号）
-export function deleteEmailAccount(email) {
-  return request({
-    url: `/accounts/email/${encodeURIComponent(email)}`,
     method: 'delete'
   })
 }

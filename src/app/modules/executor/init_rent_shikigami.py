@@ -26,7 +26,7 @@ from ..vision.template import find_all_templates, match_template
 from ..vision.utils import load_image, random_point_in_circle
 from .base import BaseExecutor
 from .db_logger import emit as db_log
-from .helpers import click_template, click_text, wait_for_template
+from .helpers import click_template, click_text, wait_for_template, _adapter_capture, _adapter_tap
 
 # 渠道包名
 PKG_NAME = "com.netease.onmyoji.wyzymnqsd_cps"
@@ -209,7 +209,7 @@ class InitRentShikigamiExecutor(BaseExecutor):
         await asyncio.sleep(0.5)
 
         # 4. 检测空位数量
-        raw_screenshot = self.adapter.capture(self.ui.capture_method)
+        raw_screenshot = await self._capture()
         if raw_screenshot is None:
             self.logger.error("[起号_租借式神] 截图失败")
             return []
@@ -276,14 +276,14 @@ class InitRentShikigamiExecutor(BaseExecutor):
 
             # 点击式神
             cx, cy = m.random_point()
-            self.adapter.adb.tap(self.adapter.cfg.adb_addr, cx, cy)
+            await self._tap(cx, cy)
             self.logger.info(
                 f"[起号_租借式神] 点击 {cand['name']}({cand['star']}★) ({cx}, {cy})"
             )
             await asyncio.sleep(2.0)
 
             # 重新截图，检查空位变化
-            raw_screenshot = self.adapter.capture(self.ui.capture_method)
+            raw_screenshot = await self._capture()
             if raw_screenshot is None:
                 self.logger.warning("[起号_租借式神] 租借后截图失败")
                 continue
@@ -448,7 +448,7 @@ class InitRentShikigamiExecutor(BaseExecutor):
 
         clicks = 0
         for _ in range(max_clicks):
-            screenshot = adapter.capture(capture_method)
+            screenshot = await _adapter_capture(adapter, capture_method)
             if screenshot is None:
                 await asyncio.sleep(interval)
                 continue
@@ -457,7 +457,7 @@ class InitRentShikigamiExecutor(BaseExecutor):
                 break
 
             rx, ry = random_point_in_circle(480, 400, 40)
-            adapter.adb.tap(adapter.cfg.adb_addr, rx, ry)
+            await _adapter_tap(adapter, rx, ry)
             clicks += 1
             await asyncio.sleep(interval)
 

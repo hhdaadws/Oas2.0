@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 import asyncio
@@ -47,13 +48,35 @@ class UIGraph:
         return None
 
 
+async def _do_tap(adapter, x: int, y: int) -> None:
+    """兼容同步/异步 adapter 的 tap。"""
+    result = adapter.tap(x, y)
+    if inspect.isawaitable(result):
+        await result
+
+
+async def _do_swipe(adapter, x1: int, y1: int, x2: int, y2: int, dur: int) -> None:
+    """兼容同步/异步 adapter 的 swipe。"""
+    result = adapter.swipe(x1, y1, x2, y2, dur)
+    if inspect.isawaitable(result):
+        await result
+
+
+async def _call_detect_fn(detect_fn):
+    """兼容同步/异步 detect_fn。"""
+    result = detect_fn()
+    if inspect.isawaitable(result):
+        return await result
+    return result
+
+
 async def apply_edge(adapter, edge: Edge, detect_result: Any | None = None, detect_fn=None) -> None:
     # Execute actions sequentially; minimal implementation
     for act in edge.actions:
         t = act.type
         if t == "tap":
             x, y = act.args
-            adapter.tap(int(x), int(y))
+            await _do_tap(adapter, int(x), int(y))
         elif t == "tap_anchor":
             # args: (anchor_prefix,)
             #    or (anchor_prefix, fallback_x, fallback_y)
@@ -79,27 +102,26 @@ async def apply_edge(adapter, edge: Edge, detect_result: Any | None = None, dete
                             break
 
                 if chosen and isinstance(chosen, dict):
-                    adapter.tap(int(chosen.get("x", 0)), int(chosen.get("y", 0)))
+                    await _do_tap(adapter, int(chosen.get("x", 0)), int(chosen.get("y", 0)))
                     break
                 elif attempt < max_retries and fallback_x is not None and fallback_y is not None:
                     # 锚点未找到，点击 fallback 坐标后重新检测
-                    adapter.tap(fallback_x, fallback_y)
+                    await _do_tap(adapter, fallback_x, fallback_y)
                     await asyncio.sleep(retry_delay)
                     if detect_fn is not None:
-                        detect_result = detect_fn()
+                        detect_result = await _call_detect_fn(detect_fn)
                 elif fallback_x is not None and fallback_y is not None:
-                    adapter.tap(fallback_x, fallback_y)
+                    await _do_tap(adapter, fallback_x, fallback_y)
         elif t == "swipe":
             x1, y1, x2, y2, dur = act.args
-            adapter.swipe(int(x1), int(y1), int(x2), int(y2), int(dur))
+            await _do_swipe(adapter, int(x1), int(y1), int(x2), int(y2), int(dur))
         elif t == "sleep":
             ms = act.args[0]
             await asyncio.sleep(ms / 1000.0)
         elif t == "re_detect":
             # 重新截图检测，更新 detect_result 以获取最新锚点坐标
             if detect_fn is not None:
-                detect_result = detect_fn()
-        # 'tap_anchor' reserved; requires detector to expose anchors
+                detect_result = await _call_detect_fn(detect_fn)
 
 
 __all__ = ["Action", "Edge", "UIGraph", "apply_edge"]

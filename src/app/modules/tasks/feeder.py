@@ -13,6 +13,7 @@ from typing import Dict, List, Optional, Tuple
 
 from ...core.constants import DEFAULT_TASK_CONFIG, DEFAULT_INIT_TASK_CONFIG, TASK_PRIORITY, TaskType
 from ...core.logger import logger
+from ...core.thread_pool import run_in_db
 from ...core.timeutils import is_time_reached, now_beijing
 from ...db.base import SessionLocal
 from ...db.models import AccountRestConfig, GameAccount, RestPlan, SystemConfig
@@ -82,6 +83,79 @@ class Feeder:
                 self.log.error(f"feeder loop error: {exc}")
             await asyncio.sleep(10)
 
+    # ── _ensure_daily_rest_plans: DB 操作 offload ──
+
+    def _ensure_daily_rest_plans_sync(self, today_str: str) -> bool:
+        """同步执行休息计划生成（在线程池中调用）。返回是否成功。"""
+        with SessionLocal() as db:
+            syscfg = db.query(SystemConfig).first()
+            if syscfg and syscfg.global_rest_enabled is False:
+                return True
+
+            accounts = db.query(GameAccount).filter(GameAccount.status == 1).all()
+            for account in accounts:
+                existing = (
+                    db.query(RestPlan)
+                    .filter(
+                        RestPlan.account_id == account.id,
+                        RestPlan.date == today_str,
+                    )
+                    .first()
+                )
+                if existing:
+                    continue
+
+                rc = (
+                    db.query(AccountRestConfig)
+                    .filter(AccountRestConfig.account_id == account.id)
+                    .first()
+                )
+                if rc and rc.enabled == 0:
+                    continue
+
+                if (
+                    rc
+                    and rc.mode == "custom"
+                    and rc.rest_start
+                    and rc.rest_duration
+                ):
+                    start_time = rc.rest_start
+                    duration_hours = float(rc.rest_duration)
+                    start_dt = datetime.strptime(
+                        f"{today_str} {start_time}", "%Y-%m-%d %H:%M"
+                    )
+                    end_dt = start_dt + timedelta(hours=duration_hours)
+                else:
+                    bj_now = now_beijing()
+                    duration_hours = random.uniform(2, 3)
+                    start_min_dt = datetime.combine(bj_now.date(), time(7, 0))
+                    latest_start_dt = datetime.combine(
+                        bj_now.date(), time(23, 0)
+                    ) - timedelta(hours=duration_hours)
+                    latest_start_dt = max(latest_start_dt, start_min_dt)
+                    total_minutes = max(
+                        int((latest_start_dt - start_min_dt).total_seconds() // 60),
+                        0,
+                    )
+                    start_dt = start_min_dt + timedelta(
+                        minutes=random.randint(0, total_minutes)
+                    )
+                    start_time = start_dt.strftime("%H:%M")
+                    end_dt = min(
+                        start_dt + timedelta(hours=duration_hours),
+                        datetime.combine(bj_now.date(), time(23, 0)),
+                    )
+
+                plan = RestPlan(
+                    account_id=account.id,
+                    date=today_str,
+                    start_time=start_time,
+                    end_time=end_dt.strftime("%H:%M"),
+                )
+                db.add(plan)
+            db.commit()
+        return True
+
     async def _ensure_daily_rest_plans(self) -> None:
         bj_now = now_beijing()
         today_str = bj_now.date().isoformat()
@@ -89,123 +163,24 @@ class Feeder:
             return
 
         try:
-            with SessionLocal() as db:
-                accounts = db.query(GameAccount).filter(GameAccount.status == 1).all()
-                for account in accounts:
-                    existing = (
-                        db.query(RestPlan)
-                        .filter(
-                            RestPlan.account_id == account.id,
-                            RestPlan.date == today_str,
-                        )
-                        .first()
-                    )
-                    if existing:
-                        continue
-
-                    rc = (
-                        db.query(AccountRestConfig)
-                        .filter(AccountRestConfig.account_id == account.id)
-                        .first()
-                    )
-                    # 跳过禁用休息的账号
-                    if rc and rc.enabled == 0:
-                        continue
-
-                    if (
-                        rc
-                        and rc.mode == "custom"
-                        and rc.rest_start
-                        and rc.rest_duration
-                    ):
-                        start_time = rc.rest_start
-                        duration_hours = float(rc.rest_duration)
-                        start_dt = datetime.strptime(
-                            f"{today_str} {start_time}", "%Y-%m-%d %H:%M"
-                        )
-                        end_dt = start_dt + timedelta(hours=duration_hours)
-                    else:
-                        duration_hours = random.uniform(2, 3)
-                        start_min_dt = datetime.combine(bj_now.date(), time(7, 0))
-                        latest_start_dt = datetime.combine(
-                            bj_now.date(), time(23, 0)
-                        ) - timedelta(hours=duration_hours)
-                        latest_start_dt = max(latest_start_dt, start_min_dt)
-                        total_minutes = max(
-                            int((latest_start_dt - start_min_dt).total_seconds() // 60),
-                            0,
-                        )
-                        start_dt = start_min_dt + timedelta(
-                            minutes=random.randint(0, total_minutes)
-                        )
-                        start_time = start_dt.strftime("%H:%M")
-                        end_dt = min(
-                            start_dt + timedelta(hours=duration_hours),
-                            datetime.combine(bj_now.date(), time(23, 0)),
-                        )
-
-                    plan = RestPlan(
-                        account_id=account.id,
-                        date=today_str,
-                        start_time=start_time,
-                        end_time=end_dt.strftime("%H:%M"),
-                    )
-                    db.add(plan)
-                db.commit()
-
+            await run_in_db(self._ensure_daily_rest_plans_sync, today_str)
             self._rest_plan_generated_date = today_str
         except Exception as exc:
             self.log.error(f"create rest plans error: {exc}")
 
-    def _is_account_resting(self, account_id: int, db) -> bool:
-        """检查账号当前是否在休息时段内。"""
-        rc = (
-            db.query(AccountRestConfig)
-            .filter(AccountRestConfig.account_id == account_id)
-            .first()
-        )
-        if rc and rc.enabled == 0:
-            return False
+    # ── _scan_accounts: DB 读取 offload ──
 
-        bj_now = now_beijing()
-        today_str = bj_now.date().isoformat()
-        plan = (
-            db.query(RestPlan)
-            .filter(
-                RestPlan.account_id == account_id,
-                RestPlan.date == today_str,
-            )
-            .first()
-        )
-        if not plan:
-            return False
+    def _read_scan_data_sync(self) -> dict:
+        """同步读取扫描所需的全部 DB 数据（在线程池中调用）。
 
-        try:
-            now_hm = bj_now.hour * 60 + bj_now.minute
-            parts_s = plan.start_time.split(":")
-            parts_e = plan.end_time.split(":")
-            start_hm = int(parts_s[0]) * 60 + int(parts_s[1])
-            end_hm = int(parts_e[0]) * 60 + int(parts_e[1])
-
-            if start_hm <= end_hm:
-                # 不跨天
-                return start_hm <= now_hm < end_hm
-            else:
-                # 跨天（如 22:00 ~ 02:00）
-                return now_hm >= start_hm or now_hm < end_hm
-        except Exception:
-            return False
-
-    async def _scan_accounts(self) -> None:
-        started_at = datetime.utcnow()
-        bj_now = now_beijing()
-        enqueued_batches = 0
-        skipped_by_signature = 0
-
+        返回 dict 包含 accounts, global_switches, global_rest_enabled,
+        duiyi_answers, rest_configs, rest_plans。
+        """
         with SessionLocal() as db:
-            # 读取全局任务开关
             syscfg = db.query(SystemConfig).first()
             global_switches = (syscfg.global_task_switches or {}) if syscfg else {}
+            global_rest_enabled = bool(syscfg.global_rest_enabled) if syscfg and syscfg.global_rest_enabled is not None else True
+            _raw_duiyi = (syscfg.duiyi_jingcai_answers or {}) if syscfg else {}
 
             accounts = (
                 db.query(GameAccount)
@@ -216,38 +191,114 @@ class Feeder:
                 .order_by(GameAccount.id.asc())
                 .all()
             )
-            selected_accounts = self._select_accounts_for_scan(accounts, bj_now)
 
-            need_commit = False
-            for account in selected_accounts:
-                self._last_scan_by_account[account.id] = bj_now
+            # 批量预取休息配置，避免 N+1 查询
+            account_ids = [a.id for a in accounts]
+            rest_configs: Dict[int, AccountRestConfig] = {}
+            rest_plans: Dict[int, RestPlan] = {}
 
-                # 账号级休息检查
-                if self._is_account_resting(account.id, db):
-                    continue
+            if account_ids:
+                bj_now = now_beijing()
+                today_str = bj_now.date().isoformat()
 
-                # --- init 账号：使用起号任务库调度 ---
-                if account.progress == "init":
-                    cfg = account.task_config or DEFAULT_INIT_TASK_CONFIG.copy()
+                rcs = (
+                    db.query(AccountRestConfig)
+                    .filter(AccountRestConfig.account_id.in_(account_ids))
+                    .all()
+                )
+                for rc in rcs:
+                    rest_configs[rc.account_id] = rc
+                    db.expunge(rc)
 
-                    intents = self._collect_init_tasks(account, cfg, global_switches)
-                    if not intents:
-                        self._last_enqueued_signature.pop(account.id, None)
-                        continue
+                plans = (
+                    db.query(RestPlan)
+                    .filter(
+                        RestPlan.account_id.in_(account_ids),
+                        RestPlan.date == today_str,
+                    )
+                    .all()
+                )
+                for p in plans:
+                    rest_plans[p.account_id] = p
+                    db.expunge(p)
 
-                    signature = self._build_signature(account.id, cfg, intents)
-                    if self._is_signature_recent(account.id, signature, bj_now):
-                        skipped_by_signature += 1
-                        continue
-                    if executor_service.enqueue_batch(account.id, intents):
-                        self._last_enqueued_signature[account.id] = (signature, bj_now)
-                        enqueued_batches += 1
-                    continue
+            # expunge accounts 以便在异步上下文中安全使用
+            for acc in accounts:
+                db.expunge(acc)
 
-                # --- ok 账号：正常调度逻辑 ---
-                cfg = account.task_config or DEFAULT_TASK_CONFIG.copy()
+        return {
+            "accounts": accounts,
+            "global_switches": global_switches,
+            "global_rest_enabled": global_rest_enabled,
+            "raw_duiyi": _raw_duiyi,
+            "rest_configs": rest_configs,
+            "rest_plans": rest_plans,
+        }
 
-                intents = self._collect_ready_tasks(account, cfg, global_switches)
+    def _is_account_resting_cached(
+        self,
+        account_id: int,
+        rest_configs: Dict[int, AccountRestConfig],
+        rest_plans: Dict[int, RestPlan],
+        global_rest_enabled: bool,
+    ) -> bool:
+        """使用预取数据检查账号是否在休息时段内。"""
+        if not global_rest_enabled:
+            return False
+
+        rc = rest_configs.get(account_id)
+        if rc and rc.enabled == 0:
+            return False
+
+        plan = rest_plans.get(account_id)
+        if not plan:
+            return False
+
+        try:
+            bj_now = now_beijing()
+            now_hm = bj_now.hour * 60 + bj_now.minute
+            parts_s = plan.start_time.split(":")
+            parts_e = plan.end_time.split(":")
+            start_hm = int(parts_s[0]) * 60 + int(parts_s[1])
+            end_hm = int(parts_e[0]) * 60 + int(parts_e[1])
+
+            if start_hm <= end_hm:
+                return start_hm <= now_hm < end_hm
+            else:
+                return now_hm >= start_hm or now_hm < end_hm
+        except Exception:
+            return False
+
+    async def _scan_accounts(self) -> None:
+        started_at = datetime.utcnow()
+        bj_now = now_beijing()
+        enqueued_batches = 0
+        skipped_by_signature = 0
+
+        # DB 读取 offload 到线程池
+        scan_data = await run_in_db(self._read_scan_data_sync)
+        accounts = scan_data["accounts"]
+        global_switches = scan_data["global_switches"]
+        global_rest_enabled = scan_data["global_rest_enabled"]
+        _raw_duiyi = scan_data["raw_duiyi"]
+        rest_configs = scan_data["rest_configs"]
+        rest_plans = scan_data["rest_plans"]
+
+        duiyi_answers = _raw_duiyi if _raw_duiyi.get("date") == bj_now.strftime("%Y-%m-%d") else {}
+        selected_accounts = self._select_accounts_for_scan(accounts, bj_now)
+
+        for account in selected_accounts:
+            self._last_scan_by_account[account.id] = bj_now
+
+            # 账号级休息检查（使用预取数据，无 DB 查询）
+            if self._is_account_resting_cached(account.id, rest_configs, rest_plans, global_rest_enabled):
+                continue
+
+            # --- init 账号：使用起号任务库调度 ---
+            if account.progress == "init":
+                cfg = account.task_config or DEFAULT_INIT_TASK_CONFIG.copy()
+
+                intents = self._collect_init_tasks(account, cfg, global_switches, duiyi_answers)
                 if not intents:
                     self._last_enqueued_signature.pop(account.id, None)
                     continue
@@ -256,13 +307,27 @@ class Feeder:
                 if self._is_signature_recent(account.id, signature, bj_now):
                     skipped_by_signature += 1
                     continue
-
                 if executor_service.enqueue_batch(account.id, intents):
                     self._last_enqueued_signature[account.id] = (signature, bj_now)
                     enqueued_batches += 1
+                continue
 
-            if need_commit:
-                db.commit()
+            # --- ok 账号：正常调度逻辑 ---
+            cfg = account.task_config or DEFAULT_TASK_CONFIG.copy()
+
+            intents = self._collect_ready_tasks(account, cfg, global_switches, duiyi_answers)
+            if not intents:
+                self._last_enqueued_signature.pop(account.id, None)
+                continue
+
+            signature = self._build_signature(account.id, cfg, intents)
+            if self._is_signature_recent(account.id, signature, bj_now):
+                skipped_by_signature += 1
+                continue
+
+            if executor_service.enqueue_batch(account.id, intents):
+                self._last_enqueued_signature[account.id] = (signature, bj_now)
+                enqueued_batches += 1
 
         elapsed_ms = max(0.0, (datetime.utcnow() - started_at).total_seconds() * 1000)
         self._scan_count += 1
@@ -355,7 +420,7 @@ class Feeder:
             return False
         return (now_dt - prev_ts).total_seconds() < self._signature_ttl_seconds
 
-    def _collect_init_tasks(self, account: GameAccount, cfg: Dict, global_switches: Dict) -> List[TaskIntent]:
+    def _collect_init_tasks(self, account: GameAccount, cfg: Dict, global_switches: Dict, duiyi_answers: Dict) -> List[TaskIntent]:
         """收集 init 账号的待执行任务，按优先级和 next_time 并行调度。"""
         intents: List[TaskIntent] = []
 
@@ -401,8 +466,8 @@ class Feeder:
             self._check_time_task(intents, account, cfg, "召唤礼包", TaskType.SUMMON_GIFT)
         self._check_time_task(intents, account, cfg, "领取饭盒酒壶", TaskType.COLLECT_FANHE_JIUHU)
 
-        # 对弈竞猜
-        self._check_time_task(intents, account, cfg, "对弈竞猜", TaskType.DUIYI_JINGCAI)
+        # 对弈竞猜：需要当前窗口有全局答案配置
+        self._check_duiyi_task(intents, account, cfg, duiyi_answers)
 
         # 斗技：时间窗口检查
         douji_cfg = cfg.get("斗技", {})
@@ -425,7 +490,7 @@ class Feeder:
         intents.sort(key=_priority, reverse=True)
         return intents
 
-    def _collect_ready_tasks(self, account: GameAccount, cfg: Dict, global_switches: Dict) -> List[TaskIntent]:
+    def _collect_ready_tasks(self, account: GameAccount, cfg: Dict, global_switches: Dict, duiyi_answers: Dict) -> List[TaskIntent]:
         intents: List[TaskIntent] = []
 
         self._check_time_task(intents, account, cfg, "寄养", TaskType.FOSTER)
@@ -471,8 +536,8 @@ class Feeder:
         # 探索突破：改为时间触发，实际体力检查由 Executor 通过 OCR 执行
         self._check_time_task(intents, account, cfg, "探索突破", TaskType.EXPLORE)
 
-        # 对弈竞猜
-        self._check_time_task(intents, account, cfg, "对弈竞猜", TaskType.DUIYI_JINGCAI)
+        # 对弈竞猜：需要当前窗口有全局答案配置
+        self._check_duiyi_task(intents, account, cfg, duiyi_answers)
 
         # 斗技：时间窗口检查
         douji_cfg = cfg.get("斗技", {})
@@ -503,6 +568,44 @@ class Feeder:
             and is_time_reached(task_cfg["next_time"])
         ):
             intents.append(TaskIntent(account_id=account.id, task_type=task_type))
+
+    _DUIYI_WINDOWS = ["10:00", "12:00", "14:00", "16:00", "18:00", "20:00", "22:00"]
+
+    def _check_duiyi_task(
+        self,
+        intents: List[TaskIntent],
+        account: GameAccount,
+        cfg: Dict,
+        duiyi_answers: Dict,
+    ) -> None:
+        """对弈竞猜：需要 enabled + next_time 到期 + 当前窗口有全局答案配置。"""
+        duiyi_cfg = cfg.get("对弈竞猜", {})
+        if (
+            duiyi_cfg.get("enabled") is True
+            and duiyi_cfg.get("next_time")
+            and is_time_reached(duiyi_cfg["next_time"])
+        ):
+            current_window = self._get_current_duiyi_window()
+            if current_window:
+                answer = duiyi_answers.get(current_window)
+                if answer in ("左", "右"):
+                    intents.append(TaskIntent(
+                        account_id=account.id,
+                        task_type=TaskType.DUIYI_JINGCAI,
+                        payload={"answer": answer},
+                    ))
+
+    def _get_current_duiyi_window(self) -> Optional[str]:
+        """返回当前北京时间所处的对弈竞猜窗口起始时间，不在窗口范围内返回 None。"""
+        hour = now_beijing().hour
+        if hour < 10:
+            return None
+        result = None
+        for t in self._DUIYI_WINDOWS:
+            h = int(t.split(':')[0])
+            if hour >= h:
+                result = t
+        return result
 
     def metrics_snapshot(self) -> dict:
         average_scan_ms = (
@@ -539,13 +642,15 @@ class Feeder:
     def collect_due_tasks_for_account(self, account_id: int) -> List[TaskIntent]:
         """为指定账号收集当前到期的任务（供 Worker re-scan 使用）。
 
-        此方法从 DB 重新读取最新的 task_config，因此已执行任务
-        （next_time 已被推后）不会再次出现。
+        此方法是同步的，调用方应通过 run_in_db 将其 offload 到线程池。
         """
         try:
             with SessionLocal() as db:
                 syscfg = db.query(SystemConfig).first()
                 global_switches = (syscfg.global_task_switches or {}) if syscfg else {}
+                global_rest_enabled = bool(syscfg.global_rest_enabled) if syscfg and syscfg.global_rest_enabled is not None else True
+                _raw_duiyi = (syscfg.duiyi_jingcai_answers or {}) if syscfg else {}
+                duiyi_answers = _raw_duiyi if _raw_duiyi.get("date") == now_beijing().strftime("%Y-%m-%d") else {}
 
                 account = (
                     db.query(GameAccount)
@@ -559,15 +664,25 @@ class Feeder:
                     return []
 
                 # 账号级休息检查
-                if self._is_account_resting(account_id, db):
+                rc = db.query(AccountRestConfig).filter(AccountRestConfig.account_id == account_id).first()
+                rest_configs = {account_id: rc} if rc else {}
+                bj_now = now_beijing()
+                today_str = bj_now.date().isoformat()
+                plan = db.query(RestPlan).filter(
+                    RestPlan.account_id == account_id,
+                    RestPlan.date == today_str,
+                ).first()
+                rest_plans = {account_id: plan} if plan else {}
+
+                if self._is_account_resting_cached(account_id, rest_configs, rest_plans, global_rest_enabled):
                     return []
 
                 if account.progress == "init":
                     cfg = account.task_config or DEFAULT_INIT_TASK_CONFIG.copy()
-                    return self._collect_init_tasks(account, cfg, global_switches)
+                    return self._collect_init_tasks(account, cfg, global_switches, duiyi_answers)
                 else:
                     cfg = account.task_config or DEFAULT_TASK_CONFIG.copy()
-                    return self._collect_ready_tasks(account, cfg, global_switches)
+                    return self._collect_ready_tasks(account, cfg, global_switches, duiyi_answers)
         except Exception as exc:
             self.log.error(f"collect_due_tasks_for_account error: account={account_id}, {exc}")
             return []

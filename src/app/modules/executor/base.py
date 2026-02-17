@@ -1,8 +1,9 @@
 """
 执行器基类定义
 """
+import inspect
 from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Union
 from datetime import datetime
 from ...core.logger import logger
 from ...core.constants import TaskType, TaskStatus
@@ -54,7 +55,65 @@ class BaseExecutor(ABC):
             )
             return self._popup_handler
         return None
-    
+
+    def _wrap_async(self) -> None:
+        """将 shared_adapter 包装为 AsyncEmulatorAdapter（如果尚未包装）。
+
+        在 prepare() 开始时调用，使后续所有 adapter 操作自动走线程池。
+        """
+        if self.shared_adapter is None:
+            return
+        from ..emu.async_adapter import AsyncEmulatorAdapter
+        if isinstance(self.shared_adapter, AsyncEmulatorAdapter):
+            return
+        self.shared_adapter = AsyncEmulatorAdapter(self.shared_adapter)
+        self.logger.debug("shared_adapter 已包装为 AsyncEmulatorAdapter")
+
+    async def _capture(self):
+        """兼容同步/异步 adapter 的截图，直接返回 BGR ndarray。
+
+        执行器内部应统一使用此方法代替 self.adapter.capture()。
+        """
+        adapter = getattr(self, 'adapter', None) or self.shared_adapter
+        if adapter is None:
+            return None
+        capture_method = "adb"
+        ui = getattr(self, 'ui', None)
+        if ui and hasattr(ui, 'capture_method'):
+            capture_method = ui.capture_method
+        result = adapter.capture_ndarray(capture_method)
+        if inspect.isawaitable(result):
+            return await result
+        return result
+
+    async def _detect_ui(self, image: Optional[bytes] = None):
+        """兼容调用 self.ui.detect_ui()。
+
+        执行器内部应统一使用此方法代替 self.ui.detect_ui()。
+        """
+        result = self.ui.detect_ui(image)
+        if inspect.isawaitable(result):
+            return await result
+        return result
+
+    async def _tap(self, x: int, y: int) -> None:
+        """兼容同步/异步 adapter 的 tap。"""
+        adapter = getattr(self, 'adapter', None) or self.shared_adapter
+        if adapter is None:
+            return
+        result = adapter.tap(x, y)
+        if inspect.isawaitable(result):
+            await result
+
+    async def _swipe(self, x1: int, y1: int, x2: int, y2: int, dur_ms: int = 300) -> None:
+        """兼容同步/异步 adapter 的 swipe。"""
+        adapter = getattr(self, 'adapter', None) or self.shared_adapter
+        if adapter is None:
+            return
+        result = adapter.swipe(x1, y1, x2, y2, dur_ms)
+        if inspect.isawaitable(result):
+            await result
+
     @abstractmethod
     async def prepare(self, task: Task, account: GameAccount) -> bool:
         """
@@ -117,6 +176,11 @@ class BaseExecutor(ABC):
             return result
             
         except Exception as e:
+            # 需要传播到 worker 层的异常，不在此处捕获
+            from ..ui.manager import AccountExpiredException
+            from ..ui.popups import JihaoPopupException
+            if isinstance(e, (AccountExpiredException, JihaoPopupException)):
+                raise
             self.logger.error(f"任务执行异常: {str(e)}")
             return {
                 "status": TaskStatus.FAILED,

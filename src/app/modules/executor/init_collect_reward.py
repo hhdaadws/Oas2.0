@@ -23,7 +23,7 @@ from ..vision.template import match_template
 from ..vision.utils import random_point_in_circle
 from .base import BaseExecutor
 from .db_logger import emit as db_log
-from .helpers import click_template, click_text, wait_for_template
+from .helpers import click_template, click_text, wait_for_template, _adapter_capture, _adapter_tap
 
 # 渠道包名
 PKG_NAME = "com.netease.onmyoji.wyzymnqsd_cps"
@@ -253,10 +253,10 @@ class InitCollectRewardExecutor(BaseExecutor):
 
     async def _dismiss_jiangli(self, step_label: str) -> None:
         """关闭 jiangli.png 奖励弹窗（统一模式），并处理可能出现的 chahua.png"""
-        screenshot = self.adapter.capture(self.ui.capture_method)
+        screenshot = await self._capture()
         if screenshot is not None:
             if await self.ui.popup_handler.check_and_dismiss(screenshot) > 0:
-                screenshot = self.adapter.capture(self.ui.capture_method)
+                screenshot = await self._capture()
 
         if screenshot is not None:
             jiangli_result = match_template(
@@ -272,14 +272,14 @@ class InitCollectRewardExecutor(BaseExecutor):
                 )
 
         close_x, close_y = random_point_in_circle(20, 20, 20)
-        self.adapter.adb.tap(self.adapter.cfg.adb_addr, close_x, close_y)
+        await self._tap(close_x, close_y)
         self.logger.info(
             f"[起号_领取奖励] {step_label} 随机点击 ({close_x}, {close_y}) 关闭弹窗"
         )
         await asyncio.sleep(1.0)
 
         # 关闭 jiangli 后可能出现 chahua.png，同样方式关闭
-        screenshot = self.adapter.capture(self.ui.capture_method)
+        screenshot = await self._capture()
         if screenshot is not None:
             chahua_result = match_template(
                 screenshot, "assets/ui/templates/chahua.png"
@@ -289,7 +289,7 @@ class InitCollectRewardExecutor(BaseExecutor):
                     f"[起号_领取奖励] {step_label} 检测到插画弹窗，点击关闭"
                 )
                 cx, cy = random_point_in_circle(20, 20, 20)
-                self.adapter.adb.tap(self.adapter.cfg.adb_addr, cx, cy)
+                await self._tap(cx, cy)
                 self.logger.info(
                     f"[起号_领取奖励] {step_label} 随机点击 ({cx}, {cy}) 关闭插画弹窗"
                 )
@@ -348,7 +348,7 @@ class InitCollectRewardExecutor(BaseExecutor):
 
         clicks = 0
         for _ in range(max_clicks):
-            screenshot = adapter.capture(capture_method)
+            screenshot = await _adapter_capture(adapter, capture_method)
             if screenshot is None:
                 await asyncio.sleep(interval)
                 continue
@@ -357,7 +357,7 @@ class InitCollectRewardExecutor(BaseExecutor):
                 break
 
             rx, ry = random_point_in_circle(480, 400, 40)
-            adapter.adb.tap(adapter.cfg.adb_addr, rx, ry)
+            await _adapter_tap(adapter, rx, ry)
             clicks += 1
             await asyncio.sleep(interval)
 

@@ -13,7 +13,7 @@ from ...db.base import SessionLocal
 from ...db.models import Emulator, GameAccount, SystemConfig, Task
 from ..emu.adapter import AdapterConfig, EmulatorAdapter
 from ..ui.manager import UIManager
-from ..ocr.recognize import ocr_digits
+from ..ocr.async_recognize import async_ocr_digits
 from ..ui.assets import parse_number
 from ..vision.template import find_all_templates, match_template
 from ..vision.grid_detect import nms_by_distance
@@ -179,7 +179,7 @@ class DiGuiExecutor(BaseExecutor):
         self.logger.info("[地鬼] 已到达探索界面")
 
         # ── 第二阶段：在探索界面立即检测地鬼是否被锁定 ──
-        screenshot = self.adapter.capture(self.ui.capture_method)
+        screenshot = await self._capture()
         if screenshot is not None:
             lock_match = match_template(screenshot, _TPL_LOCK)
             if lock_match:
@@ -224,7 +224,7 @@ class DiGuiExecutor(BaseExecutor):
                 continue
 
             await asyncio.sleep(0.5)
-            screenshot = self.adapter.capture(self.ui.capture_method)
+            screenshot = await self._capture()
             if screenshot is None:
                 self.logger.warning(
                     f"[地鬼] 截图失败"
@@ -280,7 +280,7 @@ class DiGuiExecutor(BaseExecutor):
 
             # 2. 找到所有挑战按钮，选择未点击过的
             await asyncio.sleep(1.0)  # 等待列表加载
-            screenshot = self.adapter.capture(self.ui.capture_method)
+            screenshot = await self._capture()
             if screenshot is None:
                 self.logger.error(f"[地鬼] 第 {round_idx} 轮截图失败")
                 break
@@ -310,7 +310,7 @@ class DiGuiExecutor(BaseExecutor):
             cx, cy = target.center
             clicked_positions.append((cx, cy))
             tx, ty = target.random_point()
-            self.adapter.adb.tap(self.adapter.cfg.adb_addr, tx, ty)
+            await self._tap(tx, ty)
             self.logger.info(
                 f"[地鬼] 第 {round_idx} 轮点击挑战按钮 ({tx}, {ty})"
             )
@@ -329,7 +329,7 @@ class DiGuiExecutor(BaseExecutor):
             # 4. 拖动滑块到最左并 OCR 验证次数为 1（最多重试）
             drag_ok = False
             for drag_attempt in range(1, _MAX_DRAG_RETRIES + 1):
-                screenshot = self.adapter.capture(self.ui.capture_method)
+                screenshot = await self._capture()
                 if screenshot is None:
                     self.logger.warning(
                         f"[地鬼] 第 {round_idx} 轮截图失败"
@@ -341,7 +341,7 @@ class DiGuiExecutor(BaseExecutor):
                 tuodong_match = match_template(screenshot, _TPL_TUODONG)
                 if tuodong_match:
                     tx, ty = tuodong_match.center
-                    self.adapter.swipe(tx, ty, 10, ty, 500)
+                    await self._swipe(tx, ty, 10, ty, 500)
                     self.logger.info(
                         f"[地鬼] 第 {round_idx} 轮拖动滑块 "
                         f"({tx},{ty}) → (10,{ty}) "
@@ -355,10 +355,10 @@ class DiGuiExecutor(BaseExecutor):
                     )
 
                 # OCR 验证挑战次数
-                screenshot = self.adapter.capture(self.ui.capture_method)
+                screenshot = await self._capture()
                 if screenshot is None:
                     continue
-                result_ocr = ocr_digits(screenshot, roi=_CHALLENGE_COUNT_ROI)
+                result_ocr = await async_ocr_digits(screenshot, roi=_CHALLENGE_COUNT_ROI)
                 raw = result_ocr.text.strip()
                 count_val = parse_number(raw)
                 self.logger.info(

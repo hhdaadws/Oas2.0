@@ -197,7 +197,7 @@ class InitExpDungeonExecutor(BaseExecutor):
 
             # 检查是否战斗失败
             await asyncio.sleep(0.5)
-            screenshot = self.adapter.capture(self.ui.capture_method)
+            screenshot = await self._capture()
             if screenshot is not None and match_template(screenshot, _TPL_SHIBAI):
                 self.logger.warning(
                     f"[起号_经验副本] 第 {round_idx} 轮战斗失败"
@@ -232,7 +232,7 @@ class InitExpDungeonExecutor(BaseExecutor):
             await asyncio.sleep(2.0)
 
             # 4d. 检查是否还在组队界面，不在则导航回去
-            cur = self.ui.detect_ui()
+            cur = await self._detect_ui()
             if cur.ui != "ZUDUI":
                 self.logger.info("[起号_经验副本] 战斗后不在组队界面，尝试返回")
                 in_zudui = await self.ui.ensure_ui(
@@ -274,7 +274,7 @@ class InitExpDungeonExecutor(BaseExecutor):
             True 找到并点击成功，False 滑动上限仍未找到。
         """
         for scroll_i in range(max_scrolls):
-            screenshot = self.adapter.capture(self.ui.capture_method)
+            screenshot = await self._capture()
             if screenshot is None:
                 await asyncio.sleep(0.5)
                 continue
@@ -290,7 +290,7 @@ class InitExpDungeonExecutor(BaseExecutor):
                     f"[起号_经验副本] 第{scroll_i + 1}次查找找到经验妖怪 "
                     f"(score={m.score:.3f}, pos=({cx}, {cy}))"
                 )
-                self.adapter.adb.tap(self.adapter.cfg.adb_addr, cx, cy)
+                await self._tap(cx, cy)
                 await asyncio.sleep(1.5)
                 return True
 
@@ -298,7 +298,7 @@ class InitExpDungeonExecutor(BaseExecutor):
             self.logger.info(
                 f"[起号_经验副本] 第{scroll_i + 1}次未找到经验妖怪，下滑"
             )
-            self.adapter.swipe(480, 350, 480, 150, 500)
+            await self._swipe(480, 350, 480, 150, 500)
             await asyncio.sleep(1.5)
 
         self.logger.warning(
@@ -346,7 +346,7 @@ class InitExpDungeonExecutor(BaseExecutor):
         zhunbei_found = False
 
         while elapsed < cooldown_window + match_timeout:
-            screenshot = self.adapter.capture(self.ui.capture_method)
+            screenshot = await self._capture()
             if screenshot is not None:
                 # 弹窗处理
                 if self.ui.popup_handler is not None:
@@ -384,7 +384,7 @@ class InitExpDungeonExecutor(BaseExecutor):
 
             # 冷却检测：6s 内 dengdai 和 zhunbei 都未出现
             if state is None and elapsed >= cooldown_window:
-                screenshot = self.adapter.capture(self.ui.capture_method)
+                screenshot = await self._capture()
                 if screenshot is not None and match_template(
                     screenshot, _TPL_ZIDONGPIPEI
                 ):
@@ -412,7 +412,7 @@ class InitExpDungeonExecutor(BaseExecutor):
         enter_interval = 1.5
 
         while enter_elapsed < enter_timeout:
-            screenshot = self.adapter.capture(self.ui.capture_method)
+            screenshot = await self._capture()
             if screenshot is None:
                 await asyncio.sleep(enter_interval)
                 enter_elapsed += enter_interval
@@ -428,7 +428,7 @@ class InitExpDungeonExecutor(BaseExecutor):
                         f"[起号_经验副本] 第 {round_idx} 轮: "
                         f"点击准备按钮 ({cx}, {cy})"
                     )
-                    self.adapter.adb.tap(self.adapter.cfg.adb_addr, cx, cy)
+                    await self._tap(cx, cy)
                     still_zhunbei = True
                     break
 

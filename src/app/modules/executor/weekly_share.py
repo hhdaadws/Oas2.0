@@ -222,7 +222,7 @@ class WeeklyShareExecutor(BaseExecutor):
     async def _dismiss_jiangli(self) -> None:
         """检测并关闭奖励弹窗"""
         await asyncio.sleep(1.0)
-        screenshot = self.adapter.capture(self.ui.capture_method)
+        screenshot = await self._capture()
         if screenshot is None:
             return
 
@@ -230,7 +230,7 @@ class WeeklyShareExecutor(BaseExecutor):
         if self.popup_handler:
             dismissed = await self.popup_handler.check_and_dismiss(screenshot)
             if dismissed > 0:
-                screenshot = self.adapter.capture(self.ui.capture_method)
+                screenshot = await self._capture()
                 if screenshot is None:
                     return
 
@@ -245,7 +245,7 @@ class WeeklyShareExecutor(BaseExecutor):
         from ..vision.utils import random_point_in_circle
 
         close_x, close_y = random_point_in_circle(20, 20, 20)
-        self.adapter.adb.tap(self.adapter.cfg.adb_addr, close_x, close_y)
+        await self._tap(close_x, close_y)
         self.logger.info(f"[每周分享] 随机点击 ({close_x}, {close_y}) 关闭奖励弹窗")
         await asyncio.sleep(1.0)
 
@@ -270,7 +270,7 @@ class WeeklyShareExecutor(BaseExecutor):
                 await asyncio.sleep(1.0)
 
             # 检测当前 UI
-            cur = self.ui.detect_ui()
+            cur = await self._detect_ui()
             if cur.ui == "TUJIAN":
                 self.logger.info("[每周分享] 已确认回到图鉴界面")
                 return True
@@ -292,13 +292,13 @@ class WeeklyShareExecutor(BaseExecutor):
                 (_TPL_EXIT_DARK, "exit_dark"),
                 (_TPL_EXIT_SHITI, "exit_shiti"),
             ]:
-                screenshot = self.adapter.capture(self.ui.capture_method)
+                screenshot = await self._capture()
                 if screenshot is None:
                     continue
                 m = match_template(screenshot, tpl)
                 if m:
                     cx, cy = m.random_point()
-                    self.adapter.adb.tap(self.adapter.cfg.adb_addr, cx, cy)
+                    await self._tap(cx, cy)
                     self.logger.info(
                         f"[每周分享] 点击 {label} ({cx}, {cy}) (attempt={attempt + 1})"
                     )
@@ -313,7 +313,7 @@ class WeeklyShareExecutor(BaseExecutor):
                 await asyncio.sleep(1.0)
 
         # 最终验证
-        cur = self.ui.detect_ui()
+        cur = await self._detect_ui()
         if cur.ui == "TUJIAN":
             return True
         self.logger.error(

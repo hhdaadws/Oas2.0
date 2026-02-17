@@ -8,12 +8,43 @@
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING, Any, Optional
+import inspect
+from typing import TYPE_CHECKING, Any, Optional, Union
 
 from ..vision.template import Match, match_template
 
 if TYPE_CHECKING:
     from ..emu.adapter import EmulatorAdapter
+    from ..emu.async_adapter import AsyncEmulatorAdapter
+
+
+async def _adapter_capture(adapter: "Union[EmulatorAdapter, AsyncEmulatorAdapter]", method: str):
+    """兼容同步/异步 adapter 的截图，直接返回 BGR ndarray。"""
+    result = adapter.capture_ndarray(method)
+    if inspect.isawaitable(result):
+        return await result
+    return result
+
+
+async def _adapter_tap(adapter: "Union[EmulatorAdapter, AsyncEmulatorAdapter]", x: int, y: int) -> None:
+    """兼容同步/异步 adapter 的 adb tap。"""
+    from ..emu.async_adapter import AsyncEmulatorAdapter
+    if isinstance(adapter, AsyncEmulatorAdapter):
+        await adapter.tap(x, y)
+    else:
+        adapter.adb.tap(adapter.cfg.adb_addr, x, y)
+
+
+async def _adapter_swipe(
+    adapter: "Union[EmulatorAdapter, AsyncEmulatorAdapter]",
+    x1: int, y1: int, x2: int, y2: int, dur_ms: int = 300,
+) -> None:
+    """兼容同步/异步 adapter 的 swipe。"""
+    from ..emu.async_adapter import AsyncEmulatorAdapter
+    if isinstance(adapter, AsyncEmulatorAdapter):
+        await adapter.swipe(x1, y1, x2, y2, dur_ms)
+    else:
+        adapter.swipe(x1, y1, x2, y2, dur_ms)
 
 
 async def wait_for_template(
@@ -50,7 +81,7 @@ async def wait_for_template(
     templates = [template] if isinstance(template, str) else template
 
     while elapsed < timeout:
-        screenshot = adapter.capture(capture_method)
+        screenshot = await _adapter_capture(adapter, capture_method)
         if screenshot is not None:
             for tpl in templates:
                 m = match_template(screenshot, tpl, **kwargs)
@@ -108,7 +139,6 @@ async def click_template(
         True 表示找到并点击成功，False 表示超时未找到。
     """
     tag = f"[{label}] " if label else ""
-    addr = adapter.cfg.adb_addr
     kwargs = {"threshold": threshold} if threshold is not None else {}
 
     # 1) 等待模板出现
@@ -128,7 +158,7 @@ async def click_template(
     # 3-5) 点击（含重试逻辑）
     for attempt in range(max_clicks):
         # 重新截图获取最新坐标
-        screenshot = adapter.capture(capture_method)
+        screenshot = await _adapter_capture(adapter, capture_method)
         if screenshot is None:
             if log:
                 log.warning(f"{tag}截图失败 (attempt={attempt + 1})")
@@ -144,7 +174,7 @@ async def click_template(
 
         # 点击模板区域内随机位置
         cx, cy = m.random_point()
-        adapter.adb.tap(addr, cx, cy)
+        await _adapter_tap(adapter, cx, cy)
         if log:
             log.info(f"{tag}点击 ({cx}, {cy}) (attempt={attempt + 1})")
 
@@ -154,7 +184,7 @@ async def click_template(
 
         # 等待 UI 响应后验证模板是否消失
         await asyncio.sleep(gone_interval)
-        screenshot = adapter.capture(capture_method)
+        screenshot = await _adapter_capture(adapter, capture_method)
         if screenshot is not None:
             still = match_template(screenshot, template, **kwargs)
             if not still:
@@ -215,7 +245,7 @@ async def wait_for_qrcode(
     elapsed = 0.0
 
     while elapsed < timeout:
-        screenshot = adapter.capture(capture_method)
+        screenshot = await _adapter_capture(adapter, capture_method)
         if screenshot is not None and _detect_qrcode(screenshot):
             if log:
                 log.info(f"{tag}检测到二维码 (elapsed={elapsed:.1f}s)")
@@ -232,7 +262,7 @@ async def wait_for_qrcode(
 # OCR 辅助函数
 # ---------------------------------------------------------------------------
 
-from ..ocr import find_text as _find_text
+from ..ocr import async_find_text as _async_find_text
 from ..ocr.types import OcrBox
 
 
@@ -272,9 +302,9 @@ async def wait_for_text(
     elapsed = 0.0
 
     while elapsed < timeout:
-        screenshot = adapter.capture(capture_method)
+        screenshot = await _adapter_capture(adapter, capture_method)
         if screenshot is not None:
-            box = _find_text(
+            box = await _async_find_text(
                 screenshot, keyword,
                 roi=roi, min_confidence=min_confidence,
             )
@@ -327,7 +357,6 @@ async def click_text(
         True 表示找到并点击成功，False 表示超时未找到。
     """
     tag = f"[{label}] " if label else ""
-    addr = adapter.cfg.adb_addr
 
     box = await wait_for_text(
         adapter, capture_method, keyword,
@@ -342,9 +371,9 @@ async def click_text(
         await asyncio.sleep(settle)
 
     # 重新截图获取最新坐标
-    screenshot = adapter.capture(capture_method)
+    screenshot = await _adapter_capture(adapter, capture_method)
     if screenshot is not None:
-        fresh = _find_text(
+        fresh = await _async_find_text(
             screenshot, keyword,
             roi=roi, min_confidence=min_confidence,
         )
@@ -352,7 +381,7 @@ async def click_text(
             box = fresh
 
     cx, cy = box.random_point()
-    adapter.adb.tap(addr, cx, cy)
+    await _adapter_tap(adapter, cx, cy)
     if log:
         log.info(f'{tag}OCR 点击 "{keyword}" ({cx}, {cy})')
 
@@ -396,7 +425,7 @@ async def check_and_handle_liao_not_joined(
     """
     tag = f"[{label}] " if label else ""
 
-    screenshot = adapter.capture(capture_method)
+    screenshot = await _adapter_capture(adapter, capture_method)
     if screenshot is None:
         return False
 
@@ -409,7 +438,7 @@ async def check_and_handle_liao_not_joined(
 
     # 1. 点击一键申请
     cx, cy = m.random_point()
-    adapter.adb.tap(adapter.cfg.adb_addr, cx, cy)
+    await _adapter_tap(adapter, cx, cy)
     if log:
         log.info(f"{tag}点击一键申请 ({cx}, {cy})")
     await asyncio.sleep(1.5)
@@ -424,24 +453,25 @@ async def check_and_handle_liao_not_joined(
     if not ok and log:
         log.warning(f"{tag}未检测到确认按钮，申请可能未提交")
 
-    # 3. 延后所有寮相关任务
-    _defer_all_liao_tasks(account_id, _LIAO_NOT_JOINED_DELAY_HOURS, log=log, label=label)
+    # 3. 延后所有寮相关任务（offload 到线程池）
+    await _defer_all_liao_tasks(account_id, _LIAO_NOT_JOINED_DELAY_HOURS, log=log, label=label)
 
     return True
 
 
-def _defer_all_liao_tasks(
+async def _defer_all_liao_tasks(
     account_id: int,
     delay_hours: int,
     *,
     log: Any = None,
     label: str = "",
 ) -> None:
-    """延后指定账号所有寮相关任务的 next_time。"""
+    """延后指定账号所有寮相关任务的 next_time（offload 到线程池）。"""
     from datetime import timedelta
 
     from sqlalchemy.orm.attributes import flag_modified
 
+    from ...core.thread_pool import run_in_db
     from ...core.timeutils import format_beijing_time, now_beijing
     from ...db.base import SessionLocal
     from ...db.models import GameAccount
@@ -452,24 +482,27 @@ def _defer_all_liao_tasks(
 
     liao_config_keys = ["领取寮金币", "寮商店"]
 
-    try:
-        with SessionLocal() as db:
-            account = db.query(GameAccount).filter(GameAccount.id == account_id).first()
-            if not account:
-                return
-            cfg = account.task_config or {}
-            for key in liao_config_keys:
-                task_cfg = cfg.get(key, {})
-                task_cfg["next_time"] = new_next_time
-                cfg[key] = task_cfg
-                if log:
-                    log.info(f"{tag}{key} next_time 延后至 {new_next_time} (未加入寮)")
-            account.task_config = cfg
-            flag_modified(account, "task_config")
-            db.commit()
-    except Exception as e:
-        if log:
-            log.error(f"{tag}延后寮任务 next_time 失败: {e}")
+    def _do_defer():
+        try:
+            with SessionLocal() as db:
+                account = db.query(GameAccount).filter(GameAccount.id == account_id).first()
+                if not account:
+                    return
+                cfg = account.task_config or {}
+                for key in liao_config_keys:
+                    task_cfg = cfg.get(key, {})
+                    task_cfg["next_time"] = new_next_time
+                    cfg[key] = task_cfg
+                    if log:
+                        log.info(f"{tag}{key} next_time 延后至 {new_next_time} (未加入寮)")
+                account.task_config = cfg
+                flag_modified(account, "task_config")
+                db.commit()
+        except Exception as e:
+            if log:
+                log.error(f"{tag}延后寮任务 next_time 失败: {e}")
+
+    await run_in_db(_do_defer)
 
 
 # ---------------------------------------------------------------------------
@@ -528,7 +561,7 @@ async def check_and_create_jiejie(
     if create_match:
         # 结界未创建，点击创建
         cx, cy = create_match.random_point()
-        adapter.adb.tap(adapter.cfg.adb_addr, cx, cy)
+        await _adapter_tap(adapter, cx, cy)
         if log:
             log.info(f"{tag}点击创建结界 ({cx}, {cy})")
         await asyncio.sleep(2.0)

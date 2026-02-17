@@ -1,6 +1,7 @@
 """
 Main application entrypoint
 """
+import asyncio
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -86,7 +87,20 @@ async def startup() -> None:
     init_db()
     register_routers(app)
     _mount_frontend(app)
+    # 后台初始化 OCR 实例池（不阻塞应用启动）
+    asyncio.create_task(_init_ocr_pools())
     logger.info(f"app started at {settings.api_host}:{settings.api_port}")
+
+
+async def _init_ocr_pools() -> None:
+    """后台初始化 OCR 实例池，支持并行推理。"""
+    from .modules.ocr.engine import init_ocr_pool, init_digit_pool
+    from .core.thread_pool import run_in_compute
+    try:
+        await run_in_compute(init_ocr_pool, settings.ocr_pool_size)
+        await run_in_compute(init_digit_pool, settings.digit_ocr_pool_size)
+    except Exception as e:
+        logger.warning(f"OCR 实例池初始化失败（将回退到单例模式）: {e}")
 
 
 @app.on_event("shutdown")
@@ -94,6 +108,8 @@ async def shutdown() -> None:
     logger.info("shutting down ...")
     await feeder.stop()
     await executor_service.stop()
+    from .core.thread_pool import shutdown_pools
+    shutdown_pools()
     logger.info("shutdown complete")
 
 

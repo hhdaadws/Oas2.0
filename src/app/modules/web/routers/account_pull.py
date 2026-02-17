@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel
 
 from ....db.base import get_db
-from ....db.models import Emulator, GameAccount, SystemConfig
+from ....db.models import AccountRestConfig, Emulator, GameAccount, SystemConfig
 from ....core.logger import logger
 from ....core.config import settings
 from ....core.constants import AccountStatus, build_default_task_config, build_default_explore_progress
@@ -390,11 +390,6 @@ async def delete_device_login_data(
         )
 
 
-class BatchCreateRequest(BaseModel):
-    """批量建号请求"""
-    zone: str  # 区服
-
-
 class BatchCreateResponse(BaseModel):
     """批量建号响应"""
     success: bool
@@ -405,7 +400,6 @@ class BatchCreateResponse(BaseModel):
 
 @router.post("/batch-create", response_model=BatchCreateResponse)
 async def batch_create_accounts(
-    req: BatchCreateRequest,
     db: Session = Depends(get_db)
 ):
     """
@@ -442,9 +436,11 @@ async def batch_create_accounts(
         .all()
     }
 
-    # 读取全局默认失败延迟
+    # 读取全局默认失败延迟和默认任务启用配置
     syscfg = db.query(SystemConfig).order_by(SystemConfig.id.asc()).first()
     fail_delays = (syscfg.default_fail_delays or {}) if syscfg else {}
+    task_enabled = (syscfg.default_task_enabled or {}) if syscfg else {}
+    default_rest = (syscfg.default_rest_config or {}) if syscfg else {}
 
     created = []
     skipped = []
@@ -456,13 +452,23 @@ async def batch_create_accounts(
 
         game_account = GameAccount(
             login_id=account_id,
-            zone=req.zone,
             progress="ok",
             status=AccountStatus.ACTIVE,
-            task_config=build_default_task_config(fail_delays),
+            task_config=build_default_task_config(fail_delays, task_enabled),
             explore_progress=build_default_explore_progress(),
         )
         db.add(game_account)
+        db.flush()  # 获取 game_account.id
+
+        # 创建默认休息配置
+        rest_config = AccountRestConfig(
+            account_id=game_account.id,
+            enabled=1 if default_rest.get("enabled", False) else 0,
+            mode=default_rest.get("mode", "random"),
+            rest_start=default_rest.get("start_time"),
+            rest_duration=default_rest.get("duration", 2),
+        )
+        db.add(rest_config)
         created.append(account_id)
 
     if created:

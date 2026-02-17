@@ -48,12 +48,6 @@
           </el-radio-group>
         </el-form-item>
 
-        <el-form-item v-if="postPullMode !== 'none'" label="默认区服">
-          <el-select v-model="defaultZone" placeholder="请选择默认区服" style="width: 300px;" @change="savePostPullSettings">
-            <el-option v-for="z in ZONES" :key="z" :label="z" :value="z" />
-          </el-select>
-        </el-form-item>
-
         <el-form-item>
           <el-button type="primary" @click="handlePull" :loading="pulling">
             <el-icon><Download /></el-icon>
@@ -142,11 +136,6 @@
         <el-form-item label="账号ID">
           <el-input v-model="createAccountForm.login_id" disabled />
         </el-form-item>
-        <el-form-item label="区服" required>
-          <el-select v-model="createAccountForm.zone" placeholder="请选择区服" style="width: 100%;">
-            <el-option v-for="z in ZONES" :key="z" :label="z" :value="z" />
-          </el-select>
-        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="createAccountDialogVisible = false">跳过</el-button>
@@ -163,13 +152,6 @@
       <p style="margin-bottom: 16px; color: #606266;">
         将为当前列表中的 <strong>{{ accounts.length }}</strong> 个普通账号批量创建游戏账号，已存在的账号将自动跳过。
       </p>
-      <el-form label-width="80px">
-        <el-form-item label="区服" required>
-          <el-select v-model="batchCreateZone" placeholder="请选择区服" style="width: 100%;">
-            <el-option v-for="z in ZONES" :key="z" :label="z" :value="z" />
-          </el-select>
-        </el-form-item>
-      </el-form>
       <template #footer>
         <el-button @click="batchCreateDialogVisible = false">取消</el-button>
         <el-button type="primary" @click="handleBatchCreate" :loading="batchCreating">确认创建</el-button>
@@ -214,21 +196,17 @@ const pushing = ref(false)
 
 // 抓取后建号配置
 const postPullMode = ref('none')  // 'none' | 'auto' | 'confirm'
-const defaultZone = ref('樱之华')
-const ZONES = ['樱之华', '春之樱', '两情相悦', '枫之舞']
 
 // 建号对话框
 const createAccountDialogVisible = ref(false)
 const creatingAccount = ref(false)
 const createAccountForm = reactive({
-  login_id: '',
-  zone: '樱之华'
+  login_id: ''
 })
 
 // 批量建号
 const batchCreateDialogVisible = ref(false)
 const batchCreating = ref(false)
-const batchCreateZone = ref('樱之华')
 
 // 通过 API 持久化抓取后建号配置
 const loadPostPullSettings = async () => {
@@ -237,7 +215,6 @@ const loadPostPullSettings = async () => {
     if (response.ok) {
       const data = await response.json()
       if (data.pull_post_mode) postPullMode.value = data.pull_post_mode
-      if (data.pull_default_zone) defaultZone.value = data.pull_default_zone
     }
   } catch (e) {
     console.warn('加载抓取后建号配置失败:', e)
@@ -249,8 +226,7 @@ const savePostPullSettings = async () => {
     await apiRequest('/api/system/settings', {
       method: 'PUT',
       body: JSON.stringify({
-        pull_post_mode: postPullMode.value,
-        pull_default_zone: defaultZone.value
+        pull_post_mode: postPullMode.value
       })
     })
   } catch (e) {
@@ -283,10 +259,10 @@ const fetchAccounts = async () => {
 }
 
 // 静默创建游戏账号（不触发 axios 自动错误提示）
-const tryCreateAccountSilent = async (loginId, zone) => {
+const tryCreateAccountSilent = async (loginId) => {
   const response = await apiRequest('/api/accounts/game', {
     method: 'POST',
-    body: JSON.stringify({ login_id: loginId, zone, level: 1, stamina: 0 })
+    body: JSON.stringify({ login_id: loginId, level: 1, stamina: 0 })
   })
   if (response.ok) {
     return 'created'
@@ -304,9 +280,9 @@ const handlePostPullAction = async (accountId) => {
 
   if (postPullMode.value === 'auto') {
     try {
-      const result = await tryCreateAccountSilent(accountId, defaultZone.value)
+      const result = await tryCreateAccountSilent(accountId)
       if (result === 'created') {
-        ElMessage.success(`游戏账号 ${accountId} 已自动创建（${defaultZone.value}）`)
+        ElMessage.success(`游戏账号 ${accountId} 已自动创建`)
       }
     } catch (error) {
       console.error('自动创建账号失败:', error)
@@ -317,20 +293,15 @@ const handlePostPullAction = async (accountId) => {
 
   if (postPullMode.value === 'confirm') {
     createAccountForm.login_id = accountId
-    createAccountForm.zone = defaultZone.value
     createAccountDialogVisible.value = true
   }
 }
 
 // 确认对话框中点击创建
 const handleConfirmCreateAccount = async () => {
-  if (!createAccountForm.zone) {
-    ElMessage.warning('请选择区服')
-    return
-  }
   creatingAccount.value = true
   try {
-    const result = await tryCreateAccountSilent(createAccountForm.login_id, createAccountForm.zone)
+    const result = await tryCreateAccountSilent(createAccountForm.login_id)
     if (result === 'created') {
       ElMessage.success(`游戏账号 ${createAccountForm.login_id} 创建成功`)
     } else if (result === 'exists') {
@@ -451,15 +422,11 @@ const handleDeleteLoginData = async () => {
 
 // 批量建号
 const handleBatchCreate = async () => {
-  if (!batchCreateZone.value) {
-    ElMessage.warning('请选择区服')
-    return
-  }
   batchCreating.value = true
   try {
     const response = await apiRequest('/api/account-pull/batch-create', {
       method: 'POST',
-      body: JSON.stringify({ zone: batchCreateZone.value })
+      body: JSON.stringify({})
     })
     const data = await response.json()
     if (response.ok && data.success) {

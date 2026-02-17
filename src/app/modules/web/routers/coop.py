@@ -38,14 +38,12 @@ def _current_window(now: Optional[datetime] = None) -> (str, int):
 
 class CoopAccountCreate(BaseModel):
     login_id: str
-    zone: Optional[str] = None
     expire_date: Optional[str] = None  # YYYY-MM-DD
     note: Optional[str] = None
 
 
 class CoopAccountUpdate(BaseModel):
     status: Optional[int] = None  # 1|2
-    zone: Optional[str] = None
     expire_date: Optional[str] = None
     note: Optional[str] = None
 
@@ -123,7 +121,6 @@ async def list_coop_accounts(
             {
                 "id": a.id,
                 "login_id": a.login_id,
-                "zone": a.zone,
                 "status": a.status,
                 "expire_date": a.expire_date,
                 "note": a.note,
@@ -152,7 +149,7 @@ async def create_coop_account(data: CoopAccountCreate, db: Session = Depends(get
             expire_date = data.expire_date
         except Exception:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="过期日期格式应为 YYYY-MM-DD")
-    obj = CoopAccount(login_id=login_id, zone=data.zone, note=data.note, status=1, expire_date=expire_date)
+    obj = CoopAccount(login_id=login_id, note=data.note, status=1, expire_date=expire_date)
     db.add(obj)
     db.commit()
     db.refresh(obj)
@@ -166,8 +163,6 @@ async def update_coop_account(account_id: int, data: CoopAccountUpdate, db: Sess
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="勾协账号不存在")
     if data.status is not None:
         obj.status = int(data.status)
-    if data.zone is not None:
-        obj.zone = data.zone
     if data.expire_date is not None:
         if data.expire_date == "":
             obj.expire_date = None

@@ -16,8 +16,8 @@ from ...core.timeutils import now_beijing
 from ...db.base import SessionLocal
 from ...db.models import Emulator, GameAccount, SystemConfig, Task
 from ..emu.adapter import AdapterConfig, EmulatorAdapter
-from ..ocr.recognize import ocr as ocr_recognize
-from ..ocr.recognize import ocr_digits
+from ..ocr.async_recognize import async_ocr
+from ..ocr.async_recognize import async_ocr_digits
 from ..ui.assets import parse_number
 from ..ui.manager import UIManager
 from ..vision.template import Match, match_template
@@ -109,30 +109,30 @@ class LiaoShopExecutor(BaseExecutor):
     # OCR 辅助
     # ------------------------------------------------------------------
 
-    def _read_gongxun(self, screenshot) -> Optional[int]:
+    async def _read_gongxun(self, screenshot) -> Optional[int]:
         """OCR 读取寮商店界面右上角的功勋值"""
-        result = ocr_digits(screenshot, roi=GONGXUN_ROI)
+        result = await async_ocr_digits(screenshot, roi=GONGXUN_ROI)
         raw = result.text.strip()
         value = parse_number(raw)
         self.logger.info(f"[寮商店] 功勋 OCR: raw='{raw}' → value={value}")
         return value
 
-    def _read_liao_level(self, screenshot) -> Optional[int]:
+    async def _read_liao_level(self, screenshot) -> Optional[int]:
         """OCR 读取 LIAO_XINXI 界面的寮等级"""
-        result = ocr_digits(screenshot, roi=LIAO_LEVEL_ROI)
+        result = await async_ocr_digits(screenshot, roi=LIAO_LEVEL_ROI)
         raw = result.text.strip()
         value = parse_number(raw)
         self.logger.info(f"[寮商店] 寮等级 OCR: raw='{raw}' → value={value}")
         return value
 
-    def _read_remaining(self, screenshot, m: Match) -> Optional[int]:
+    async def _read_remaining(self, screenshot, m: Match) -> Optional[int]:
         """OCR 读取模板匹配位置下方的"本周剩余数量x"文本，提取剩余数"""
         # 模板下方区域：从模板底部向下延伸约 25px
         roi_x = max(0, m.x - 10)
         roi_y = m.y + m.h
         roi_w = m.w + 60
         roi_h = 30
-        result = ocr_recognize(screenshot, roi=(roi_x, roi_y, roi_w, roi_h))
+        result = await async_ocr(screenshot, roi=(roi_x, roi_y, roi_w, roi_h))
         raw = result.text.strip()
         self.logger.info(f"[寮商店] 剩余数量 OCR: raw='{raw}' roi=({roi_x},{roi_y},{roi_w},{roi_h})")
 
@@ -172,7 +172,7 @@ class LiaoShopExecutor(BaseExecutor):
             return False
 
         cx, cy = heisui_match.random_point()
-        self.adapter.adb.tap(self.adapter.cfg.adb_addr, cx, cy)
+        await self._tap(cx, cy)
         self.logger.info(f"[寮商店] 点击黑碎: ({cx}, {cy})")
         await asyncio.sleep(1.5)
 
@@ -217,7 +217,7 @@ class LiaoShopExecutor(BaseExecutor):
             return False, 0
 
         cx, cy = lanpiao_match.random_point()
-        self.adapter.adb.tap(self.adapter.cfg.adb_addr, cx, cy)
+        await self._tap(cx, cy)
         self.logger.info(f"[寮商店] 点击蓝票: ({cx}, {cy})")
         await asyncio.sleep(1.5)
 
@@ -263,12 +263,12 @@ class LiaoShopExecutor(BaseExecutor):
     async def _dismiss_popups(self) -> None:
         """关闭购买后的奖励画面"""
         await asyncio.sleep(1.0)
-        screenshot = self.adapter.capture(self.ui.capture_method)
+        screenshot = await self._capture()
         if screenshot is None:
             return
         # 通用弹窗检测
         if await self.ui.popup_handler.check_and_dismiss(screenshot) > 0:
-            screenshot = self.adapter.capture(self.ui.capture_method)
+            screenshot = await self._capture()
         # 检测 jiangli.png 奖励画面
         jiangli_match = match_template(screenshot, "assets/ui/templates/jiangli.png")
         if jiangli_match:
@@ -277,7 +277,7 @@ class LiaoShopExecutor(BaseExecutor):
             self.logger.warning("[寮商店] 未检测到奖励画面，仍尝试点击关闭")
         from ..vision.utils import random_point_in_circle
         close_x, close_y = random_point_in_circle(20, 20, 20)
-        self.adapter.adb.tap(self.adapter.cfg.adb_addr, close_x, close_y)
+        await self._tap(close_x, close_y)
         self.logger.info(f"[寮商店] 随机点击 ({close_x}, {close_y}) 关闭奖励画面")
         await asyncio.sleep(0.5)
 
@@ -334,13 +334,13 @@ class LiaoShopExecutor(BaseExecutor):
 
         # 3. OCR 读取寮等级
         await asyncio.sleep(0.5)
-        screenshot = self.adapter.capture(self.ui.capture_method)
+        screenshot = await self._capture()
         liao_level = None
         if screenshot is not None:
             if await self.ui.popup_handler.check_and_dismiss(screenshot) > 0:
-                screenshot = self.adapter.capture(self.ui.capture_method)
+                screenshot = await self._capture()
             if screenshot is not None:
-                liao_level = self._read_liao_level(screenshot)
+                liao_level = await self._read_liao_level(screenshot)
 
         if liao_level is not None and liao_level > 0:
             self._save_liao_level(liao_level)
@@ -401,7 +401,7 @@ class LiaoShopExecutor(BaseExecutor):
         self.logger.info("[寮商店] 已到达寮商店界面")
 
         # 6. 读取功勋（顶部固定显示，不受滚动影响）
-        screenshot = self.adapter.capture(self.ui.capture_method)
+        screenshot = await self._capture()
         if screenshot is None:
             return {
                 "status": TaskStatus.FAILED,
@@ -409,7 +409,7 @@ class LiaoShopExecutor(BaseExecutor):
                 "timestamp": datetime.utcnow().isoformat(),
             }
         if await self.ui.popup_handler.check_and_dismiss(screenshot) > 0:
-            screenshot = self.adapter.capture(self.ui.capture_method)
+            screenshot = await self._capture()
             if screenshot is None:
                 return {
                     "status": TaskStatus.FAILED,
@@ -417,7 +417,7 @@ class LiaoShopExecutor(BaseExecutor):
                     "timestamp": datetime.utcnow().isoformat(),
                 }
 
-        gongxun = self._read_gongxun(screenshot)
+        gongxun = await self._read_gongxun(screenshot)
         if gongxun is None:
             self.logger.warning("[寮商店] 功勋 OCR 读取失败，尝试默认流程")
             gongxun = 9999
@@ -452,18 +452,18 @@ class LiaoShopExecutor(BaseExecutor):
         if buy_heisui:
             heisui_remaining = 0
             for scroll_i in range(MAX_SCROLL):
-                self.adapter.adb.swipe(self.adapter.cfg.adb_addr, 480, 350, 480, 150, 500)
+                await self._swipe(480, 350, 480, 150, 500)
                 await asyncio.sleep(1.5)
-                screenshot = self.adapter.capture(self.ui.capture_method)
+                screenshot = await self._capture()
                 if screenshot is None:
                     continue
                 if await self.ui.popup_handler.check_and_dismiss(screenshot) > 0:
-                    screenshot = self.adapter.capture(self.ui.capture_method)
+                    screenshot = await self._capture()
                     if screenshot is None:
                         continue
                 heisui_match = match_template(screenshot, "assets/ui/templates/heisui.png")
                 if heisui_match:
-                    heisui_remaining = self._read_remaining(screenshot, heisui_match)
+                    heisui_remaining = await self._read_remaining(screenshot, heisui_match)
                     if heisui_remaining is None:
                         heisui_remaining = 1
                         self.logger.warning("[寮商店] 黑碎剩余数量 OCR 失败，假定为 1")
@@ -491,18 +491,18 @@ class LiaoShopExecutor(BaseExecutor):
             for scroll_i in range(MAX_SCROLL):
                 # 第一次先检查当前画面（买完黑碎后蓝票可能已在屏幕上）
                 if scroll_i > 0:
-                    self.adapter.adb.swipe(self.adapter.cfg.adb_addr, 480, 350, 480, 150, 500)
+                    await self._swipe(480, 350, 480, 150, 500)
                     await asyncio.sleep(1.5)
-                screenshot = self.adapter.capture(self.ui.capture_method)
+                screenshot = await self._capture()
                 if screenshot is None:
                     continue
                 if await self.ui.popup_handler.check_and_dismiss(screenshot) > 0:
-                    screenshot = self.adapter.capture(self.ui.capture_method)
+                    screenshot = await self._capture()
                     if screenshot is None:
                         continue
                 lanpiao_match = match_template(screenshot, "assets/ui/templates/lanpiao.png")
                 if lanpiao_match:
-                    lanpiao_remaining = self._read_remaining(screenshot, lanpiao_match)
+                    lanpiao_remaining = await self._read_remaining(screenshot, lanpiao_match)
                     if lanpiao_remaining is None:
                         lanpiao_remaining = 2
                         self.logger.warning("[寮商店] 蓝票剩余数量 OCR 失败，假定为 2")

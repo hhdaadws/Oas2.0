@@ -19,7 +19,7 @@ from ...core.constants import TaskStatus
 from ...db.base import SessionLocal
 from ...db.models import Emulator, GameAccount, SystemConfig, Task
 from ..emu.adapter import AdapterConfig, EmulatorAdapter
-from ..ocr.recognize import ocr_digits
+from ..ocr.async_recognize import async_ocr_digits
 from ..shikigami import build_manual_lineup_info
 from ..ui.assets import parse_number
 from ..ui.manager import UIManager
@@ -197,7 +197,7 @@ class ClimbTowerExecutor(BaseExecutor):
 
     # ── 状态感知导航 ──
 
-    def _detect_climb_state(self) -> str:
+    async def _detect_climb_state(self) -> str:
         """截图检测当前处于爬塔流程的哪个阶段。
 
         按从深到浅的顺序检测，优先识别更深层界面。
@@ -205,7 +205,7 @@ class ClimbTowerExecutor(BaseExecutor):
         Returns:
             _CLIMB_STATE_* 常量
         """
-        screenshot = self.adapter.capture(self.ui.capture_method)
+        screenshot = await self._capture()
         if screenshot is None:
             self.logger.warning("[爬塔] 状态检测: 截图失败")
             return _CLIMB_STATE_UNKNOWN
@@ -243,7 +243,7 @@ class ClimbTowerExecutor(BaseExecutor):
             return _CLIMB_STATE_PATA_MAIN
 
         # 用 UIManager 检测是否在庭院
-        detect_result = self.ui.detect_ui(screenshot)
+        detect_result = await self._detect_ui(screenshot)
         if detect_result.ui == "TINGYUAN":
             self.logger.info("[爬塔] 状态检测: 在庭院")
             return _CLIMB_STATE_TINGYUAN
@@ -280,7 +280,7 @@ class ClimbTowerExecutor(BaseExecutor):
           3. 未知 UI → 连续点击 back/exit 最多 5 次
           4. 最终 ensure_ui 兜底
         """
-        detect_result = self.ui.detect_ui()
+        detect_result = await self._detect_ui()
         if detect_result.ui == "TINGYUAN":
             return True
 
@@ -317,7 +317,7 @@ class ClimbTowerExecutor(BaseExecutor):
                     popup_handler=self.ui.popup_handler,
                 )
 
-            detect_result = self.ui.detect_ui()
+            detect_result = await self._detect_ui()
             if detect_result.ui == "TINGYUAN":
                 return True
 
@@ -387,7 +387,7 @@ class ClimbTowerExecutor(BaseExecutor):
             max_retries: 整体导航失败时的重试次数
         """
         for attempt in range(max_retries + 1):
-            state = self._detect_climb_state()
+            state = await self._detect_climb_state()
 
             if state == _CLIMB_STATE_CHALLENGE:
                 self.logger.info("[爬塔] 已在挑战界面，跳过导航")
@@ -492,7 +492,7 @@ class ClimbTowerExecutor(BaseExecutor):
 
         for attempt in range(3):
             await asyncio.sleep(0.5)
-            screenshot = self.adapter.capture(self.ui.capture_method)
+            screenshot = await self._capture()
             if screenshot is None:
                 self.logger.warning(
                     f"[爬塔] 门票 OCR 截图失败 (attempt={attempt + 1})"
@@ -505,7 +505,7 @@ class ClimbTowerExecutor(BaseExecutor):
                 if dismissed > 0:
                     continue
 
-            result = ocr_digits(screenshot, roi=roi)
+            result = await async_ocr_digits(screenshot, roi=roi)
             raw = result.text.strip()
             self.logger.info(
                 f"[爬塔] 门票 OCR: raw='{raw}' (attempt={attempt + 1})"
@@ -549,7 +549,7 @@ class ClimbTowerExecutor(BaseExecutor):
 
         # 2. 找到目标式神位置
         await asyncio.sleep(1.0)
-        screenshot = self.adapter.capture(self.ui.capture_method)
+        screenshot = await self._capture()
         if screenshot is None:
             self.logger.warning(f"{tag} 截图失败")
             return False
@@ -600,7 +600,7 @@ class ClimbTowerExecutor(BaseExecutor):
         )
 
         # 5. 点击借用按钮
-        self.adapter.adb.tap(self.adapter.cfg.adb_addr, bx, by)
+        await self._tap(bx, by)
         await asyncio.sleep(1.5)
 
         # 6. 验证借用成功（borrow_button 在同一位置消失）
@@ -611,7 +611,7 @@ class ClimbTowerExecutor(BaseExecutor):
             best_button.h + 10,
         )
         for verify_attempt in range(3):
-            screenshot_bytes = self.adapter.capture(self.ui.capture_method)
+            screenshot_bytes = await self._capture()
             if screenshot_bytes is None:
                 await asyncio.sleep(0.5)
                 continue
@@ -638,7 +638,7 @@ class ClimbTowerExecutor(BaseExecutor):
                 )
                 # 可能需要再次点击
                 if verify_attempt < 2:
-                    self.adapter.adb.tap(self.adapter.cfg.adb_addr, bx, by)
+                    await self._tap(bx, by)
                     await asyncio.sleep(1.0)
         else:
             self.logger.warning(f"{tag} 借用验证失败，继续流程")
@@ -683,7 +683,6 @@ class ClimbTowerExecutor(BaseExecutor):
         )
         toggle_x, toggle_y = lock_cfg["toggle_pos"]
         max_retries = lock_cfg.get("max_retries", 3)
-        addr = self.adapter.cfg.adb_addr
 
         def _check_locked(raw_screenshot) -> tuple:
             """用 pata_lock.png 模板检测是否锁定。"""
@@ -698,7 +697,7 @@ class ClimbTowerExecutor(BaseExecutor):
             score = m_any.score if m_any else 0.0
             return False, score
 
-        screenshot = self.adapter.capture(self.ui.capture_method)
+        screenshot = await self._capture()
         if screenshot is None:
             self.logger.warning("[爬塔-锁定] 截图失败，无法检测锁定状态")
             return False
@@ -714,14 +713,14 @@ class ClimbTowerExecutor(BaseExecutor):
 
         # 需要切换
         for attempt in range(1, max_retries + 1):
-            self.adapter.adb.tap(addr, toggle_x, toggle_y)
+            await self._tap(toggle_x, toggle_y)
             self.logger.info(
                 f"[爬塔-锁定] 点击切换 ({toggle_x}, {toggle_y}) "
                 f"(attempt={attempt}/{max_retries})"
             )
             await asyncio.sleep(1.0)
 
-            screenshot = self.adapter.capture(self.ui.capture_method)
+            screenshot = await self._capture()
             if screenshot is not None:
                 new_locked, new_score = _check_locked(screenshot)
                 if new_locked == should_lock:
@@ -930,7 +929,6 @@ class ClimbTowerExecutor(BaseExecutor):
             True 表示至少点击了一次，False 表示从未检测到模板。
         """
         tag = f"[{label}] " if label else ""
-        addr = self.adapter.cfg.adb_addr
         kwargs = {"threshold": threshold} if threshold is not None else {}
 
         # Phase 1: 等待模板出现
@@ -953,7 +951,7 @@ class ClimbTowerExecutor(BaseExecutor):
         # Phase 3: 快速连续检测 + 点击
         clicked_count = 0
         for i in range(rapid_count):
-            screenshot = self.adapter.capture(self.ui.capture_method)
+            screenshot = await self._capture()
             if screenshot is None:
                 await asyncio.sleep(rapid_interval)
                 continue
@@ -970,7 +968,7 @@ class ClimbTowerExecutor(BaseExecutor):
             rm = match_template(screenshot, template, **kwargs)
             if rm:
                 cx, cy = rm.random_point()
-                self.adapter.adb.tap(addr, cx, cy)
+                await self._tap(cx, cy)
                 clicked_count += 1
                 self.logger.info(
                     f"{tag}快速点击 ({cx}, {cy}) "
@@ -1045,8 +1043,7 @@ class ClimbTowerExecutor(BaseExecutor):
 
         if action == "swipe":
             params = step.get("params", [480, 350, 480, 150, 500])
-            self.adapter.adb.swipe(
-                self.adapter.cfg.adb_addr,
+            await self._swipe(
                 params[0],
                 params[1],
                 params[2],
@@ -1059,7 +1056,7 @@ class ClimbTowerExecutor(BaseExecutor):
 
         if action == "tap":
             x, y = step["x"], step["y"]
-            self.adapter.adb.tap(self.adapter.cfg.adb_addr, x, y)
+            await self._tap(x, y)
             post_delay = step.get("post_delay", 1.0)
             await asyncio.sleep(post_delay)
             return True

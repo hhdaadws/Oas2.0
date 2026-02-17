@@ -13,7 +13,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, List, Optional, Tuple
 
 from ..vision.template import Match, match_template
-from .helpers import click_template, wait_for_template
+from .helpers import (
+    click_template, wait_for_template,
+    _adapter_capture, _adapter_tap, _adapter_swipe,
+)
 
 if TYPE_CHECKING:
     from ..emu.adapter import EmulatorAdapter
@@ -103,7 +106,7 @@ async def _wait_for_any_template(
     kwargs = {"threshold": threshold} if threshold is not None else {}
 
     while elapsed < timeout:
-        screenshot = adapter.capture(capture_method)
+        screenshot = await _adapter_capture(adapter, capture_method)
         if screenshot is not None:
             for tpl in templates:
                 m = match_template(screenshot, tpl, **kwargs)
@@ -153,7 +156,6 @@ async def _switch_battle_lineup(
     from ..vision.battle_lineup_detect import detect_battle_groups, detect_battle_lineups
 
     tag = "[阵容切换]"
-    addr = adapter.cfg.adb_addr
 
     # 1. 等待准备按钮确认在战斗准备界面
     zhunbei = await _wait_for_any_template(
@@ -183,7 +185,7 @@ async def _switch_battle_lineup(
     await asyncio.sleep(0.8)
     groups = []
     for attempt in range(1, 4):
-        screenshot = adapter.capture(capture_method)
+        screenshot = await _adapter_capture(adapter, capture_method)
         if screenshot is None:
             if log:
                 log.warning(f"{tag} 截图失败 (attempt={attempt}/3)")
@@ -206,7 +208,7 @@ async def _switch_battle_lineup(
 
     target_group = groups[group - 1]
     cx, cy = target_group.random_point()
-    adapter.adb.tap(addr, cx, cy)
+    await _adapter_tap(adapter, cx, cy)
     if log:
         log.info(f"{tag} 点击分组 {group} ({cx}, {cy})")
 
@@ -214,7 +216,7 @@ async def _switch_battle_lineup(
     await asyncio.sleep(1.0)
     lineups = []
     for attempt in range(1, 4):
-        screenshot = adapter.capture(capture_method)
+        screenshot = await _adapter_capture(adapter, capture_method)
         if screenshot is None:
             if log:
                 log.warning(f"{tag} 截图失败 (attempt={attempt}/3)")
@@ -237,7 +239,7 @@ async def _switch_battle_lineup(
 
     target_lineup = lineups[position - 1]
     cx, cy = target_lineup.random_point()
-    adapter.adb.tap(addr, cx, cy)
+    await _adapter_tap(adapter, cx, cy)
     if log:
         log.info(f"{tag} 点击阵容 {position} ({cx}, {cy})")
 
@@ -287,7 +289,6 @@ async def _manual_setup_lineup(
         True 配置成功，False 失败（不中断战斗流程）
     """
     tag = "[手动阵容]"
-    addr = adapter.cfg.adb_addr
 
     # 1. 等待准备按钮确认在战斗准备界面
     zhunbei = await _wait_for_any_template(
@@ -305,7 +306,7 @@ async def _manual_setup_lineup(
     config_btn = manual_lineup.config_btn or _LINEUP_CONFIG_BTN
     zhenrong_ready = False
     for attempt in range(1, 21):
-        adapter.adb.tap(addr, *config_btn)
+        await _adapter_tap(adapter, *config_btn)
         if log:
             log.info(
                 f"{tag} 点击进入阵容配置 {config_btn} (attempt={attempt}/20)"
@@ -337,7 +338,7 @@ async def _manual_setup_lineup(
         for tpl_path, name, star in manual_lineup.rental_shikigami:
             found = False
             for cap_attempt in range(1, 11):  # 每个式神 10 次截图重试
-                screenshot = adapter.capture(capture_method)
+                screenshot = await _adapter_capture(adapter, capture_method)
                 if screenshot is None:
                     await asyncio.sleep(0.3)
                     continue
@@ -346,7 +347,7 @@ async def _manual_setup_lineup(
                     cx, cy = m.center
                     tx, ty = manual_lineup.lineup_pos_1 or _LINEUP_POS_1
                     try:
-                        adapter.swipe(cx, cy, tx, ty, _DRAG_DUR_MS)
+                        await _adapter_swipe(adapter, cx, cy, tx, ty, _DRAG_DUR_MS)
                     except Exception as e:
                         if log:
                             log.warning(f"{tag} 拖动式神 swipe 失败: {e}")
@@ -395,7 +396,7 @@ async def _manual_setup_lineup(
         # 5c. 从右向左滑动搜索座敷童子
         zuofu_found = False
         for swipe_idx in range(_ZUOFU_MAX_SWIPES):
-            screenshot = adapter.capture(capture_method)
+            screenshot = await _adapter_capture(adapter, capture_method)
             if screenshot is None:
                 await asyncio.sleep(0.5)
                 continue
@@ -407,7 +408,7 @@ async def _manual_setup_lineup(
                 cx, cy = m.center
                 tx, ty = manual_lineup.lineup_pos_2 or _LINEUP_POS_2
                 try:
-                    adapter.swipe(cx, cy, tx, ty, _DRAG_DUR_MS)
+                    await _adapter_swipe(adapter, cx, cy, tx, ty, _DRAG_DUR_MS)
                 except Exception as e:
                     if log:
                         log.warning(f"{tag} 拖动座敷童子 swipe 失败: {e}")
@@ -423,7 +424,7 @@ async def _manual_setup_lineup(
             # 向左滑动搜索
             sx, sy = _ZUOFU_SEARCH_START
             try:
-                adapter.swipe(sx, sy, sx - _ZUOFU_SWIPE_DIST, sy, _ZUOFU_SWIPE_DUR_MS)
+                await _adapter_swipe(adapter, sx, sy, sx - _ZUOFU_SWIPE_DIST, sy, _ZUOFU_SWIPE_DUR_MS)
             except Exception as e:
                 if log:
                     log.warning(f"{tag} 搜索座敷童子 swipe 失败: {e}")
@@ -535,7 +536,7 @@ async def run_battle(
     enter_interval = 1.5
 
     while enter_elapsed < enter_timeout:
-        screenshot = adapter.capture(capture_method)
+        screenshot = await _adapter_capture(adapter, capture_method)
         if screenshot is None:
             await asyncio.sleep(enter_interval)
             enter_elapsed += enter_interval
@@ -579,7 +580,7 @@ async def run_battle(
                         f"{tag} 检测到准备按钮 {Path(tpl).name}，"
                         f"点击 ({cx}, {cy}) (score={m_zhunbei.score:.3f})"
                     )
-                adapter.adb.tap(adapter.cfg.adb_addr, cx, cy)
+                await _adapter_tap(adapter, cx, cy)
                 zhunbei_clicked = True
                 break
         if not zhunbei_clicked and log:
@@ -611,7 +612,7 @@ async def run_battle(
 
     # 再次截图确认状态
     await asyncio.sleep(0.5)
-    screenshot = adapter.capture(capture_method)
+    screenshot = await _adapter_capture(adapter, capture_method)
     is_victory = True  # 默认视为胜利
     is_jiangli = False
     if screenshot is not None:
@@ -660,7 +661,7 @@ async def run_battle(
                     if log:
                         log.warning(f"{tag} 未检测到奖励界面，但战斗已胜利，尝试恢复")
                     # 检测是否已回到探索地图
-                    screenshot = adapter.capture(capture_method)
+                    screenshot = await _adapter_capture(adapter, capture_method)
                     already_back = False
                     if screenshot is not None:
                         m_exit_check = match_template(screenshot, _TPL_TANSUO_SHEZHI)
@@ -675,14 +676,14 @@ async def run_battle(
                         for rc_idx in range(max_recovery_clicks):
                             rx = random.randint(920, 940)
                             ry = random.randint(10, 30)
-                            adapter.adb.tap(adapter.cfg.adb_addr, rx, ry)
+                            await _adapter_tap(adapter, rx, ry)
                             if log:
                                 log.info(
                                     f"{tag} 恢复点击 ({rx}, {ry}) "
                                     f"(第{rc_idx + 1}/{max_recovery_clicks}次)"
                                 )
                             await asyncio.sleep(1.0)
-                            screenshot = adapter.capture(capture_method)
+                            screenshot = await _adapter_capture(adapter, capture_method)
                             if screenshot is not None:
                                 m_exit_recover = match_template(
                                     screenshot, _TPL_TANSUO_SHEZHI
@@ -709,9 +710,9 @@ async def run_battle(
                 click_interval = 1.0
                 found_exit = False
                 for i in range(max_clicks):
-                    adapter.adb.tap(adapter.cfg.adb_addr, click_x, click_y)
+                    await _adapter_tap(adapter, click_x, click_y)
                     await asyncio.sleep(click_interval)
-                    screenshot = adapter.capture(capture_method)
+                    screenshot = await _adapter_capture(adapter, capture_method)
                     if screenshot is not None:
                         m_exit = match_template(screenshot, _TPL_TANSUO_SHEZHI)
                         if m_exit:

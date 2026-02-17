@@ -2,7 +2,7 @@
 """数据库模块"""
 from .base import Base, engine, SessionLocal, get_db
 from .models import (
-    Email, GameAccount, AccountRestConfig, Task, CoopPool,
+    GameAccount, AccountRestConfig, Task, CoopPool,
     Emulator, Log, Worker, TaskRun, RestPlan, SystemConfig,
     CoopAccount, CoopWindow
 )
@@ -29,6 +29,11 @@ def init_db():
     _migrate_rest_config_enabled_column()
     _ensure_performance_indexes()
     _migrate_save_fail_screenshot_column()
+    _migrate_default_task_enabled_column()
+    _migrate_drop_zone_column()
+    _migrate_global_rest_columns()
+    _migrate_duiyi_jingcai_answers_column()
+    _migrate_duiyi_reward_coord_column()
 
 
 def _migrate_login_id_unique_constraint():
@@ -293,7 +298,7 @@ def _ensure_coop_schema():
 
 
 def _migrate_pull_settings_columns():
-    """确保 system_config 表包含 pull_post_mode 和 pull_default_zone 列。"""
+    """确保 system_config 表包含 pull_post_mode 列。"""
     try:
         if engine.url.get_backend_name() != 'sqlite':
             return
@@ -304,10 +309,6 @@ def _migrate_pull_settings_columns():
             if 'pull_post_mode' not in cols:
                 conn.exec_driver_sql(
                     "ALTER TABLE system_config ADD COLUMN pull_post_mode VARCHAR(20) DEFAULT 'none'"
-                )
-            if 'pull_default_zone' not in cols:
-                conn.exec_driver_sql(
-                    "ALTER TABLE system_config ADD COLUMN pull_default_zone VARCHAR(50) DEFAULT '樱之华'"
                 )
     except Exception as e:
         try:
@@ -486,7 +487,6 @@ def _ensure_performance_indexes():
             statements = [
                 "CREATE INDEX IF NOT EXISTS ix_task_runs_started_at ON task_runs (started_at);",
                 "CREATE INDEX IF NOT EXISTS ix_task_runs_status ON task_runs (status);",
-                "CREATE INDEX IF NOT EXISTS ix_game_accounts_email_fk ON game_accounts (email_fk);",
                 "CREATE INDEX IF NOT EXISTS ix_game_accounts_status ON game_accounts (status);",
                 "CREATE INDEX IF NOT EXISTS ix_game_accounts_progress ON game_accounts (progress);",
                 "CREATE INDEX IF NOT EXISTS ix_game_accounts_status_progress ON game_accounts (status, progress);",
@@ -501,9 +501,112 @@ def _ensure_performance_indexes():
             pass
 
 
+def _migrate_default_task_enabled_column():
+    """确保 system_config 表包含 default_task_enabled 列。"""
+    try:
+        if engine.url.get_backend_name() != 'sqlite':
+            return
+        with engine.begin() as conn:
+            cols = [r[1] for r in conn.exec_driver_sql("PRAGMA table_info('system_config')").fetchall()]
+            if not cols or 'default_task_enabled' in cols:
+                return
+            conn.exec_driver_sql(
+                "ALTER TABLE system_config ADD COLUMN default_task_enabled JSON"
+            )
+    except Exception as e:
+        try:
+            from ..core.logger import logger
+            logger.error(f"default_task_enabled 列迁移失败: {e}")
+        except Exception:
+            pass
+
+
+def _migrate_drop_zone_column():
+    """删除 game_accounts 表中多余的 zone 列（如存在）。"""
+    try:
+        if engine.url.get_backend_name() != 'sqlite':
+            return
+        with engine.begin() as conn:
+            cols = [r[1] for r in conn.exec_driver_sql("PRAGMA table_info('game_accounts')").fetchall()]
+            if 'zone' not in cols:
+                return
+            conn.exec_driver_sql("ALTER TABLE game_accounts DROP COLUMN zone")
+    except Exception as e:
+        try:
+            from ..core.logger import logger
+            logger.error(f"删除 zone 列失败: {e}")
+        except Exception:
+            pass
+
+
+def _migrate_global_rest_columns():
+    """确保 system_config 表包含 global_rest_enabled 和 default_rest_config 列。"""
+    try:
+        if engine.url.get_backend_name() != 'sqlite':
+            return
+        with engine.begin() as conn:
+            cols = [r[1] for r in conn.exec_driver_sql("PRAGMA table_info('system_config')").fetchall()]
+            if not cols:
+                return
+            if 'global_rest_enabled' not in cols:
+                conn.exec_driver_sql(
+                    "ALTER TABLE system_config ADD COLUMN global_rest_enabled BOOLEAN DEFAULT 1"
+                )
+            if 'default_rest_config' not in cols:
+                conn.exec_driver_sql(
+                    "ALTER TABLE system_config ADD COLUMN default_rest_config JSON"
+                )
+    except Exception as e:
+        try:
+            from ..core.logger import logger
+            logger.error(f"global_rest 列迁移失败: {e}")
+        except Exception:
+            pass
+
+
+def _migrate_duiyi_jingcai_answers_column():
+    """确保 system_config 表包含 duiyi_jingcai_answers 列。"""
+    try:
+        if engine.url.get_backend_name() != 'sqlite':
+            return
+        with engine.begin() as conn:
+            cols = [r[1] for r in conn.exec_driver_sql("PRAGMA table_info('system_config')").fetchall()]
+            if not cols or 'duiyi_jingcai_answers' in cols:
+                return
+            conn.exec_driver_sql(
+                "ALTER TABLE system_config ADD COLUMN duiyi_jingcai_answers JSON"
+            )
+    except Exception as e:
+        try:
+            from ..core.logger import logger
+            logger.error(f"duiyi_jingcai_answers 列迁移失败: {e}")
+        except Exception:
+            pass
+
+
+def _migrate_duiyi_reward_coord_column():
+    """确保 system_config 表包含 duiyi_reward_coord 列。"""
+    try:
+        if engine.url.get_backend_name() != 'sqlite':
+            return
+        with engine.begin() as conn:
+            cols = [r[1] for r in conn.exec_driver_sql("PRAGMA table_info('system_config')").fetchall()]
+            if not cols or 'duiyi_reward_coord' in cols:
+                return
+            conn.exec_driver_sql(
+                "ALTER TABLE system_config ADD COLUMN duiyi_reward_coord JSON"
+            )
+    except Exception as e:
+        try:
+            from ..core.logger import logger
+            logger.error(f"duiyi_reward_coord 列迁移失败: {e}")
+        except Exception:
+            pass
+
+
 __all__ = [
     "Base", "engine", "SessionLocal", "get_db", "init_db",
-    "Email", "GameAccount", "AccountRestConfig", "Task", "CoopPool",
+    "GameAccount", "AccountRestConfig", "Task", "CoopPool",
     "Emulator", "Log", "Worker", "TaskRun", "RestPlan", "SystemConfig",
     "CoopAccount", "CoopWindow"
 ]

@@ -10,6 +10,7 @@ Features:
 from __future__ import annotations
 
 import random
+import threading
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 import cv2  # type: ignore
@@ -20,6 +21,7 @@ from .utils import ImageLike, load_image, to_gray
 
 DEFAULT_THRESHOLD = 0.85
 _GRAY_TEMPLATE_CACHE: dict[str, np.ndarray] = {}
+_CACHE_LOCK = threading.Lock()
 
 
 @dataclass
@@ -75,8 +77,11 @@ def match_template(
     if isinstance(template, str):
         tpl = _GRAY_TEMPLATE_CACHE.get(template)
         if tpl is None:
-            tpl = to_gray(load_image(template))
-            _GRAY_TEMPLATE_CACHE[template] = tpl
+            with _CACHE_LOCK:
+                tpl = _GRAY_TEMPLATE_CACHE.get(template)
+                if tpl is None:
+                    tpl = to_gray(load_image(template))
+                    _GRAY_TEMPLATE_CACHE[template] = tpl
     else:
         tpl_loaded = load_image(template)
         tpl = tpl_loaded if tpl_loaded.ndim == 2 else to_gray(tpl_loaded)
@@ -116,8 +121,11 @@ def find_all_templates(
     if isinstance(template, str):
         tpl = _GRAY_TEMPLATE_CACHE.get(template)
         if tpl is None:
-            tpl = to_gray(load_image(template))
-            _GRAY_TEMPLATE_CACHE[template] = tpl
+            with _CACHE_LOCK:
+                tpl = _GRAY_TEMPLATE_CACHE.get(template)
+                if tpl is None:
+                    tpl = to_gray(load_image(template))
+                    _GRAY_TEMPLATE_CACHE[template] = tpl
     else:
         tpl_loaded = load_image(template)
         tpl = tpl_loaded if tpl_loaded.ndim == 2 else to_gray(tpl_loaded)

@@ -16,8 +16,8 @@ from ...core.timeutils import now_beijing
 from ...db.base import SessionLocal
 from ...db.models import Emulator, GameAccount, SystemConfig, Task
 from ..emu.adapter import AdapterConfig, EmulatorAdapter
-from ..ocr.recognize import ocr as ocr_recognize
-from ..ocr.recognize import ocr_digits
+from ..ocr.async_recognize import async_ocr
+from ..ocr.async_recognize import async_ocr_digits
 from ..ui.assets import parse_number
 from ..ui.manager import UIManager
 from ..vision.template import Match, match_template
@@ -110,22 +110,22 @@ class WeeklyShopExecutor(BaseExecutor):
     # OCR 辅助
     # ------------------------------------------------------------------
 
-    def _read_xunzhang(self, screenshot) -> Optional[int]:
+    async def _read_xunzhang(self, screenshot) -> Optional[int]:
         """OCR 读取勋章商店界面的勋章值"""
-        result = ocr_digits(screenshot, roi=XUNZHANG_ROI)
+        result = await async_ocr_digits(screenshot, roi=XUNZHANG_ROI)
         raw = result.text.strip()
         value = parse_number(raw)
         self.logger.info(f"[每周商店] 勋章 OCR: raw='{raw}' → value={value}")
         return value
 
-    def _read_remaining(self, screenshot, m: Match) -> Optional[int]:
+    async def _read_remaining(self, screenshot, m: Match) -> Optional[int]:
         """OCR 读取模板匹配位置上方的"剩余购买次数:x"文本，提取剩余数"""
         # 模板上方区域：覆盖模板顶部向上约 65px 的文字区域
         roi_x = max(0, m.x - 50)
         roi_y = max(0, m.y - 65)
         roi_w = m.w + 120
         roi_h = 60
-        result = ocr_recognize(screenshot, roi=(roi_x, roi_y, roi_w, roi_h))
+        result = await async_ocr(screenshot, roi=(roi_x, roi_y, roi_w, roi_h))
         raw = result.text.strip()
         self.logger.info(
             f"[每周商店] 剩余数量 OCR: raw='{raw}' roi=({roi_x},{roi_y},{roi_w},{roi_h})"
@@ -170,7 +170,7 @@ class WeeklyShopExecutor(BaseExecutor):
             return False
 
         cx, cy = item_match.random_point()
-        self.adapter.adb.tap(self.adapter.cfg.adb_addr, cx, cy)
+        await self._tap(cx, cy)
         self.logger.info(f"[每周商店] 点击{label}: ({cx}, {cy})")
         await asyncio.sleep(1.5)
 
@@ -195,12 +195,12 @@ class WeeklyShopExecutor(BaseExecutor):
     async def _dismiss_popups(self) -> None:
         """关闭购买后的奖励画面"""
         await asyncio.sleep(1.0)
-        screenshot = self.adapter.capture(self.ui.capture_method)
+        screenshot = await self._capture()
         if screenshot is None:
             return
         # 通用弹窗检测
         if await self.ui.popup_handler.check_and_dismiss(screenshot) > 0:
-            screenshot = self.adapter.capture(self.ui.capture_method)
+            screenshot = await self._capture()
         # 检测 jiangli.png 奖励画面
         jiangli_match = match_template(screenshot, "assets/ui/templates/jiangli.png")
         if jiangli_match:
@@ -209,7 +209,7 @@ class WeeklyShopExecutor(BaseExecutor):
             self.logger.warning("[每周商店] 未检测到奖励画面，仍尝试点击关闭")
         from ..vision.utils import random_point_in_circle
         close_x, close_y = random_point_in_circle(20, 20, 20)
-        self.adapter.adb.tap(self.adapter.cfg.adb_addr, close_x, close_y)
+        await self._tap(close_x, close_y)
         self.logger.info(f"[每周商店] 随机点击 ({close_x}, {close_y}) 关闭奖励画面")
         await asyncio.sleep(0.5)
 
@@ -285,7 +285,7 @@ class WeeklyShopExecutor(BaseExecutor):
             }
 
         # 5. 读取勋章数量
-        screenshot = self.adapter.capture(self.ui.capture_method)
+        screenshot = await self._capture()
         if screenshot is None:
             return {
                 "status": TaskStatus.FAILED,
@@ -293,7 +293,7 @@ class WeeklyShopExecutor(BaseExecutor):
                 "timestamp": datetime.utcnow().isoformat(),
             }
         if await self.ui.popup_handler.check_and_dismiss(screenshot) > 0:
-            screenshot = self.adapter.capture(self.ui.capture_method)
+            screenshot = await self._capture()
             if screenshot is None:
                 return {
                     "status": TaskStatus.FAILED,
@@ -301,7 +301,7 @@ class WeeklyShopExecutor(BaseExecutor):
                     "timestamp": datetime.utcnow().isoformat(),
                 }
 
-        xunzhang = self._read_xunzhang(screenshot)
+        xunzhang = await self._read_xunzhang(screenshot)
         if xunzhang is None:
             self.logger.warning("[每周商店] 勋章 OCR 读取失败，尝试默认流程")
             xunzhang = 9999
@@ -351,22 +351,20 @@ class WeeklyShopExecutor(BaseExecutor):
             item_remaining = 0
             for scroll_i in range(MAX_SCROLL):
                 if scroll_i > 0:
-                    self.adapter.adb.swipe(
-                        self.adapter.cfg.adb_addr, 480, 350, 480, 150, 500
-                    )
+                    await self._swipe(480, 350, 480, 150, 500)
                     await asyncio.sleep(1.5)
-                screenshot = self.adapter.capture(self.ui.capture_method)
+                screenshot = await self._capture()
                 if screenshot is None:
                     continue
                 if await self.ui.popup_handler.check_and_dismiss(screenshot) > 0:
-                    screenshot = self.adapter.capture(self.ui.capture_method)
+                    screenshot = await self._capture()
                     if screenshot is None:
                         continue
                 item_match = match_template(
                     screenshot, f"assets/ui/templates/{template_name}.png"
                 )
                 if item_match:
-                    item_remaining = self._read_remaining(screenshot, item_match)
+                    item_remaining = await self._read_remaining(screenshot, item_match)
                     if item_remaining is None:
                         item_remaining = 1
                         self.logger.warning(

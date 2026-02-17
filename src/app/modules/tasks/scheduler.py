@@ -26,7 +26,7 @@ from ...core.constants import (
 from ...db.base import SessionLocal
 from ...db.models import (
     Task, GameAccount, AccountRestConfig, RestPlan,
-    Worker, TaskRun, Email, CoopAccount, CoopWindow, CoopPool
+    Worker, TaskRun, CoopAccount, CoopWindow, CoopPool
 )
 from .queue import TaskQueue
 from ..executor.base import MockExecutor
@@ -709,55 +709,12 @@ class TaskScheduler:
         return False
     
     def _build_effective_task_config(self, db) -> dict:
-        """根据全局 fail_delay 配置生成有效的默认 task_config。"""
+        """根据全局 fail_delay 和 enabled 配置生成有效的默认 task_config。"""
         from ...db.models import SystemConfig
         row = db.query(SystemConfig).order_by(SystemConfig.id.asc()).first()
         fail_delays = (row.default_fail_delays or {}) if row else {}
-        return build_default_task_config(fail_delays)
-
-    async def create_init_task(self, email: str):
-        """
-        创建起号任务
-        
-        Args:
-            email: 邮箱地址
-        """
-        with SessionLocal() as db:
-            # 查询邮箱账号
-            email_account = db.query(Email).filter(Email.email == email).first()
-            if not email_account:
-                self.logger.error(f"邮箱账号不存在: {email}")
-                return
-            
-            # 为每个区服创建起号任务
-            for idx, zone in enumerate(settings.zones):
-                # 创建游戏账号：未初始化之前无登录数据，login_id 固定为 -1
-                account = GameAccount(
-                    login_id="-1",
-                    email_fk=email,
-                    zone=zone,
-                    progress="init",
-                    status=1,
-                    task_config=deepcopy(DEFAULT_INIT_TASK_CONFIG),
-                    explore_progress=build_default_explore_progress(),
-                )
-                db.add(account)
-                db.commit()
-                
-                # 创建起号任务
-                task = Task(
-                    account_id=account.id,
-                    type=TaskType.INIT,
-                    priority=TASK_PRIORITY[TaskType.INIT],
-                    status=TaskStatus.PENDING,
-                    next_at=datetime.utcnow() + timedelta(seconds=idx * 10)  # 错开执行
-                )
-                db.add(task)
-                db.commit()
-                
-                self.queue.enqueue(task, account)
-            
-            self.logger.info(f"创建邮箱 {email} 的起号任务")
+        task_enabled = (row.default_task_enabled or {}) if row else {}
+        return build_default_task_config(fail_delays, task_enabled)
 
 
 # 全局调度器实例

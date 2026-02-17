@@ -23,7 +23,6 @@ from ...db.models import Emulator, GameAccount, SystemConfig, Task
 from ..emu.adapter import AdapterConfig, EmulatorAdapter
 from ..ui.manager import UIManager
 from ..vision.template import Match, find_all_templates, match_template
-from ..vision.utils import load_image
 from .awaken import awaken_shikigami
 from .base import BaseExecutor
 from .db_logger import emit as db_log
@@ -175,7 +174,7 @@ class InitShikigamiTrainExecutor(BaseExecutor):
         await asyncio.sleep(1.0)
 
         # 5. 确保在列表视图并筛选 R 级
-        screenshot = self.adapter.capture(capture_method)
+        screenshot = await self._capture()
         if screenshot is not None:
             m = match_template(screenshot, _TPL_SHISHEN_R)
             if not m:
@@ -257,7 +256,7 @@ class InitShikigamiTrainExecutor(BaseExecutor):
         self.logger.info("[起号_式神养成] 找到未觉醒座敷童子，点击进入详情")
 
         cx, cy = m_zuofu.random_point()
-        self.adapter.adb.tap(self.adapter.cfg.adb_addr, cx, cy)
+        await self._tap(cx, cy)
         await asyncio.sleep(2.0)
 
         # 执行觉醒
@@ -290,8 +289,6 @@ class InitShikigamiTrainExecutor(BaseExecutor):
         前置条件：已在式神列表界面，已筛选R级。
         流程：搜索已觉醒座敷 → 进入详情 → 点击养成 → 填充素材 → 确认 → 验证成功。
         """
-        addr = self.adapter.cfg.adb_addr
-
         # 1. 搜索已觉醒座敷童子
         self.logger.info("[起号_式神养成] 技能升级分支 - 搜索已觉醒座敷童子")
         await self._scroll_to_top()
@@ -308,7 +305,7 @@ class InitShikigamiTrainExecutor(BaseExecutor):
 
         # 2. 点击进入详情
         cx, cy = m_zuofu.random_point()
-        self.adapter.adb.tap(addr, cx, cy)
+        await self._tap(cx, cy)
         self.logger.info(f"[起号_式神养成] 技能升级: 点击已觉醒座敷 ({cx}, {cy})")
         await asyncio.sleep(2.0)
 
@@ -339,7 +336,7 @@ class InitShikigamiTrainExecutor(BaseExecutor):
             return {"status": TaskStatus.FAILED, "error": "未进入养成界面"}
 
         # 5. 统计养成格子总数（记录日志用）
-        screenshot = self.adapter.capture(capture_method)
+        screenshot = await self._capture()
         if screenshot is not None:
             all_gezi = find_all_templates(screenshot, _TPL_YANGCHENG_GEZI)
             self.logger.info(
@@ -349,7 +346,7 @@ class InitShikigamiTrainExecutor(BaseExecutor):
         # 6. 循环点击未觉醒座敷素材
         click_count = 0
         for _ in range(20):  # 安全上限
-            screenshot = self.adapter.capture(capture_method)
+            screenshot = await self._capture()
             if screenshot is None:
                 await asyncio.sleep(0.5)
                 continue
@@ -359,7 +356,7 @@ class InitShikigamiTrainExecutor(BaseExecutor):
                     f"[起号_式神养成] 技能升级: 无更多未觉醒素材，共点击 {click_count} 次"
                 )
                 break
-            self.adapter.adb.tap(addr, *m.random_point())
+            await self._tap(*m.random_point())
             click_count += 1
             self.logger.info(
                 f"[起号_式神养成] 技能升级: 点击素材 #{click_count} ({m.center})"
@@ -514,14 +511,13 @@ class InitShikigamiTrainExecutor(BaseExecutor):
         prev_screenshot = None
         for attempt in range(6):
             # 手指从低 y 拖到高 y = 列表向上滚（回到顶部）
-            self.adapter.swipe(
+            await self._swipe(
                 _SHISHEN_SWIPE_X, _SHISHEN_SWIPE_UP_Y1,
                 _SHISHEN_SWIPE_X, _SHISHEN_SWIPE_UP_Y2,
                 _SHISHEN_SWIPE_DUR_MS,
             )
             await asyncio.sleep(0.6)
-            screenshot_raw = self.adapter.capture(capture_method)
-            screenshot = load_image(screenshot_raw) if screenshot_raw is not None else None
+            screenshot = await self._capture()
             if screenshot is not None and prev_screenshot is not None:
                 y1, y2, x1, x2 = _SHISHEN_ROI_SLICE
                 roi_curr = screenshot[y1:y2, x1:x2]
@@ -540,11 +536,10 @@ class InitShikigamiTrainExecutor(BaseExecutor):
         capture_method = self.ui.capture_method
 
         # 滚动前截图
-        before_raw = self.adapter.capture(capture_method)
-        before = load_image(before_raw) if before_raw is not None else None
+        before = await self._capture()
 
         # 手指从高 y 拖到低 y = 列表向下滚
-        self.adapter.swipe(
+        await self._swipe(
             _SHISHEN_SWIPE_X, _SHISHEN_SWIPE_DOWN_Y1,
             _SHISHEN_SWIPE_X, _SHISHEN_SWIPE_DOWN_Y2,
             _SHISHEN_SWIPE_DUR_MS,
@@ -552,8 +547,7 @@ class InitShikigamiTrainExecutor(BaseExecutor):
         await asyncio.sleep(_SHISHEN_SCROLL_SETTLE)
 
         # 滚动后截图对比
-        after_raw = self.adapter.capture(capture_method)
-        after = load_image(after_raw) if after_raw is not None else None
+        after = await self._capture()
         if before is not None and after is not None:
             y1, y2, x1, x2 = _SHISHEN_ROI_SLICE
             roi_before = before[y1:y2, x1:x2]
@@ -590,7 +584,7 @@ class InitShikigamiTrainExecutor(BaseExecutor):
                     )
                     return None
 
-            screenshot = self.adapter.capture(capture_method)
+            screenshot = await self._capture()
             if screenshot is None:
                 continue
 
@@ -599,7 +593,7 @@ class InitShikigamiTrainExecutor(BaseExecutor):
                 dismissed = await self.ui.popup_handler.check_and_dismiss(screenshot)
                 if dismissed > 0:
                     await asyncio.sleep(0.5)
-                    screenshot = self.adapter.capture(capture_method)
+                    screenshot = await self._capture()
                     if screenshot is None:
                         continue
 
