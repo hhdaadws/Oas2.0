@@ -35,6 +35,7 @@ def init_db():
     _migrate_global_rest_columns()
     _migrate_duiyi_jingcai_answers_column()
     _migrate_duiyi_reward_coord_column()
+    _migrate_cloud_user_id_column()
 
 
 def _migrate_login_id_unique_constraint():
@@ -628,6 +629,29 @@ def _migrate_duiyi_reward_coord_column():
         try:
             from ..core.logger import logger
             logger.error(f"duiyi_reward_coord 列迁移失败: {e}")
+        except Exception:
+            pass
+
+
+def _migrate_cloud_user_id_column():
+    """确保 game_accounts 表包含 cloud_user_id 列（云端 User.id 映射）。"""
+    try:
+        if engine.url.get_backend_name() != 'sqlite':
+            return
+        with engine.begin() as conn:
+            cols = [r[1] for r in conn.exec_driver_sql("PRAGMA table_info('game_accounts')").fetchall()]
+            if not cols or 'cloud_user_id' in cols:
+                return
+            conn.exec_driver_sql(
+                "ALTER TABLE game_accounts ADD COLUMN cloud_user_id INTEGER"
+            )
+            conn.exec_driver_sql(
+                "CREATE INDEX IF NOT EXISTS ix_game_accounts_cloud_user_id ON game_accounts (cloud_user_id)"
+            )
+    except Exception as e:
+        try:
+            from ..core.logger import logger
+            logger.error(f"cloud_user_id 列迁移失败: {e}")
         except Exception:
             pass
 

@@ -55,6 +55,7 @@ class AccountUpdate(BaseModel):
     fanhe_level: Optional[int] = None
     jiuhu_level: Optional[int] = None
     liao_level: Optional[int] = None
+    cloud_user_id: Optional[int] = None
     remark: Optional[str] = None
 
 
@@ -224,6 +225,7 @@ async def get_accounts(db: Session = Depends(get_db)):
                 "shikigami_config": merge_shikigami_with_defaults(account.shikigami_config or {}),
                 "explore_progress": account.explore_progress or {},
                 "remark": account.remark or "",
+                "cloud_user_id": account.cloud_user_id,
                 "rest_config": rest_config_data,
             }
         )
@@ -344,6 +346,8 @@ async def update_account(
         account.jiuhu_level = update.jiuhu_level
     if update.liao_level is not None:
         account.liao_level = update.liao_level
+    if update.cloud_user_id is not None:
+        account.cloud_user_id = update.cloud_user_id
 
     account.updated_at = datetime.utcnow()
     db.commit()

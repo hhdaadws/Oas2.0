@@ -31,6 +31,7 @@ class GameAccount(Base):
     lineup_config = Column(JSON, default=dict)  # 阵容分组配置
     shikigami_config = Column(JSON, default=dict)  # 式神状态配置（init阶段）
     explore_progress = Column(JSON, default=dict)  # 探索进度（1-28章通关状态）
+    cloud_user_id = Column(Integer, nullable=True, index=True)  # 云端 User.id 映射
     remark = Column(String(500), nullable=True, default="")  # 备注
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
