@@ -11,6 +11,7 @@ from datetime import datetime
 from enum import Enum, auto
 from typing import Any, Dict, Optional
 
+from ...core.config import settings
 from ...core.constants import TaskStatus
 from ...core.logger import logger
 from ...core.timeutils import now_beijing
@@ -18,6 +19,7 @@ from ...db.base import SessionLocal
 from ...db.models import Emulator, GameAccount, SystemConfig, Task
 from ..emu.adapter import AdapterConfig, EmulatorAdapter
 from ..ui.manager import UIManager
+from ..vision.frame_cache import compute_frame_fingerprint
 from ..vision.grid_detect import nms_by_distance
 from ..vision.template import Match, find_all_templates, match_template
 from ..vision.utils import to_gray
@@ -30,20 +32,19 @@ PKG_NAME = "com.netease.onmyoji.wyzymnqsd_cps"
 
 class DuiyiState(Enum):
     """对弈竞猜状态枚举"""
-    TINGYUAN = auto()       # 在庭院，需点击 dy_rukou.png 进入
-    DY_WIN = auto()         # 上次赢了，dy_ying.png 可见，奖励未领取
-    DY_JIANGLI = auto()     # 奖励弹窗 dy_jiangli.png 可见
-    DY_NEXT = auto()        # dy_next.png 可见（输了/赢了已领奖后）
-    DY_BET = auto()         # 本次未押注，可以押注
-    DY_ALREADY_BET = auto() # 本次已押注（TODO，暂返回 SKIPPED）
-    UNKNOWN = auto()        # 未知状态，回庭院重来
+
+    DY_WIN = auto()  # 上次赢了，dy_ying.png 可见，奖励未领取
+    DY_JIANGLI = auto()  # 奖励弹窗 dy_jiangli.png 可见
+    DY_NEXT = auto()  # dy_next.png 可见（输了/赢了已领奖后）
+    DY_BET = auto()  # 本次未押注，可以押注
+    DY_ALREADY_BET = auto()  # 本次已押注（TODO，暂返回 SKIPPED）
+    UNKNOWN = auto()  # 未知状态，尝试恢复到对弈竞猜界面
 
 
 class DuiyiJingcaiExecutor(BaseExecutor):
     """对弈竞猜执行器 - 状态机驱动"""
 
     # ── 模板路径常量 ──
-    _TPL_DY_RUKOU = "assets/ui/templates/dy/dy_rukou.png"
     _TPL_DY_YING = "assets/ui/templates/dy/dy_ying.png"
     _TPL_DY_NEXT = "assets/ui/templates/dy/dy_next.png"
     _TPL_JIANGLI = "assets/ui/templates/dy/dy_jiangli.png"
@@ -93,9 +94,7 @@ class DuiyiJingcaiExecutor(BaseExecutor):
             nemu_folder=syscfg.nemu_folder or "" if syscfg else "",
             instance_id=emu.instance_id,
             activity_name=(
-                syscfg.activity_name or ".MainActivity"
-                if syscfg
-                else ".MainActivity"
+                syscfg.activity_name or ".MainActivity" if syscfg else ".MainActivity"
             ),
         )
         return EmulatorAdapter(cfg)
@@ -127,7 +126,7 @@ class DuiyiJingcaiExecutor(BaseExecutor):
         self.adapter = self._build_adapter()
 
         # push 登录数据
-        ok = self.adapter.push_login_data(account.login_id, data_dir="putonglogindata")
+        ok = await self._push_login_data(account.login_id, data_dir="putonglogindata")
         if not ok:
             self.logger.error(f"[对弈竞猜] push 登录数据失败: {account.login_id}")
             return False
@@ -136,7 +135,7 @@ class DuiyiJingcaiExecutor(BaseExecutor):
         return True
 
     async def execute(self) -> Dict[str, Any]:
-        """执行阶段：确保游戏就绪 → 获取答案 → 运行状态机。"""
+        """执行阶段：确保游戏就绪 → 获取答案 → 导航到对弈界面 → 运行状态机。"""
         self.logger.info(f"[对弈竞猜] 执行: account={self.current_account.login_id}")
 
         # 构造或复用 UIManager
@@ -146,7 +145,7 @@ class DuiyiJingcaiExecutor(BaseExecutor):
             capture_method = (
                 self.system_config.capture_method if self.system_config else None
             ) or "adb"
-            self.ui = UIManager(self.adapter, capture_method=capture_method)
+            self.ui = UIManager(self.adapter, capture_method=capture_method, cross_emulator_cache_enabled=self._cross_emulator_cache_enabled())
 
         # 确保游戏就绪
         entered = await self.ui.ensure_game_ready(timeout=90.0)
@@ -154,7 +153,7 @@ class DuiyiJingcaiExecutor(BaseExecutor):
             self.logger.error("[对弈竞猜] 游戏就绪失败")
             return self._fail("游戏就绪失败")
 
-        # 获取当前窗口答案
+        # 获取当前窗口答案（提前获取，无答案则无需导航浪费时间）
         answer = self._get_current_answer()
         if not answer:
             self.logger.warning("[对弈竞猜] 当前窗口无答案配置，跳过")
@@ -163,6 +162,14 @@ class DuiyiJingcaiExecutor(BaseExecutor):
                 "message": "当前窗口无对弈竞猜答案配置",
                 "timestamp": datetime.utcnow().isoformat(),
             }
+
+        # 导航到对弈竞猜界面
+        in_duiyi = await self.ui.ensure_ui("DUIYI_JINGCAI", max_steps=6, step_timeout=3.0)
+        if not in_duiyi:
+            self.logger.error("[对弈竞猜] 导航到对弈竞猜界面失败")
+            return self._fail("导航对弈竞猜界面失败")
+
+        self.logger.info("[对弈竞猜] 已到达对弈竞猜界面")
 
         # 运行状态机
         return await self._run_state_machine(answer)
@@ -174,7 +181,7 @@ class DuiyiJingcaiExecutor(BaseExecutor):
             return
         if self.adapter:
             try:
-                self.adapter.adb.force_stop(self.adapter.cfg.adb_addr, PKG_NAME)
+                await self._adb_force_stop(PKG_NAME)
                 self.logger.info("[对弈竞猜] 游戏已停止")
             except Exception as e:
                 self.logger.error(f"[对弈竞猜] 停止游戏失败: {e}")
@@ -196,9 +203,7 @@ class DuiyiJingcaiExecutor(BaseExecutor):
         answers = self.system_config.duiyi_jingcai_answers
         today_str = now_beijing().strftime("%Y-%m-%d")
         if answers.get("date") != today_str:
-            self.logger.warning(
-                f"[对弈竞猜] 答案日期不匹配: {answers.get('date')} != {today_str}"
-            )
+            self.logger.warning(f"[对弈竞猜] 答案日期不匹配: {answers.get('date')} != {today_str}")
             return None
 
         # 确定当前窗口
@@ -218,9 +223,7 @@ class DuiyiJingcaiExecutor(BaseExecutor):
 
         answer = answers.get(current_window)
         if answer not in ("左", "右"):
-            self.logger.warning(
-                f"[对弈竞猜] 窗口 {current_window} 答案无效: {answer}"
-            )
+            self.logger.warning(f"[对弈竞猜] 窗口 {current_window} 答案无效: {answer}")
             return None
 
         self.logger.info(f"[对弈竞猜] 当前窗口={current_window}, 答案={answer}")
@@ -279,17 +282,10 @@ class DuiyiJingcaiExecutor(BaseExecutor):
             self.logger.info(f"[对弈竞猜] 状态: DY_BET (score={m.score:.3f})")
             return DuiyiState.DY_BET
 
-        # 6. 对弈入口（在庭院可见）
-        m = match_template(gray, self._TPL_DY_RUKOU)
-        if m:
-            self.logger.info(f"[对弈竞猜] 状态: TINGYUAN (score={m.score:.3f})")
-            return DuiyiState.TINGYUAN
-
-        # 7. UIManager 检测庭院
+        # 6. UIDetector 检查是否仍在对弈竞猜界面（可能是加载中的过渡状态）
         detect_result = await self._detect_ui(screenshot)
-        if detect_result and detect_result.ui == "TINGYUAN":
-            self.logger.info("[对弈竞猜] 状态: TINGYUAN (UIDetector)")
-            return DuiyiState.TINGYUAN
+        if detect_result and detect_result.ui == "DUIYI_JINGCAI":
+            self.logger.info("[对弈竞猜] 状态: 在对弈界面但无匹配内部状态，返回 UNKNOWN 等待重试")
 
         self.logger.info(
             f"[对弈竞猜] 状态: UNKNOWN "
@@ -299,7 +295,9 @@ class DuiyiJingcaiExecutor(BaseExecutor):
 
     # ── 快速多轮检测 ──
 
-    async def _rapid_detect_state(self, rapid_count: int = 3, interval: float = 0.15) -> DuiyiState:
+    async def _rapid_detect_state(
+        self, rapid_count: int = 3, interval: float = 0.15
+    ) -> DuiyiState:
         """快速多轮截图检测状态，取首次非 UNKNOWN 结果。
 
         避免单次截图因动画或瞬态导致误判。
@@ -324,12 +322,7 @@ class DuiyiJingcaiExecutor(BaseExecutor):
                 f"状态={state.name}"
             )
 
-            if state == DuiyiState.TINGYUAN:
-                ok = await self._handle_tingyuan()
-                if not ok:
-                    return self._fail("从庭院进入对弈失败")
-
-            elif state == DuiyiState.DY_WIN:
+            if state == DuiyiState.DY_WIN:
                 ok = await self._handle_dy_win()
                 if not ok:
                     return self._fail("领取胜利奖励失败")
@@ -364,10 +357,10 @@ class DuiyiJingcaiExecutor(BaseExecutor):
                 }
 
             elif state == DuiyiState.UNKNOWN:
-                self.logger.warning("[对弈竞猜] 未知状态，尝试回庭院")
-                ok = await self._try_back_to_tingyuan()
+                self.logger.warning("[对弈竞猜] 未知状态，尝试恢复到对弈竞猜界面")
+                ok = await self._try_recover_to_duiyi()
                 if not ok:
-                    return self._fail("回庭院失败")
+                    return self._fail("恢复到对弈竞猜界面失败")
 
             # 状态转换间短暂等待
             await asyncio.sleep(0.15)
@@ -375,16 +368,6 @@ class DuiyiJingcaiExecutor(BaseExecutor):
         return self._fail(f"状态机超过最大迭代次数 ({self._MAX_STATE_ITERATIONS})")
 
     # ── 各状态处理 ──
-
-    async def _handle_tingyuan(self) -> bool:
-        """在庭院中点击对弈入口进入。"""
-        return await self._rapid_click_template(
-            self._TPL_DY_RUKOU,
-            timeout=5.0,
-            settle=0.15,
-            post_delay=0.8,
-            label="对弈竞猜-点击入口",
-        )
 
     async def _handle_dy_win(self) -> bool:
         """上次赢了未领奖：dy_ying.png 可见，点击领取奖励。
@@ -414,15 +397,30 @@ class DuiyiJingcaiExecutor(BaseExecutor):
                 await self._tap(cx, cy)
                 self.logger.info(f"[对弈竞猜] DY_WIN 检测到 dy_next，优先点击下一局 ({cx}, {cy})")
                 await asyncio.sleep(0.8)
+                ok = await self._ensure_jiangli_closed(
+                    watch_timeout=2.0,
+                    interval=0.2,
+                    min_no_popup_watch=0.8,
+                )
+                if not ok:
+                    self.logger.error("[对弈竞猜] DY_WIN 分支: 奖励弹窗关闭确认失败")
+                    return False
                 return True  # 让状态机重新检测画面
 
         # 优先使用配置的矩形区域随机点击，未配置则使用默认区域
         import random
-        coord = getattr(self.system_config, 'duiyi_reward_coord', None) if self.system_config else None
-        if coord and all(k in coord for k in ('x1', 'y1', 'x2', 'y2')):
-            cx = random.randint(int(coord['x1']), int(coord['x2']))
-            cy = random.randint(int(coord['y1']), int(coord['y2']))
-            self.logger.info(f"[对弈竞猜] 使用配置区域 ({coord['x1']},{coord['y1']})-({coord['x2']},{coord['y2']})")
+
+        coord = (
+            getattr(self.system_config, "duiyi_reward_coord", None)
+            if self.system_config
+            else None
+        )
+        if coord and all(k in coord for k in ("x1", "y1", "x2", "y2")):
+            cx = random.randint(int(coord["x1"]), int(coord["x2"]))
+            cy = random.randint(int(coord["y1"]), int(coord["y2"]))
+            self.logger.info(
+                f"[对弈竞猜] 使用配置区域 ({coord['x1']},{coord['y1']})-({coord['x2']},{coord['y2']})"
+            )
         else:
             x1, y1, x2, y2 = self._DEFAULT_REWARD_AREA
             cx = random.randint(x1, x2)
@@ -431,20 +429,29 @@ class DuiyiJingcaiExecutor(BaseExecutor):
 
         await self._tap(cx, cy)
         self.logger.info(f"[对弈竞猜] 点击领取胜利奖励 ({cx}, {cy})")
-        await asyncio.sleep(0.8)
+        await asyncio.sleep(0.4)
+        ok = await self._ensure_jiangli_closed(
+            watch_timeout=2.5,
+            interval=0.2,
+            min_no_popup_watch=0.8,
+        )
+        if not ok:
+            self.logger.error("[对弈竞猜] 领取奖励后弹窗未正常关闭")
+            return False
         return True
 
     async def _handle_dy_jiangli(self) -> bool:
         """关闭奖励弹窗：点击 (20, 20) 关闭，验证弹窗消失，失败重试。"""
         from ..vision.utils import random_point_in_circle
 
-        max_attempts = 3
-        for attempt in range(1, max_attempts + 1):
+        attempt = 0
+        while True:
+            attempt += 1
             close_x, close_y = random_point_in_circle(20, 20, 15)
             await self._tap(close_x, close_y)
             self.logger.info(
                 f"[对弈竞猜] 点击 ({close_x}, {close_y}) 关闭奖励弹窗 "
-                f"(尝试 {attempt}/{max_attempts})"
+                f"(尝试 {attempt})"
             )
             await asyncio.sleep(0.6)
 
@@ -454,9 +461,8 @@ class DuiyiJingcaiExecutor(BaseExecutor):
                 continue
 
             gray = to_gray(screenshot)
-            still_visible = (
-                match_template(gray, self._TPL_JIANGLI)
-                or match_template(gray, self._TPL_POPUP_JINBI)
+            still_visible = match_template(gray, self._TPL_JIANGLI) or match_template(
+                gray, self._TPL_POPUP_JINBI
             )
             if not still_visible:
                 self.logger.info(f"[对弈竞猜] 奖励弹窗已关闭 (尝试 {attempt})")
@@ -465,15 +471,76 @@ class DuiyiJingcaiExecutor(BaseExecutor):
                     await self.popup_handler.check_and_dismiss(screenshot)
                 return True
 
-            self.logger.warning(
-                f"[对弈竞猜] 奖励弹窗仍存在，重试 ({attempt}/{max_attempts})"
+            self.logger.warning(f"[对弈竞猜] 奖励弹窗仍存在，重试 (尝试 {attempt})")
+
+    async def _ensure_jiangli_closed(
+        self,
+        *,
+        watch_timeout: float = 2.0,
+        interval: float = 0.2,
+        min_no_popup_watch: float = 0.8,
+    ) -> bool:
+        """监测并强制关闭奖励弹窗，确保不会遮挡后续按钮。"""
+        loop = asyncio.get_running_loop()
+        start = loop.time()
+        deadline = start + watch_timeout
+
+        saw_popup = False
+        clean_streak = 0
+
+        while loop.time() < deadline:
+            screenshot = await self._capture()
+            if screenshot is None:
+                await asyncio.sleep(interval)
+                continue
+
+            gray = to_gray(screenshot)
+            has_popup = bool(
+                match_template(gray, self._TPL_JIANGLI)
+                or match_template(gray, self._TPL_POPUP_JINBI)
             )
 
-        self.logger.error(f"[对弈竞猜] 奖励弹窗关闭失败，已重试 {max_attempts} 次")
-        return False
+            if has_popup:
+                saw_popup = True
+                clean_streak = 0
+                self.logger.info("[对弈竞猜] 监测到奖励弹窗，执行关闭流程")
+                ok = await self._handle_dy_jiangli()
+                if not ok:
+                    return False
+                await asyncio.sleep(0.25)
+                continue
+
+            clean_streak += 1
+            elapsed = loop.time() - start
+            # 若确实出现过弹窗，要求连续多帧“干净”才认为关闭成功。
+            if saw_popup and clean_streak >= 2:
+                self.logger.info("[对弈竞猜] 奖励弹窗已确认关闭")
+                return True
+            # 若始终未出现弹窗，观察一个最小窗口后放行。
+            if (not saw_popup) and elapsed >= min_no_popup_watch and clean_streak >= 2:
+                self.logger.info("[对弈竞猜] 观察期内未出现奖励弹窗")
+                return True
+
+            await asyncio.sleep(interval)
+
+        if saw_popup:
+            self.logger.error("[对弈竞猜] 奖励弹窗关闭确认超时")
+            return False
+
+        self.logger.info("[对弈竞猜] 奖励弹窗观察超时但未出现，继续流程")
+        return True
 
     async def _handle_dy_next(self) -> bool:
         """点击 dy_next.png 进入下一局押注界面。"""
+        ok = await self._ensure_jiangli_closed(
+            watch_timeout=1.5,
+            interval=0.2,
+            min_no_popup_watch=0.5,
+        )
+        if not ok:
+            self.logger.error("[对弈竞猜] DY_NEXT 前置检查失败：奖励弹窗未关闭")
+            return False
+
         return await self._rapid_click_template(
             self._TPL_DY_NEXT,
             timeout=5.0,
@@ -576,35 +643,48 @@ class DuiyiJingcaiExecutor(BaseExecutor):
             elapsed += interval
 
         if not target_match:
-            self.logger.warning(
-                f"[对弈竞猜] 方向按钮未找到: {answer} (超时 {timeout}s)"
-            )
+            self.logger.warning(f"[对弈竞猜] 方向按钮未找到: {answer} (超时 {timeout}s)")
             return False
 
         cx, cy = target_match.random_point()
         await self._tap(cx, cy)
         self.logger.info(
-            f"[对弈竞猜] 点击{answer}按钮 ({cx}, {cy}) "
-            f"score={target_match.score:.3f}"
+            f"[对弈竞猜] 点击{answer}按钮 ({cx}, {cy}) " f"score={target_match.score:.3f}"
         )
         await asyncio.sleep(0.5)  # post_delay
 
-        # ── 步骤 2：选择押注额度 dy_30.png ──
-        self.logger.info("[对弈竞猜] 步骤2: 选择押注额度 dy_30")
-        ok = await self._rapid_click_template(
-            self._TPL_DY_30,
-            timeout=4.0,
-            settle=0.1,
-            post_delay=0.5,
-            label="对弈竞猜-押注额度",
-        )
-        if not ok:
-            self.logger.warning("[对弈竞猜] dy_30 模板未找到")
-            return False
+        # ── 步骤 2/3：选择押注额度 dy_30.png，并强制等待金币弹窗出现+关闭 ──
+        self.logger.info("[对弈竞猜] 步骤2/3: 选择押注额度并关闭金币弹窗")
+        popup_closed = False
+        max_bet_attempts = 3
+        for attempt in range(1, max_bet_attempts + 1):
+            self.logger.info(
+                f"[对弈竞猜] 点击 dy_30 并等待金币弹窗 (尝试 {attempt}/{max_bet_attempts})"
+            )
+            ok = await self._rapid_click_template(
+                self._TPL_DY_30,
+                timeout=4.0,
+                settle=0.1,
+                post_delay=0.3,
+                label="对弈竞猜-押注额度",
+            )
+            if not ok:
+                self.logger.warning("[对弈竞猜] dy_30 模板未找到")
+                continue
 
-        # ── 步骤 3：关闭金币弹窗 popup_jinbi.png ──
-        self.logger.info("[对弈竞猜] 步骤3: 关闭金币弹窗")
-        await self._dismiss_popup_jinbi()
+            popup_closed = await self._dismiss_popup_jinbi()
+            if popup_closed:
+                break
+
+            self.logger.warning(
+                "[对弈竞猜] 未确认 popup_jinbi 出现并关闭，重试点击 dy_30"
+            )
+
+        if not popup_closed:
+            self.logger.warning(
+                "[对弈竞猜] 金币弹窗未确认，终止本轮以避免误点 dy_jingcai"
+            )
+            return False
 
         # ── 步骤 4：点击竞猜按钮 dy_jingcai.png ──
         self.logger.info("[对弈竞猜] 步骤4: 点击竞猜按钮")
@@ -647,19 +727,17 @@ class DuiyiJingcaiExecutor(BaseExecutor):
             label=f"对弈竞猜-验证{answer}",
         )
         if m:
-            self.logger.info(
-                f"[对弈竞猜] 押注 {answer} 验证成功 (score={m.score:.3f})"
-            )
+            self.logger.info(f"[对弈竞猜] 押注 {answer} 验证成功 (score={m.score:.3f})")
             return True
 
         self.logger.warning(f"[对弈竞猜] 押注验证超时，finish 模板未找到")
         return False
 
-    async def _dismiss_popup_jinbi(self) -> None:
+    async def _dismiss_popup_jinbi(self) -> bool:
         """关闭金币弹窗 popup_jinbi.png。
 
         用 jiangli.png 相同的方式关闭：点击 (20, 20) 附近随机位置。
-        快速多轮检测确保弹窗确实出现再关闭。
+        仅当“检测到弹窗且确认关闭”时返回 True。
         """
         from ..vision.utils import random_point_in_circle
 
@@ -674,20 +752,37 @@ class DuiyiJingcaiExecutor(BaseExecutor):
             label="对弈竞猜-金币弹窗",
         )
         if not m:
-            self.logger.info("[对弈竞猜] 未检测到金币弹窗，跳过关闭")
-            return
+            self.logger.warning("[对弈竞猜] 未检测到金币弹窗 popup_jinbi")
+            return False
 
-        # 关闭弹窗：点击 (20, 20) 附近
-        close_x, close_y = random_point_in_circle(20, 20, 20)
-        await self._tap(close_x, close_y)
-        self.logger.info(f"[对弈竞猜] 点击 ({close_x}, {close_y}) 关闭金币弹窗")
-        await asyncio.sleep(0.5)
+        max_attempts = 3
+        for attempt in range(1, max_attempts + 1):
+            close_x, close_y = random_point_in_circle(20, 20, 20)
+            await self._tap(close_x, close_y)
+            self.logger.info(
+                f"[对弈竞猜] 点击 ({close_x}, {close_y}) 关闭金币弹窗 "
+                f"(尝试 {attempt}/{max_attempts})"
+            )
+            await asyncio.sleep(0.4)
 
-        # 可能有级联弹窗，再检查一次
-        if self.popup_handler:
             screenshot = await self._capture()
-            if screenshot:
-                await self.popup_handler.check_and_dismiss(screenshot)
+            if screenshot is None:
+                continue
+
+            gray = to_gray(screenshot)
+            still_visible = match_template(gray, self._TPL_POPUP_JINBI)
+            if not still_visible:
+                if self.popup_handler:
+                    await self.popup_handler.check_and_dismiss(screenshot)
+                self.logger.info("[对弈竞猜] 金币弹窗已关闭")
+                return True
+
+            self.logger.warning(
+                f"[对弈竞猜] 金币弹窗仍存在，继续重试 ({attempt}/{max_attempts})"
+            )
+
+        self.logger.error(f"[对弈竞猜] 金币弹窗关闭失败，已重试 {max_attempts} 次")
+        return False
 
     # ── 快速多轮检测+点击（移植自 ClimbTowerExecutor） ──
 
@@ -740,6 +835,14 @@ class DuiyiJingcaiExecutor(BaseExecutor):
             await asyncio.sleep(settle)
 
         # Phase 3: 快速连续检测 + 点击
+        cache_enabled = bool(getattr(settings, "vision_frame_cache_enabled", True))
+        unchanged_skip_max = max(
+            0,
+            int(getattr(settings, "vision_unchanged_skip_max", 2)),
+        )
+        last_frame_fp: Optional[int] = None
+        same_frame_miss_streak = 0
+        same_frame_skip_count = 0
         clicked_count = 0
         for i in range(rapid_count):
             screenshot = await self._capture()
@@ -747,34 +850,62 @@ class DuiyiJingcaiExecutor(BaseExecutor):
                 await asyncio.sleep(rapid_interval)
                 continue
 
+            frame_fp: Optional[int] = None
+            if cache_enabled:
+                frame_fp = compute_frame_fingerprint(screenshot)
+                if frame_fp != last_frame_fp:
+                    last_frame_fp = frame_fp
+                    same_frame_miss_streak = 0
+                elif (
+                    unchanged_skip_max > 0
+                    and same_frame_miss_streak > 0
+                    and same_frame_miss_streak % (unchanged_skip_max + 1) != 0
+                ):
+                    same_frame_miss_streak += 1
+                    same_frame_skip_count += 1
+                    await asyncio.sleep(rapid_interval)
+                    continue
+
             # 弹窗检查
             if self.popup_handler:
                 dismissed = await self.popup_handler.check_and_dismiss(screenshot)
                 if dismissed > 0:
+                    last_frame_fp = None
+                    same_frame_miss_streak = 0
                     await asyncio.sleep(rapid_interval)
                     continue
 
             rm = match_template(
                 to_gray(screenshot) if screenshot.ndim != 2 else screenshot,
-                template, **kwargs,
+                template,
+                **kwargs,
             )
             if rm:
                 cx, cy = rm.random_point()
                 await self._tap(cx, cy)
                 clicked_count += 1
+                same_frame_miss_streak = 0
                 self.logger.info(
                     f"{tag}快速点击 ({cx}, {cy}) "
                     f"(cycle={i + 1}/{rapid_count}, "
                     f"total_clicks={clicked_count}, "
                     f"score={rm.score:.3f})"
                 )
+            elif frame_fp is not None:
+                same_frame_miss_streak += 1
 
             await asyncio.sleep(rapid_interval)
 
         if clicked_count > 0:
-            self.logger.info(f"{tag}快速检测完成, 共点击{clicked_count}次")
+            self.logger.info(
+                f"{tag}快速检测完成, 共点击{clicked_count}次, "
+                f"same_frame_skips={same_frame_skip_count}"
+            )
         else:
-            self.logger.warning(f"{tag}快速检测{rapid_count}次均未找到模板")
+            self.logger.warning(
+                f"{tag}快速检测{rapid_count}次均未找到模板, "
+                f"same_frame_skips={same_frame_skip_count}"
+            )
 
         # Phase 4: post_delay（仅点击成功时）
         if clicked_count > 0 and post_delay > 0:
@@ -782,22 +913,22 @@ class DuiyiJingcaiExecutor(BaseExecutor):
 
         return clicked_count > 0
 
-    # ── 恢复到庭院 ──
+    # ── 恢复到对弈竞猜界面 ──
 
-    async def _try_back_to_tingyuan(self) -> bool:
-        """尝试从当前状态返回庭院。"""
-        # 1. 检查是否已在庭院
+    async def _try_recover_to_duiyi(self) -> bool:
+        """尝试从当前状态恢复到对弈竞猜界面。"""
+        # 1. 检查是否已在对弈竞猜界面
         detect_result = await self._detect_ui()
-        if detect_result and detect_result.ui == "TINGYUAN":
+        if detect_result and detect_result.ui == "DUIYI_JINGCAI":
             return True
 
-        # 2. 已知 UI → ensure_ui 导航
+        # 2. 已知 UI → ensure_ui 导航（UIGraph BFS 自动规划路径）
         if detect_result and detect_result.ui not in ("UNKNOWN", None):
-            ok = await self.ui.ensure_ui("TINGYUAN", max_steps=6, step_timeout=3.0)
+            ok = await self.ui.ensure_ui("DUIYI_JINGCAI", max_steps=8, step_timeout=3.0)
             if ok:
                 return True
 
-        # 3. 未知界面：连续尝试点击 back / exit
+        # 3. 未知界面：连续尝试点击 back / exit 回退
         for i in range(5):
             clicked = await click_template(
                 self.adapter,
@@ -823,11 +954,19 @@ class DuiyiJingcaiExecutor(BaseExecutor):
                     popup_handler=self.popup_handler,
                 )
             detect_result = await self._detect_ui()
-            if detect_result and detect_result.ui == "TINGYUAN":
+            if detect_result and detect_result.ui == "DUIYI_JINGCAI":
                 return True
+            # 如果回退到了已知界面，用导航图走到对弈
+            if detect_result and detect_result.ui not in ("UNKNOWN", None):
+                ok = await self.ui.ensure_ui("DUIYI_JINGCAI", max_steps=8, step_timeout=3.0)
+                if ok:
+                    return True
 
-        # 4. 兜底：go_to_tingyuan
-        return await self.ui.go_to_tingyuan()
+        # 4. 兜底：先回庭院，再导航到对弈
+        ok = await self.ui.go_to_tingyuan()
+        if ok:
+            return await self.ui.ensure_ui("DUIYI_JINGCAI", max_steps=6, step_timeout=3.0)
+        return False
 
     # ── 辅助方法 ──
 
