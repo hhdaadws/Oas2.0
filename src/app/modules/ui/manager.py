@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import random
-from typing import TYPE_CHECKING, Optional, Union
+from typing import TYPE_CHECKING, Optional, Sequence, Union
 
 from loguru import logger
 
@@ -27,14 +27,21 @@ EXIT_TEMPLATE = "assets/ui/templates/exit.png"
 BACK_TEMPLATE = "assets/ui/templates/back.png"
 EXIT_DARK_TEMPLATE = "assets/ui/templates/exit_dark.png"
 ACCEPT_TEMPLATE = "assets/ui/templates/accept.png"
+ACCEPT_1_TEMPLATE = "assets/ui/templates/accept_1.png"
 SHIXIAO_TEMPLATES = [
     "assets/ui/templates/shixiao.png",
     "assets/ui/templates/shixiao_1.png",
 ]
+CANGBAOGE_TEMPLATE = "assets/ui/templates/cangbaoge.png"
 
 
 class AccountExpiredException(Exception):
     """账号登录数据已失效（检测到 shixiao 界面）"""
+    pass
+
+
+class CangbaogeListedException(Exception):
+    """账号已上架藏宝阁"""
     pass
 
 
@@ -55,6 +62,7 @@ class UIManager(UIManagerProtocol):
         self.graph = graph or build_default_graph()
         self.detector = UIDetector(self.registry, default_threshold=default_threshold)
         self._popup_handler = popup_handler
+        self._last_ui: str | None = None  # 上下文感知：记住上一次检测到的 UI
 
     @property
     def _is_async(self) -> bool:
@@ -114,10 +122,39 @@ class UIManager(UIManagerProtocol):
             )
         return self._popup_handler
 
-    async def detect_ui(self, image: bytes | None = None) -> UIDetectResult:
+    # ── 上下文感知 ──
+
+    def _build_hints(self, target: str | None = None) -> list[str]:
+        """基于上下文构建优先检测列表。"""
+        hints: list[str] = []
+        if self._last_ui:
+            hints.append(self._last_ui)
+            # 添加相邻 UI（通过 graph 可达的目的地）
+            for edge in self.graph.edges_from(self._last_ui):
+                if edge.dst not in hints:
+                    hints.append(edge.dst)
+        if target and target not in hints:
+            hints.insert(1 if hints else 0, target)
+        return hints
+
+    async def detect_ui(
+        self,
+        image: bytes | None = None,
+        *,
+        hints: Sequence[str] | None = None,
+        anchors: bool = True,
+    ) -> UIDetectResult:
         if image is None:
             image = await self._capture()
-        return await self.detector.async_detect(image)
+        # 使用传入的 hints 或自动构建
+        effective_hints = hints if hints is not None else self._build_hints()
+        result = await self.detector.async_detect(
+            image, hints=effective_hints, anchors=anchors,
+        )
+        # 更新上下文
+        if result.ui != "UNKNOWN":
+            self._last_ui = result.ui
+        return result
 
     async def _try_click_exit_or_back(self, image: bytes) -> bool:
         """尝试在截图中匹配 exit/back 按钮并点击。
@@ -161,6 +198,18 @@ class UIManager(UIManagerProtocol):
                 )
                 raise AccountExpiredException("检测到账号失效界面（ENTER 界面二次校验）")
 
+    def _check_cangbaoge(self, image: bytes) -> None:
+        """检查截图是否为藏宝阁界面，若匹配则抛出 CangbaogeListedException。"""
+        try:
+            m = match_template(image, CANGBAOGE_TEMPLATE)
+        except Exception:
+            return
+        if m is not None:
+            logger.warning(
+                "_check_cangbaoge: 检测到藏宝阁界面 score={:.3f}", m.score,
+            )
+            raise CangbaogeListedException("检测到账号已上架藏宝阁")
+
     def warmup(self) -> None:
         """预加载所有模板到缓存。"""
         self.detector.warmup()
@@ -173,46 +222,73 @@ class UIManager(UIManagerProtocol):
         step_timeout: float = 2.0,
         threshold: float | None = None,
     ) -> bool:
-        # quick check
-        cur = await self.detect_ui()
+        # quick check（截图复用 + hints）
+        image = await self._capture()
+        dismissed = await self.popup_handler.check_and_dismiss(image=image)
+        if dismissed > 0:
+            cur = await self.detect_ui(hints=[target])
+        else:
+            cur = await self.detect_ui(image=image, hints=[target])
         if cur.ui == target:
             return True
 
         steps = 0
         while steps < max_steps:
             steps += 1
-            # 每次迭代先检查弹窗（弹窗可能部分遮挡但不影响 tag 检测）
-            dismissed = await self.popup_handler.check_and_dismiss()
+
+            # 截图复用：一次截图同时用于弹窗检查和 UI 检测
+            image = await self._capture()
+
+            # 弹窗检查（复用截图）
+            dismissed = await self.popup_handler.check_and_dismiss(image=image)
             if dismissed > 0:
-                cur = await self.detect_ui()
+                # 弹窗关闭后画面变了，需要重新截图检测
+                cur = await self.detect_ui(hints=[target])
                 if cur.ui == target:
                     return True
                 continue
+
+            # 无弹窗，复用同一张截图做 UI 检测
+            cur = await self.detect_ui(image=image, hints=[target])
+            if cur.ui == target:
+                return True
+
             # plan path
             if cur.ui == "UNKNOWN":
                 await asyncio.sleep(0.5)
-                cur = await self.detect_ui()
+                cur = await self.detect_ui(hints=[target])
                 if cur.ui == target:
                     return True
+                continue
+
             path = self.graph.find_path(cur.ui, target, max_steps=max_steps)
             if not path:
                 # Cannot plan a path
                 await asyncio.sleep(0.5)
-                cur = await self.detect_ui()
+                cur = await self.detect_ui(hints=[target])
                 if cur.ui == target:
                     return True
                 continue
+
             # execute one edge then poll for UI change
             old_ui = cur.ui
             await apply_edge(self.adapter, path[0], cur, detect_fn=self.detect_ui)
+
+            # 导航轮询优化：无锚点快速检测 + 只关注 target 和 old_ui
             poll_interval = 0.3
             waited = 0.0
+            poll_hints = [target, old_ui]
             while waited < step_timeout:
                 await asyncio.sleep(poll_interval)
                 waited += poll_interval
-                cur = await self.detect_ui()
+                cur = await self.detect_ui(hints=poll_hints, anchors=False)
                 if cur.ui != old_ui:
                     break
+
+            # UI 变化后需要锚点时，做一次完整检测
+            if cur.ui != "UNKNOWN" and cur.ui != old_ui:
+                cur = await self.detect_ui(hints=[cur.ui, target])
+
             if cur.ui == target:
                 return True
         return False
@@ -238,17 +314,23 @@ class UIManager(UIManagerProtocol):
         logger.info("launch_game: 启动游戏 (mode={})", mode)
         await self._start_app(mode)
 
+        launch_hints = ["TINGYUAN", "ENTER", "SHIXIAO"]
+
         elapsed = 0.0
         while elapsed < timeout:
             await asyncio.sleep(poll_interval)
             elapsed += poll_interval
 
-            # 每次轮询先检查弹窗
-            dismissed = await self.popup_handler.check_and_dismiss()
+            # 截图复用：一次截图同时用于弹窗检查和 UI 检测
+            image = await self._capture()
+
+            # 藏宝阁检测（ENTER→庭院过渡中最先检查）
+            self._check_cangbaoge(image)
+
+            # 弹窗检查（复用截图）
+            dismissed = await self.popup_handler.check_and_dismiss(image=image)
             if dismissed > 0:
                 continue
-
-            image = await self._capture()
 
             # 启动阶段检测 accept 弹窗（用户协议等），出现则点击
             accept_match = match_template(image, ACCEPT_TEMPLATE)
@@ -261,8 +343,24 @@ class UIManager(UIManagerProtocol):
                 await self._tap(cx, cy)
                 continue
 
-            result = await self.detector.async_detect(image)
+            # 启动阶段检测 accept_1 弹窗，出现则点击自身关闭
+            accept_1_match = match_template(image, ACCEPT_1_TEMPLATE)
+            if accept_1_match is not None:
+                cx, cy = accept_1_match.random_point()
+                logger.info(
+                    "launch_game: 检测到 accept_1 弹窗 score={:.3f}，点击 ({}, {})",
+                    accept_1_match.score, cx, cy,
+                )
+                await self._tap(cx, cy)
+                continue
+
+            # UI 检测（复用截图 + hints 优先）
+            result = await self.detector.async_detect(image, hints=launch_hints)
             logger.debug("launch_game: 检测结果 ui={} score={:.3f} elapsed={:.1f}s", result.ui, result.score, elapsed)
+
+            # 更新上下文
+            if result.ui != "UNKNOWN":
+                self._last_ui = result.ui
 
             if result.ui == "TINGYUAN":
                 logger.info("launch_game: 已到达庭院界面")
@@ -291,16 +389,28 @@ class UIManager(UIManagerProtocol):
         poll_interval: float = 1.0,
     ) -> bool:
         """在不重启游戏的前提下，尝试从当前 UI 导航到庭院。"""
+        tingyuan_hints = ["TINGYUAN", "ENTER", "SHIXIAO"]
+
         elapsed = 0.0
         while elapsed < timeout:
-            # 每次轮询先检查弹窗
-            dismissed = await self.popup_handler.check_and_dismiss()
+            # 截图复用
+            image = await self._capture()
+
+            # 藏宝阁检测（ENTER→庭院过渡中最先检查）
+            self._check_cangbaoge(image)
+
+            # 弹窗检查（复用截图）
+            dismissed = await self.popup_handler.check_and_dismiss(image=image)
             if dismissed > 0:
                 continue
 
-            image = await self._capture()
-            result = await self.detector.async_detect(image)
+            # UI 检测（复用截图 + hints 优先）
+            result = await self.detector.async_detect(image, hints=tingyuan_hints)
             logger.debug("go_to_tingyuan: ui={} score={:.3f} elapsed={:.1f}s", result.ui, result.score, elapsed)
+
+            # 更新上下文
+            if result.ui != "UNKNOWN":
+                self._last_ui = result.ui
 
             if result.ui == "TINGYUAN":
                 logger.info("go_to_tingyuan: 已到达庭院界面")
@@ -374,7 +484,7 @@ class UIManager(UIManagerProtocol):
                 # 这样批次内连续任务可以从上一个任务的结束界面直接导航，避免冗余回庭院。
                 logger.info("ensure_game_ready: 游戏已就绪，当前 UI={}", cur.ui)
                 return True
-        except AccountExpiredException:
+        except (AccountExpiredException, CangbaogeListedException):
             raise
         except Exception as e:
             logger.warning("ensure_game_ready: UI 检测/跳转失败，准备重启: {}", e)
@@ -490,4 +600,3 @@ class UIManager(UIManagerProtocol):
 
 
 __all__ = ["UIManager"]
-

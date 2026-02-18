@@ -60,6 +60,7 @@ class DuiyiJingcaiExecutor(BaseExecutor):
     _MAX_STATE_ITERATIONS = 15
     _SCREEN_CENTER_X = 480  # 960x540 屏幕中线，用于按 X 坐标区分左右按钮
     _DUIYI_WINDOWS = ["10:00", "12:00", "14:00", "16:00", "18:00", "20:00", "22:00"]
+    _DEFAULT_REWARD_AREA = (450, 307, 501, 339)  # 领奖默认点击区域 (x1, y1, x2, y2)
 
     def __init__(
         self,
@@ -415,16 +416,18 @@ class DuiyiJingcaiExecutor(BaseExecutor):
                 await asyncio.sleep(0.8)
                 return True  # 让状态机重新检测画面
 
-        # 优先使用配置的矩形区域随机点击
+        # 优先使用配置的矩形区域随机点击，未配置则使用默认区域
+        import random
         coord = getattr(self.system_config, 'duiyi_reward_coord', None) if self.system_config else None
         if coord and all(k in coord for k in ('x1', 'y1', 'x2', 'y2')):
-            import random
             cx = random.randint(int(coord['x1']), int(coord['x2']))
             cy = random.randint(int(coord['y1']), int(coord['y2']))
             self.logger.info(f"[对弈竞猜] 使用配置区域 ({coord['x1']},{coord['y1']})-({coord['x2']},{coord['y2']})")
         else:
-            # 回退：使用模板匹配位置
-            cx, cy = m.random_point()
+            x1, y1, x2, y2 = self._DEFAULT_REWARD_AREA
+            cx = random.randint(x1, x2)
+            cy = random.randint(y1, y2)
+            self.logger.info(f"[对弈竞猜] 使用默认区域 ({x1},{y1})-({x2},{y2})")
 
         await self._tap(cx, cy)
         self.logger.info(f"[对弈竞猜] 点击领取胜利奖励 ({cx}, {cy})")
@@ -432,24 +435,42 @@ class DuiyiJingcaiExecutor(BaseExecutor):
         return True
 
     async def _handle_dy_jiangli(self) -> bool:
-        """关闭奖励弹窗：点击 (20, 20) 关闭。
-
-        参考 default_popups.py 中 jiangli 的处理方式。
-        关闭后可能出现插画(chahua)弹窗，由 popup_handler 自动处理。
-        """
+        """关闭奖励弹窗：点击 (20, 20) 关闭，验证弹窗消失，失败重试。"""
         from ..vision.utils import random_point_in_circle
 
-        close_x, close_y = random_point_in_circle(20, 20, 20)
-        await self._tap(close_x, close_y)
-        self.logger.info(f"[对弈竞猜] 点击 ({close_x}, {close_y}) 关闭奖励弹窗")
-        await asyncio.sleep(0.5)
+        max_attempts = 3
+        for attempt in range(1, max_attempts + 1):
+            close_x, close_y = random_point_in_circle(20, 20, 15)
+            await self._tap(close_x, close_y)
+            self.logger.info(
+                f"[对弈竞猜] 点击 ({close_x}, {close_y}) 关闭奖励弹窗 "
+                f"(尝试 {attempt}/{max_attempts})"
+            )
+            await asyncio.sleep(0.6)
 
-        # 主动检查一次弹窗（处理可能的插画 chahua 等级联弹窗）
-        if self.popup_handler:
+            # 验证弹窗是否消失
             screenshot = await self._capture()
-            if screenshot:
-                await self.popup_handler.check_and_dismiss(screenshot)
-        return True
+            if screenshot is None:
+                continue
+
+            gray = to_gray(screenshot)
+            still_visible = (
+                match_template(gray, self._TPL_JIANGLI)
+                or match_template(gray, self._TPL_POPUP_JINBI)
+            )
+            if not still_visible:
+                self.logger.info(f"[对弈竞猜] 奖励弹窗已关闭 (尝试 {attempt})")
+                # 检查级联弹窗（插画 chahua 等）
+                if self.popup_handler:
+                    await self.popup_handler.check_and_dismiss(screenshot)
+                return True
+
+            self.logger.warning(
+                f"[对弈竞猜] 奖励弹窗仍存在，重试 ({attempt}/{max_attempts})"
+            )
+
+        self.logger.error(f"[对弈竞猜] 奖励弹窗关闭失败，已重试 {max_attempts} 次")
+        return False
 
     async def _handle_dy_next(self) -> bool:
         """点击 dy_next.png 进入下一局押注界面。"""
@@ -591,7 +612,7 @@ class DuiyiJingcaiExecutor(BaseExecutor):
             self._TPL_DY_JINGCAI,
             timeout=4.0,
             settle=0.1,
-            post_delay=0.5,
+            post_delay=0.4,
             label="对弈竞猜-竞猜",
         )
         if not ok:

@@ -236,6 +236,58 @@ def register_default_popups(reg: Optional[PopupRegistry] = None) -> None:
         priority=50,
     ))
 
+    # 通用弹窗6（通过关闭按钮模板关闭）
+    r.register(PopupDef(
+        id="popup_6",
+        label="通用弹窗6",
+        detect_template=TemplateDef(
+            name="popup_6",
+            path="assets/ui/templates/popup_6.png",
+        ),
+        dismiss_actions=[
+            DismissAction(
+                type=DismissType.TAP_TEMPLATE,
+                template_path="assets/ui/templates/popup_6_close.png",
+                post_delay_ms=1000,
+            ),
+        ],
+        priority=40,
+    ))
+
+    # 通用弹窗7（点击自身关闭）
+    r.register(PopupDef(
+        id="popup_7",
+        label="通用弹窗7",
+        detect_template=TemplateDef(
+            name="popup_7",
+            path="assets/ui/templates/popup_7.png",
+        ),
+        dismiss_actions=[
+            DismissAction(
+                type=DismissType.TAP_SELF,
+                post_delay_ms=1500,
+            ),
+        ],
+        priority=50,
+    ))
+
+    # 通用弹窗8（点击自身关闭）
+    r.register(PopupDef(
+        id="popup_8",
+        label="通用弹窗8",
+        detect_template=TemplateDef(
+            name="popup_8",
+            path="assets/ui/templates/popup_8.png",
+        ),
+        dismiss_actions=[
+            DismissAction(
+                type=DismissType.TAP_SELF,
+                post_delay_ms=1500,
+            ),
+        ],
+        priority=50,
+    ))
+
     # 祭号弹窗（检测到后抛出异常，由 Worker 处理关闭游戏 + 批量延后）
     r.register(PopupDef(
         id="jihao",

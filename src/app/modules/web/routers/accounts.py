@@ -495,27 +495,17 @@ async def update_rest_config(
     bj_now = now_beijing()
     today_str = bj_now.date().isoformat()
 
-    # 禁用时删除当日 RestPlan（立即生效）
-    if rest_config.enabled == 0:
-        db.query(RestPlan).filter(
-            RestPlan.account_id == account_id,
-            RestPlan.date == today_str,
-        ).delete(synchronize_session=False)
+    # 删除当日旧 RestPlan（禁用或配置变更都需要清除）
+    db.query(RestPlan).filter(
+        RestPlan.account_id == account_id,
+        RestPlan.date == today_str,
+    ).delete(synchronize_session=False)
 
-    # 启用时：如果当日尚无 RestPlan，立即生成一个
+    # 启用时：按新配置立即生成当日 RestPlan
     if rest_config.enabled == 1:
-        existing_plan = (
-            db.query(RestPlan)
-            .filter(
-                RestPlan.account_id == account_id,
-                RestPlan.date == today_str,
-            )
-            .first()
-        )
-        if not existing_plan:
-            plan = _generate_rest_plan_for_today(account_id, rest_config, bj_now, today_str)
-            if plan:
-                db.add(plan)
+        plan = _generate_rest_plan_for_today(account_id, rest_config, bj_now, today_str)
+        if plan:
+            db.add(plan)
 
     db.commit()
 
@@ -535,7 +525,7 @@ async def update_rest_config(
 @router.get("/{account_id}/rest-plan")
 async def get_rest_plan(account_id: int, db: Session = Depends(get_db)):
     """
-    获取今日休息计划
+    获取今日休息计划（若已启用但无计划，按需自动生成）
     """
     account = db.query(GameAccount).filter(GameAccount.id == account_id).first()
     if not account:
@@ -551,15 +541,26 @@ async def get_rest_plan(account_id: int, db: Session = Depends(get_db)):
         return {"message": "休息功能已关闭"}
 
     from ....core.timeutils import now_beijing
-    today = now_beijing().date().isoformat()
+    bj_now = now_beijing()
+    today = bj_now.date().isoformat()
     plan = (
         db.query(RestPlan)
         .filter(RestPlan.account_id == account_id, RestPlan.date == today)
         .first()
     )
 
+    # 按需生成：rest 已启用但当日无计划时自动创建
     if not plan:
-        return {"message": "今日暂无休息计划"}
+        if not rest_config:
+            rest_config = AccountRestConfig(account_id=account_id)
+            db.add(rest_config)
+            db.flush()
+        plan = _generate_rest_plan_for_today(account_id, rest_config, bj_now, today)
+        if plan:
+            db.add(plan)
+            db.commit()
+        else:
+            return {"message": "今日剩余时间不足，无法生成休息计划"}
 
     return {"date": plan.date, "start_time": plan.start_time, "end_time": plan.end_time}
 

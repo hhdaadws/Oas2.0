@@ -9,6 +9,7 @@ class AccountStatus(IntEnum):
     """账号状态"""
     ACTIVE = 1  # 可执行
     INVALID = 2  # 失效
+    CANGBAOGE = 3  # 上架藏宝阁
 
 
 class AccountProgress(str, Enum):

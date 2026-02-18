@@ -33,16 +33,16 @@ def _auto_io_pool_size() -> int:
             count = db.query(Emulator).count()
         return min(max(8, count * 2 + 4), 32)
     except Exception:
-        return 16
+        return 24
 
 
 def _auto_compute_pool_size() -> int:
     """根据 CPU 核数自动计算计算线程池大小。
 
-    规则: max(4, cpu_count // 2)，上限 16。
+    规则: max(4, cpu_count // 2)，上限 24。
     """
     cpu = os.cpu_count() or 4
-    return min(max(4, cpu // 2), 16)
+    return min(max(4, cpu // 2), 24)
 
 
 def get_io_pool() -> ThreadPoolExecutor:

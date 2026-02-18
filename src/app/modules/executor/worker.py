@@ -23,7 +23,7 @@ from ...core.timeutils import (
 )
 from ...db.base import SessionLocal
 from ...db.models import Emulator, GameAccount, SystemConfig, Task
-from ..ui.manager import AccountExpiredException
+from ..ui.manager import AccountExpiredException, CangbaogeListedException
 from ..ui.popups import JihaoPopupException
 from ..emu.adapter import EmulatorAdapter
 from .base import MockExecutor
@@ -357,6 +357,23 @@ class WorkerActor:
                 db_log(intent.account_id, "账号登录失效，已标记为无效", level="ERROR")
                 self._save_fail_screenshot(intent, shared_adapter, reason="account_expired")
                 break
+            except CangbaogeListedException:
+                if not shared_adapter and hasattr(self, '_last_executor_adapter') and self._last_executor_adapter:
+                    shared_adapter = self._last_executor_adapter
+                batch_success = False
+                abort = True
+                self._log.warning(f"检测到藏宝阁界面，关闭游戏并标记账号: account={intent.account_id}")
+                await self._mark_account_cangbaoge(intent.account_id)
+                db_log(intent.account_id, "检测到账号已上架藏宝阁，已标记状态", level="WARNING")
+                self._save_fail_screenshot(intent, shared_adapter, reason="cangbaoge_listed")
+                if shared_adapter:
+                    try:
+                        shared_adapter.adb.force_stop(
+                            shared_adapter.cfg.adb_addr, self._PKG_NAME
+                        )
+                    except Exception as e:
+                        self._log.error(f"藏宝阁关闭游戏失败: {e}")
+                break
             except Exception as exc:
                 batch_success = False
                 self._log.error(f"Intent error: {exc}")
@@ -423,6 +440,20 @@ class WorkerActor:
                         self._log.info(f"账号已标记为失效: account={account_id}")
             except Exception as e:
                 self._log.error(f"标记账号失效失败: account={account_id}, error={e}")
+        await run_in_db(_do)
+
+    async def _mark_account_cangbaoge(self, account_id: int) -> None:
+        """将账号状态标记为上架藏宝阁"""
+        def _do():
+            try:
+                with SessionLocal() as db:
+                    account = db.query(GameAccount).filter(GameAccount.id == account_id).first()
+                    if account:
+                        account.status = AccountStatus.CANGBAOGE
+                        db.commit()
+                        self._log.info(f"账号已标记为上架藏宝阁: account={account_id}")
+            except Exception as e:
+                self._log.error(f"标记账号上架藏宝阁失败: account={account_id}, error={e}")
         await run_in_db(_do)
 
     async def _run_intent(

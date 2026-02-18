@@ -83,7 +83,7 @@
  [],
  False,
  False,
- 1771312957,
+ 1771344474,
  [('run.exe',
    'D:\\Users\\ASUS\\anaconda3\\envs\\timeocr\\Lib\\site-packages\\PyInstaller\\bootloader\\Windows-64bit-intel\\run.exe',
    'EXECUTABLE')],

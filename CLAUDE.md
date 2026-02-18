@@ -4,6 +4,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 中文回答
 
+另见 `AGENTS.md`（通用 AI 代理指南，含最新执行约定）。
+
 ## 开发命令
 
 ### 环境初始化
@@ -29,11 +31,15 @@ venv\Scripts\python -m uvicorn app.main:app --app-dir src --reload --host 0.0.0.
 
 **PYTHONPATH=src 是必须的**，否则 `from app.xxx` 导入会失败。
 
+辅助启动脚本：`powershell -ExecutionPolicy Bypass -File scripts/start-backend.ps1`
+
 ### 启动前端
 ```bash
 cd frontend && npm install && npm run dev
 ```
 前端开发端口 9000（`vite.config.js` 配置），后端端口 9001。Vite 已配置 `/api` → `http://127.0.0.1:9001` 和 `/ws` → `ws://127.0.0.1:9001` 代理。后端 CORS 已配置 `allow_origins=["*"]`。
+
+构建前端：`cd frontend && npm run build`
 
 ### 一键启动
 ```bash
@@ -41,12 +47,8 @@ start.bat                    # Windows 一键启动（含 Electron 桌面端）
 cd desktop && npm run start  # 仅启动 Electron 桌面壳
 ```
 
-### 数据库迁移
-```bash
-alembic upgrade head
-# 或 Windows 脚本
-powershell -ExecutionPolicy Bypass -File scripts/migrate.ps1
-```
+### 数据库
+数据库使用 SQLite，启动时通过 `Base.metadata.create_all()` 自动建表（见 `src/app/db/base.py`）。`alembic` 在依赖中但项目目前无独立迁移目录，模型变更直接删库重建或手动 ALTER。
 
 ### 测试
 ```bash
@@ -66,6 +68,12 @@ flake8 src
 
 ### 提交规范
 提交信息格式：`feat(scope): ...`、`fix: ...`、`chore: ...`。每次提交聚焦单一变更。
+
+### 打包发布
+```bash
+python build.py   # 一键打包：前端构建 → PyInstaller → 后处理
+```
+输出到 `dist/YYSAutomation/`。`build.py` 中的 `CONDA_ENV` 路径需根据本地环境修改。打包规范文件为 `yys_automation.spec`，PyInstaller 钩子在 `hooks/` 目录。
 
 ### Windows 注意事项
 - PowerShell 读取文件时若出现乱码，使用 `-Encoding UTF8` 参数（如 `Get-Content -Encoding UTF8`）
@@ -104,6 +112,7 @@ UIRegistry → UIDetector → UIGraph → UIManager → PopupHandler
 - **UIGraph**（`src/app/modules/ui/graph.py`）：UI 界面之间的有向图，BFS 规划从当前界面到目标界面的导航路径。每条边（`Edge`）包含 `Action` 列表（tap/swipe/sleep/tap_anchor）
 - **UIManager**（`src/app/modules/ui/manager.py`）：对外统一入口。`ensure_game_ready()` 是任务执行前的标准调用（未启动→启动；已启动→UI 跳转到庭院；异常→重启）。`ensure_ui(target)` 自动规划路径并逐步导航
 - **PopupHandler**（`src/app/modules/ui/popup_handler.py`）：弹窗检测与关闭，每次 UI 操作前自动调用
+- UI 模板图片存放在 `assets/ui/templates/`，弹窗模板在 `assets/ui/` 根目录
 
 所有模拟器分辨率固定 `960×540`。检测到 `ENTER` 界面后点击固定坐标 `(487, 447)`。
 
@@ -116,8 +125,16 @@ UIRegistry → UIDetector → UIGraph → UIManager → PopupHandler
   - `yuhun_detect.py` — 御魂副本检测
   - `battle_lineup_detect.py` — 战斗阵容检测
   - `color_detect.py` — 基于颜色的 UI 元素检测
-- **OCR**（`src/app/modules/ocr/`）：PaddleOCR 中文识别，支持 ROI 裁剪优化。用于读取游戏内资源数值（体力、金币等）
+- **OCR**（`src/app/modules/ocr/`）：PaddleOCR 中文识别，支持 ROI 裁剪优化。启动时初始化 OCR 实例池（`ocr_pool_size` + `digit_ocr_pool_size`，默认各 2 个）
 - 截图方式：`adb`（默认）或 `ipc`（MuMu IPC DLL）
+
+### 线程池
+
+`src/app/core/thread_pool.py` 提供两种全局线程池，将阻塞操作从 asyncio 事件循环 offload 出去：
+
+- **I/O 池**（`get_io_pool()` / `run_in_io()` / `run_in_db()`）：ADB subprocess 调用、同步 DB 操作。大小自动计算 `max(8, emulator_count * 2 + 4)`，上限 32
+- **计算池**（`get_compute_pool()` / `run_in_compute()`）：OpenCV 模板匹配、OCR。大小自动计算 `max(4, cpu_count // 2)`，上限 24
+- 可通过 `.env` 的 `IO_THREAD_POOL_SIZE` / `COMPUTE_THREAD_POOL_SIZE` 手动覆盖
 
 ### 阵容系统
 
@@ -171,6 +188,12 @@ Vue 3 + Vite + Element Plus + Pinia。页面在 `frontend/src/views/`，API 封�
 
 **认证**：JWT，token 存储在 `localStorage` key `yys_auth_token`。`apiRequest()`（`frontend/src/config/index.js`）自动附加 `Authorization: Bearer <token>`。非 JSON 响应（如截图 PNG）需用原始 `fetch()` 手动带 token。
 
+**实时通信**：通过 `python-socketio` WebSocket 推送实时状态更新（如任务进度、Worker 状态）。
+
+### 后端入口与认证
+
+`src/app/main.py` 是 FastAPI 入口。`AuthMiddleware` 对所有请求做 JWT Bearer 验证，以下路径免认证：`/`、`/health`、`/api/auth/login`、`/api/auth/status`。API 路由注册在 `src/app/modules/web/routers/`。
+
 ## 关键约定
 
 ### 调度链路
@@ -196,7 +219,17 @@ Vue 3 + Vite + Element Plus + Pinia。页面在 `frontend/src/views/`，API 封�
   - `MUMU_MANAGER_PATH`、`ADB_PATH`：模拟器和 ADB 路径
   - `OCR_MODEL_DIR`：PaddleOCR 模型目录（默认 `C:/data/ocr_model`）
   - `JWT_SECRET`：首次启动自动生成并追加到 `.env`
+  - `COOP_TIMES`：勾协时间点（默认 `18:00,21:00`）
+  - `DELEGATE_TIME`：弥助时间（默认 `18:00`）
+  - `STAMINA_THRESHOLD`：体力阈值（默认 `1000`）
+  - `IO_THREAD_POOL_SIZE` / `COMPUTE_THREAD_POOL_SIZE`：线程池大小（0 表示自动计算）
 - `data.db`、`logs/`、`putonglogindata/`、`gouxielogindata/` 等为本地运行产物，不应提交
+
+### 资源目录
+- `assets/ui/templates/`：UI 界面识别模板图片（由 `UIRegistry` 加载）
+- `assets/ui/`：弹窗模板图片（由 `PopupHandler` 加载）
+- `assets/tasks/`：任务相关 YAML 配置（如 `climb_tower.yaml`）
+- `assets/ui/shishen/`：式神相关图片资源
 
 ### 账号抓取
 - 游戏渠道包名：`com.netease.onmyoji.wyzymnqsd_cps`

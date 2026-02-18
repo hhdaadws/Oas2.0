@@ -36,6 +36,7 @@
                 >
                   <el-option label="正常" :value="1" />
                   <el-option label="失效" :value="2" />
+                  <el-option label="藏宝阁" :value="3" />
                 </el-select>
                 <el-input
                   v-model="searchText"
@@ -172,6 +173,7 @@
               >
                 <el-option :value="1" label="可执行" />
                 <el-option :value="2" label="失效" />
+                <el-option :value="3" label="上架藏宝阁" />
               </el-select>
             </el-descriptions-item>
             <el-descriptions-item label="备注" :span="2">
@@ -2186,12 +2188,16 @@ const handleAddGame = async () => {
 
 // 获取状态类型
 const getStatusType = (status) => {
-  return status === 1 ? 'success' : 'danger'
+  if (status === 1) return 'success'
+  if (status === 3) return 'warning'
+  return 'danger'
 }
 
 // 获取状态文本
 const getStatusText = (status) => {
-  return status === 1 ? '正常' : '失效'
+  if (status === 1) return '正常'
+  if (status === 3) return '藏宝阁'
+  return '失效'
 }
 
 // 删除游戏账号
