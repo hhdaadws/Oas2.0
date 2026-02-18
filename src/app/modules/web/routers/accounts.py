@@ -3,7 +3,7 @@
 """
 from typing import List, Optional, Dict, Any
 from copy import deepcopy
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, ConfigDict, Field
 from datetime import datetime, timedelta, time
@@ -394,6 +394,43 @@ async def update_task_config(
     logger.info(f"更新账号 {account.login_id} 任务配置")
 
     return {"message": "任务配置更新成功", "config": merged_config}
+
+
+@router.get("/{account_id}/logs")
+async def get_account_logs(
+    account_id: int,
+    limit: int = Query(30, ge=1, le=200, description="返回条数"),
+    offset: int = Query(0, ge=0, description="偏移量"),
+    level: Optional[str] = Query(None, description="日志级别（INFO/WARNING/ERROR）"),
+    db: Session = Depends(get_db),
+):
+    """获取单个账号的任务执行日志。"""
+    account = db.query(GameAccount).filter(GameAccount.id == account_id).first()
+    if not account:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="账号不存在")
+
+    query = db.query(Log).filter(Log.account_id == account_id).order_by(Log.ts.desc())
+
+    if level:
+        query = query.filter(Log.level == level.upper())
+
+    total = query.count()
+    logs = query.offset(offset).limit(limit).all()
+
+    result = []
+    for log in logs:
+        result.append(
+            {
+                "id": log.id,
+                "account_id": log.account_id,
+                "type": log.type,
+                "level": log.level,
+                "message": log.message,
+                "timestamp": log.ts.isoformat(),
+            }
+        )
+
+    return {"total": total, "limit": limit, "offset": offset, "logs": result}
 
 
 @router.get("/{account_id}/rest-config")

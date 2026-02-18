@@ -135,7 +135,7 @@ function createWindow() {
   })
 
   mainWindow.setMenuBarVisibility(false)
-  mainWindow.loadURL(FRONTEND_URL)
+  mainWindow.loadURL(`${FRONTEND_URL}/login`)
 
   mainWindow.on('closed', () => {
     mainWindow = null

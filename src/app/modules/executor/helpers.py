@@ -9,8 +9,11 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import time
 from typing import TYPE_CHECKING, Any, Optional, Union
 
+from ...core.config import settings
+from ..vision.frame_cache import compute_frame_fingerprint
 from ..vision.template import Match, match_template
 
 if TYPE_CHECKING:
@@ -18,33 +21,153 @@ if TYPE_CHECKING:
     from ..emu.async_adapter import AsyncEmulatorAdapter
 
 
-async def _adapter_capture(adapter: "Union[EmulatorAdapter, AsyncEmulatorAdapter]", method: str):
+_CACHE_STATS_LOG_INTERVAL_SEC = float(
+    max(1, int(getattr(settings, "vision_cache_stats_interval_sec", 10)))
+)
+_TEMPLATE_CACHE_STATS = {
+    "calls": 0,
+    "same_frame_skips": 0,
+    "last_log_ts": 0.0,
+}
+_TEXT_CACHE_STATS = {
+    "calls": 0,
+    "same_frame_skips": 0,
+    "last_log_ts": 0.0,
+}
+
+
+async def _adapter_capture(
+    adapter: "Union[EmulatorAdapter, AsyncEmulatorAdapter]", method: str
+):
     """兼容同步/异步 adapter 的截图，直接返回 BGR ndarray。"""
-    result = adapter.capture_ndarray(method)
-    if inspect.isawaitable(result):
-        return await result
-    return result
+    from ..emu.async_adapter import AsyncEmulatorAdapter
+
+    if isinstance(adapter, AsyncEmulatorAdapter):
+        result = adapter.capture_ndarray(method)
+        if inspect.isawaitable(result):
+            return await result
+        return result
+
+    from ...core.thread_pool import run_in_emulator_io
+
+    return await run_in_emulator_io(
+        adapter.cfg.adb_addr,
+        adapter.capture_ndarray,
+        method,
+    )
 
 
-async def _adapter_tap(adapter: "Union[EmulatorAdapter, AsyncEmulatorAdapter]", x: int, y: int) -> None:
+async def _adapter_tap(
+    adapter: "Union[EmulatorAdapter, AsyncEmulatorAdapter]", x: int, y: int
+) -> None:
     """兼容同步/异步 adapter 的 adb tap。"""
     from ..emu.async_adapter import AsyncEmulatorAdapter
+
     if isinstance(adapter, AsyncEmulatorAdapter):
         await adapter.tap(x, y)
     else:
-        adapter.adb.tap(adapter.cfg.adb_addr, x, y)
+        from ...core.thread_pool import run_in_emulator_io
+
+        await run_in_emulator_io(
+            adapter.cfg.adb_addr,
+            adapter.adb.tap,
+            adapter.cfg.adb_addr,
+            x,
+            y,
+        )
 
 
 async def _adapter_swipe(
     adapter: "Union[EmulatorAdapter, AsyncEmulatorAdapter]",
-    x1: int, y1: int, x2: int, y2: int, dur_ms: int = 300,
+    x1: int,
+    y1: int,
+    x2: int,
+    y2: int,
+    dur_ms: int = 300,
 ) -> None:
     """兼容同步/异步 adapter 的 swipe。"""
     from ..emu.async_adapter import AsyncEmulatorAdapter
+
     if isinstance(adapter, AsyncEmulatorAdapter):
         await adapter.swipe(x1, y1, x2, y2, dur_ms)
     else:
-        adapter.swipe(x1, y1, x2, y2, dur_ms)
+        from ...core.thread_pool import run_in_emulator_io
+
+        await run_in_emulator_io(
+            adapter.cfg.adb_addr,
+            adapter.swipe,
+            x1,
+            y1,
+            x2,
+            y2,
+            dur_ms,
+        )
+
+
+def _vision_cache_options() -> tuple[bool, int, float]:
+    """获取识图缓存相关参数。"""
+    enabled = bool(getattr(settings, "vision_frame_cache_enabled", True))
+    unchanged_skip_max = max(0, int(getattr(settings, "vision_unchanged_skip_max", 2)))
+    min_retry_sleep = max(
+        0.0,
+        float(getattr(settings, "vision_min_retry_sleep_ms", 50)) / 1000.0,
+    )
+    return enabled, unchanged_skip_max, min_retry_sleep
+
+
+def _should_skip_same_frame(
+    frame_fp: int | None,
+    last_frame_fp: int | None,
+    miss_streak: int,
+    unchanged_skip_max: int,
+) -> bool:
+    if unchanged_skip_max <= 0:
+        return False
+    if frame_fp is None or last_frame_fp is None or frame_fp != last_frame_fp:
+        return False
+    if miss_streak <= 0:
+        return False
+    return miss_streak % (unchanged_skip_max + 1) != 0
+
+
+def _maybe_log_cache_stats(
+    log: Any,
+    stats: dict[str, float | int],
+    label: str,
+    *,
+    force: bool = False,
+) -> None:
+    if log is None:
+        return
+    now = time.monotonic()
+    last = float(stats.get("last_log_ts", 0.0))
+    if (not force) and now - last < _CACHE_STATS_LOG_INTERVAL_SEC:
+        return
+    calls = int(stats.get("calls", 0))
+    skips = int(stats.get("same_frame_skips", 0))
+    if calls <= 0:
+        return
+    stats["last_log_ts"] = now
+    log.info(
+        "[vision-cache:{}] calls={} same_frame_skips={} skip_per_call={:.3f}",
+        label,
+        calls,
+        skips,
+        (skips / calls) if calls > 0 else 0.0,
+    )
+
+
+def log_wait_cache_stats(log: Any | None = None, *, force: bool = True) -> None:
+    """打印 wait_for_template / wait_for_text 的缓存统计。"""
+    logger_obj = log
+    if logger_obj is None:
+        from ...core.logger import logger as _logger
+
+        logger_obj = _logger
+    _maybe_log_cache_stats(
+        logger_obj, _TEMPLATE_CACHE_STATS, "wait_for_template", force=force
+    )
+    _maybe_log_cache_stats(logger_obj, _TEXT_CACHE_STATS, "wait_for_text", force=force)
 
 
 async def wait_for_template(
@@ -79,26 +202,60 @@ async def wait_for_template(
     elapsed = 0.0
     kwargs = {"threshold": threshold} if threshold is not None else {}
     templates = [template] if isinstance(template, str) else template
+    cache_enabled, unchanged_skip_max, min_retry_sleep = _vision_cache_options()
+    last_frame_fp: int | None = None
+    same_frame_miss_streak = 0
+    if cache_enabled:
+        _TEMPLATE_CACHE_STATS["calls"] = int(_TEMPLATE_CACHE_STATS["calls"]) + 1
 
     while elapsed < timeout:
         screenshot = await _adapter_capture(adapter, capture_method)
         if screenshot is not None:
+            frame_fp: int | None = None
+            if cache_enabled:
+                frame_fp = compute_frame_fingerprint(screenshot)
+                if frame_fp != last_frame_fp:
+                    last_frame_fp = frame_fp
+                    same_frame_miss_streak = 0
+                elif _should_skip_same_frame(
+                    frame_fp, last_frame_fp, same_frame_miss_streak, unchanged_skip_max
+                ):
+                    same_frame_miss_streak += 1
+                    if cache_enabled:
+                        _TEMPLATE_CACHE_STATS["same_frame_skips"] = (
+                            int(_TEMPLATE_CACHE_STATS["same_frame_skips"]) + 1
+                        )
+                    await asyncio.sleep(interval)
+                    elapsed += interval
+                    continue
             for tpl in templates:
                 m = match_template(screenshot, tpl, **kwargs)
                 if m:
                     if log:
-                        log.info(f"{tag}检测到模板 {tpl} (score={m.score:.3f}, elapsed={elapsed:.1f}s)")
+                        log.info(
+                            f"{tag}检测到模板 {tpl} (score={m.score:.3f}, elapsed={elapsed:.1f}s)"
+                        )
+                        _maybe_log_cache_stats(
+                            log, _TEMPLATE_CACHE_STATS, "wait_for_template"
+                        )
                     return m
+            if frame_fp is not None:
+                same_frame_miss_streak += 1
             # 所有模板都未匹配时检查弹窗
             if popup_handler is not None:
                 dismissed = await popup_handler.check_and_dismiss(screenshot)
                 if dismissed > 0:
+                    last_frame_fp = None
+                    same_frame_miss_streak = 0
+                    if min_retry_sleep > 0:
+                        await asyncio.sleep(min_retry_sleep)
                     continue  # 弹窗关闭后立即重试，不消耗 interval
         await asyncio.sleep(interval)
         elapsed += interval
 
     if log:
         log.warning(f"{tag}等待模板超时 ({timeout:.0f}s)")
+        _maybe_log_cache_stats(log, _TEMPLATE_CACHE_STATS, "wait_for_template")
     return None
 
 
@@ -143,9 +300,14 @@ async def click_template(
 
     # 1) 等待模板出现
     m = await wait_for_template(
-        adapter, capture_method, template,
-        timeout=timeout, interval=interval,
-        threshold=threshold, log=log, label=label,
+        adapter,
+        capture_method,
+        template,
+        timeout=timeout,
+        interval=interval,
+        threshold=threshold,
+        log=log,
+        label=label,
         popup_handler=popup_handler,
     )
     if not m:
@@ -206,9 +368,14 @@ async def click_template(
 
 
 __all__ = [
-    "wait_for_template", "click_template", "wait_for_text", "click_text",
+    "wait_for_template",
+    "click_template",
+    "wait_for_text",
+    "click_text",
     "wait_for_qrcode",
-    "check_and_handle_liao_not_joined", "check_and_create_jiejie",
+    "log_wait_cache_stats",
+    "check_and_handle_liao_not_joined",
+    "check_and_create_jiejie",
 ]
 
 
@@ -300,13 +467,37 @@ async def wait_for_text(
     """
     tag = f"[{label}] " if label else ""
     elapsed = 0.0
+    cache_enabled, unchanged_skip_max, min_retry_sleep = _vision_cache_options()
+    last_frame_fp: int | None = None
+    same_frame_miss_streak = 0
+    if cache_enabled:
+        _TEXT_CACHE_STATS["calls"] = int(_TEXT_CACHE_STATS["calls"]) + 1
 
     while elapsed < timeout:
         screenshot = await _adapter_capture(adapter, capture_method)
         if screenshot is not None:
+            frame_fp: int | None = None
+            if cache_enabled:
+                frame_fp = compute_frame_fingerprint(screenshot)
+                if frame_fp != last_frame_fp:
+                    last_frame_fp = frame_fp
+                    same_frame_miss_streak = 0
+                elif _should_skip_same_frame(
+                    frame_fp, last_frame_fp, same_frame_miss_streak, unchanged_skip_max
+                ):
+                    same_frame_miss_streak += 1
+                    if cache_enabled:
+                        _TEXT_CACHE_STATS["same_frame_skips"] = (
+                            int(_TEXT_CACHE_STATS["same_frame_skips"]) + 1
+                        )
+                    await asyncio.sleep(interval)
+                    elapsed += interval
+                    continue
             box = await _async_find_text(
-                screenshot, keyword,
-                roi=roi, min_confidence=min_confidence,
+                screenshot,
+                keyword,
+                roi=roi,
+                min_confidence=min_confidence,
             )
             if box:
                 if log:
@@ -315,17 +506,25 @@ async def wait_for_text(
                         f" (confidence={box.confidence:.3f},"
                         f" elapsed={elapsed:.1f}s)"
                     )
+                    _maybe_log_cache_stats(log, _TEXT_CACHE_STATS, "wait_for_text")
                 return box
+            if frame_fp is not None:
+                same_frame_miss_streak += 1
             # 文本未找到时检查弹窗
             if popup_handler is not None:
                 dismissed = await popup_handler.check_and_dismiss(screenshot)
                 if dismissed > 0:
+                    last_frame_fp = None
+                    same_frame_miss_streak = 0
+                    if min_retry_sleep > 0:
+                        await asyncio.sleep(min_retry_sleep)
                     continue  # 弹窗关闭后立即重试
         await asyncio.sleep(interval)
         elapsed += interval
 
     if log:
         log.warning(f'{tag}OCR 等待 "{keyword}" 超时 ({timeout:.0f}s)')
+        _maybe_log_cache_stats(log, _TEXT_CACHE_STATS, "wait_for_text")
     return None
 
 
@@ -359,9 +558,15 @@ async def click_text(
     tag = f"[{label}] " if label else ""
 
     box = await wait_for_text(
-        adapter, capture_method, keyword,
-        roi=roi, timeout=timeout, interval=interval,
-        min_confidence=min_confidence, log=log, label=label,
+        adapter,
+        capture_method,
+        keyword,
+        roi=roi,
+        timeout=timeout,
+        interval=interval,
+        min_confidence=min_confidence,
+        log=log,
+        label=label,
         popup_handler=popup_handler,
     )
     if not box:
@@ -374,8 +579,10 @@ async def click_text(
     screenshot = await _adapter_capture(adapter, capture_method)
     if screenshot is not None:
         fresh = await _async_find_text(
-            screenshot, keyword,
-            roi=roi, min_confidence=min_confidence,
+            screenshot,
+            keyword,
+            roi=roi,
+            min_confidence=min_confidence,
         )
         if fresh:
             box = fresh
@@ -445,16 +652,23 @@ async def check_and_handle_liao_not_joined(
 
     # 2. 点击确认
     ok = await click_template(
-        adapter, capture_method, _TPL_LIAO_QUEDING,
-        timeout=5.0, interval=0.5,
-        settle=0.3, post_delay=1.0,
-        log=log, label=f"{label}寮申请确认" if label else "寮申请确认",
+        adapter,
+        capture_method,
+        _TPL_LIAO_QUEDING,
+        timeout=5.0,
+        interval=0.5,
+        settle=0.3,
+        post_delay=1.0,
+        log=log,
+        label=f"{label}寮申请确认" if label else "寮申请确认",
     )
     if not ok and log:
         log.warning(f"{tag}未检测到确认按钮，申请可能未提交")
 
     # 3. 延后所有寮相关任务（offload 到线程池）
-    await _defer_all_liao_tasks(account_id, _LIAO_NOT_JOINED_DELAY_HOURS, log=log, label=label)
+    await _defer_all_liao_tasks(
+        account_id, _LIAO_NOT_JOINED_DELAY_HOURS, log=log, label=label
+    )
 
     return True
 
@@ -485,7 +699,9 @@ async def _defer_all_liao_tasks(
     def _do_defer():
         try:
             with SessionLocal() as db:
-                account = db.query(GameAccount).filter(GameAccount.id == account_id).first()
+                account = (
+                    db.query(GameAccount).filter(GameAccount.id == account_id).first()
+                )
                 if not account:
                     return
                 cfg = account.task_config or {}
@@ -540,9 +756,14 @@ async def check_and_create_jiejie(
 
     # 1. 点击结界按钮进入结界子页面
     clicked = await click_template(
-        adapter, capture_method, _TPL_JIEJIE,
-        timeout=8.0, settle=0.5, post_delay=2.0,
-        log=log, label=f"{label}结界按钮" if label else "结界按钮",
+        adapter,
+        capture_method,
+        _TPL_JIEJIE,
+        timeout=8.0,
+        settle=0.5,
+        post_delay=2.0,
+        log=log,
+        label=f"{label}结界按钮" if label else "结界按钮",
         popup_handler=popup_handler,
     )
     if not clicked:
@@ -552,9 +773,13 @@ async def check_and_create_jiejie(
 
     # 2. 检测创建结界按钮
     create_match = await wait_for_template(
-        adapter, capture_method, _TPL_CHUANGJIAN_JIEJIE,
-        timeout=5.0, interval=0.5,
-        log=log, label=f"{label}创建结界" if label else "创建结界",
+        adapter,
+        capture_method,
+        _TPL_CHUANGJIAN_JIEJIE,
+        timeout=5.0,
+        interval=0.5,
+        log=log,
+        label=f"{label}创建结界" if label else "创建结界",
         popup_handler=popup_handler,
     )
 
@@ -568,9 +793,14 @@ async def check_and_create_jiejie(
 
         # 返回寮界面
         await click_template(
-            adapter, capture_method, _TPL_BACK,
-            timeout=5.0, settle=0.3, post_delay=1.5,
-            log=log, label=f"{label}创建结界-返回" if label else "创建结界-返回",
+            adapter,
+            capture_method,
+            _TPL_BACK,
+            timeout=5.0,
+            settle=0.3,
+            post_delay=1.5,
+            log=log,
+            label=f"{label}创建结界-返回" if label else "创建结界-返回",
             popup_handler=popup_handler,
         )
         if log:
@@ -581,9 +811,14 @@ async def check_and_create_jiejie(
         if log:
             log.info(f"{tag}结界已存在，无需创建")
         await click_template(
-            adapter, capture_method, _TPL_BACK,
-            timeout=5.0, settle=0.3, post_delay=1.5,
-            log=log, label=f"{label}结界-返回" if label else "结界-返回",
+            adapter,
+            capture_method,
+            _TPL_BACK,
+            timeout=5.0,
+            settle=0.3,
+            post_delay=1.5,
+            log=log,
+            label=f"{label}结界-返回" if label else "结界-返回",
             popup_handler=popup_handler,
         )
         return False

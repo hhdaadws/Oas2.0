@@ -5,7 +5,7 @@ import json
 from collections import deque
 from typing import Optional
 from pathlib import Path
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, HTTPException, status
 from sqlalchemy.orm import Session
 from sqlalchemy import desc, func
 from datetime import datetime, timedelta
@@ -14,9 +14,9 @@ from ....db.base import get_db
 from ....db.models import Task, GameAccount, TaskRun
 from ....core.constants import TaskStatus
 from ....core.config import settings
-from ...tasks.simple_scheduler import simple_scheduler
 from ...tasks.feeder import feeder
 from ...executor.service import executor_service
+from ...cloud import cloud_task_poller, runtime_mode_state, CloudApiError
 
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
@@ -28,10 +28,12 @@ async def get_task_queue():
     获取任务队列（只读）
     """
     queue_info = executor_service.queue_info()
+    mode = runtime_mode_state.get_mode()
     return {
         "total": len(queue_info),
         "tasks": queue_info,
-        "engine": "feeder_executor",
+        "mode": mode,
+        "engine": "cloud_poller_executor" if mode == "cloud" else "feeder_executor",
     }
 
 
@@ -140,52 +142,14 @@ async def get_task_stats(db: Session = Depends(get_db)):
     queue_size = len(executor_service.queue_info())
     running_count = len(executor_service.running_info())
 
+    mode = runtime_mode_state.get_mode()
     return {
         "today": today_stats,
         "queue_size": queue_size,
         "running_count": running_count,
-        "engine": "feeder_executor",
+        "mode": mode,
+        "engine": "cloud_poller_executor" if mode == "cloud" else "feeder_executor",
     }
-
-
-@router.post("/trigger-foster")
-async def trigger_foster_tasks(db: Session = Depends(get_db)):
-    """
-    手动触发寄养任务（测试用）
-    """
-    # 旧的触发方式已废弃
-    pass
-    return {"message": "寄养任务已触发"}
-
-
-@router.post("/load-pending")
-async def load_pending_tasks(db: Session = Depends(get_db)):
-    """
-    手动加载pending任务到队列（测试用）
-    """
-    # 旧的加载方式已废弃
-    pass
-    return {"message": "Pending任务已加载"}
-
-
-@router.post("/check-time-tasks")
-async def check_time_tasks(db: Session = Depends(get_db)):
-    """
-    手动检查时间任务（测试用）
-    """
-    # 旧的检查方式已废弃
-    pass
-    return {"message": "时间任务检查完成"}
-
-
-@router.post("/check-conditions")
-async def check_conditional_tasks(db: Session = Depends(get_db)):
-    """
-    手动检查条件任务（测试用）
-    """
-    # 旧的检查方式已废弃
-    pass
-    return {"message": "条件任务检查完成"}
 
 
 @router.post("/scheduler/start")
@@ -193,20 +157,42 @@ async def start_scheduler():
     """
     启动运行时调度引擎（feeder + executor）
     """
-    if simple_scheduler._running:
-        await simple_scheduler.stop()
-
+    mode = runtime_mode_state.get_mode()
     await executor_service.start()
-    await feeder.start()
-
-    feeder_metrics = feeder.metrics_snapshot()
     executor_metrics = executor_service.metrics_snapshot()
     queue_depth = executor_metrics.get("queue", {}).get("depth", 0)
     running_count = executor_metrics.get("running", {}).get("count", 0)
 
+    if mode == "cloud":
+        await feeder.stop()
+        try:
+            await cloud_task_poller.start()
+        except CloudApiError as exc:
+            await executor_service.stop()
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"云端模式启动失败: {exc}",
+            )
+        poller_status = cloud_task_poller.status()
+        return {
+            "message": "调度引擎已启动（cloud poller + executor）",
+            "mode": "cloud",
+            "engine": "cloud_poller_executor",
+            "running": poller_status.get("running", False)
+            and getattr(executor_service, "_started", False),
+            "poller_running": poller_status.get("running", False),
+            "executor_running": getattr(executor_service, "_started", False),
+            "queue_depth": queue_depth,
+            "running_count": running_count,
+            "cloud": poller_status,
+        }
+
+    await cloud_task_poller.stop()
+    await feeder.start()
+    feeder_metrics = feeder.metrics_snapshot()
     return {
         "message": "调度引擎已启动（feeder + executor）",
-        "mode": "runtime",
+        "mode": "local",
         "engine": "feeder_executor",
         "running": True,
         "feeder_running": feeder._running,
@@ -223,19 +209,18 @@ async def stop_scheduler():
     """
     停止运行时调度引擎（feeder + executor）
     """
+    mode = runtime_mode_state.get_mode()
+    await cloud_task_poller.stop()
     await feeder.stop()
     await executor_service.stop()
 
-    if simple_scheduler._running:
-        await simple_scheduler.stop()
-
     feeder_metrics = feeder.metrics_snapshot()
-
     return {
-        "message": "调度引擎已停止（feeder + executor）",
-        "mode": "runtime",
-        "engine": "feeder_executor",
+        "message": "调度引擎已停止",
+        "mode": mode,
+        "engine": "cloud_poller_executor" if mode == "cloud" else "feeder_executor",
         "running": False,
+        "poller_running": cloud_task_poller.status().get("running", False),
         "feeder_running": feeder._running,
         "executor_running": getattr(executor_service, "_started", False),
         "queue_depth": 0,
@@ -250,57 +235,28 @@ async def get_scheduler_status():
     """
     获取运行时调度引擎状态
     """
+    mode = runtime_mode_state.get_mode()
     feeder_running = feeder._running
+    poller_status = cloud_task_poller.status()
+    poller_running = bool(poller_status.get("running", False))
     executor_running = getattr(executor_service, "_started", False)
-    running = feeder_running and executor_running
+    running = (poller_running and executor_running) if mode == "cloud" else (feeder_running and executor_running)
 
     feeder_metrics = feeder.metrics_snapshot()
     executor_metrics = executor_service.metrics_snapshot()
 
     return {
         "running": running,
-        "mode": "runtime",
-        "engine": "feeder_executor",
+        "mode": mode,
+        "engine": "cloud_poller_executor" if mode == "cloud" else "feeder_executor",
         "feeder_running": feeder_running,
+        "poller_running": poller_running,
         "executor_running": executor_running,
         "queue_depth": executor_metrics.get("queue", {}).get("depth", 0),
         "running_count": executor_metrics.get("running", {}).get("count", 0),
         "feeder_lag_ms": feeder_metrics.get("feeder_lag_ms", 0),
         "last_scan_at": feeder_metrics.get("last_scan_at"),
-        "legacy_simple_scheduler_deprecated": True,
-        "legacy_simple_scheduler_running": simple_scheduler._running,
-    }
-
-
-@router.post("/simple-scheduler/start", deprecated=True)
-async def start_simple_scheduler_deprecated():
-    """废弃接口：simple_scheduler 已弃用，禁止启动。"""
-    return {
-        "deprecated": True,
-        "running": simple_scheduler._running,
-        "message": "simple_scheduler 启动接口已废弃，请使用 /api/tasks/scheduler/start（feeder + executor）",
-    }
-
-
-@router.post("/simple-scheduler/stop", deprecated=True)
-async def stop_simple_scheduler_deprecated():
-    """废弃接口：simple_scheduler 已弃用，建议保持停止状态。"""
-    if simple_scheduler._running:
-        await simple_scheduler.stop()
-    return {
-        "deprecated": True,
-        "running": simple_scheduler._running,
-        "message": "simple_scheduler 停止接口已废弃；legacy 调度器当前已停止",
-    }
-
-
-@router.get("/simple-scheduler/status", deprecated=True)
-async def get_simple_scheduler_status_deprecated():
-    """废弃接口：仅用于兼容诊断。"""
-    return {
-        "deprecated": True,
-        "running": simple_scheduler._running,
-        "message": "simple_scheduler 已废弃，仅保留兼容状态查询",
+        "cloud": poller_status if mode == "cloud" else None,
     }
 
 

@@ -210,7 +210,7 @@ def register_default_popups(reg: Optional[PopupRegistry] = None) -> None:
         priority=50,
     ))
 
-    # 通用弹窗5（先点击确保 popup_5_1 消失，再点取消关闭）
+    # 通用弹窗5（先点击确保 popup_5_1 消失，再在取消区域随机点击关闭）
     r.register(PopupDef(
         id="popup_5",
         label="通用弹窗5",
@@ -228,8 +228,8 @@ def register_default_popups(reg: Optional[PopupRegistry] = None) -> None:
                 wait_disappear_poll_ms=500,
             ),
             DismissAction(
-                type=DismissType.TAP_TEMPLATE,
-                template_path="assets/ui/templates/popup_5_quxiao.png",
+                type=DismissType.TAP,
+                tap_rect=(314, 341, 425, 383),
                 post_delay_ms=1000,
             ),
         ],

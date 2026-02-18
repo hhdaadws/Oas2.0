@@ -2,13 +2,21 @@ from __future__ import annotations
 
 import asyncio
 import random
+import time
 from typing import TYPE_CHECKING, Optional, Sequence, Union
 
 from loguru import logger
 
+from ...core.config import settings
 from ..emu.adapter import EmulatorAdapter
 from ..emu.async_adapter import AsyncEmulatorAdapter
 from ..vision import DEFAULT_THRESHOLD
+from ..vision.frame_cache import (
+    compute_frame_signature,
+    fingerprint_from_signature,
+    is_cache_fresh,
+    signatures_similar,
+)
 from ..vision.template import match_template
 from .registry import UIRegistry, registry as _global_registry
 from .detector import UIDetector
@@ -37,20 +45,26 @@ CANGBAOGE_TEMPLATE = "assets/ui/templates/cangbaoge.png"
 
 class AccountExpiredException(Exception):
     """账号登录数据已失效（检测到 shixiao 界面）"""
+
     pass
 
 
 class CangbaogeListedException(Exception):
     """账号已上架藏宝阁"""
+
     pass
 
 
 class UIManager(UIManagerProtocol):
+    # 跨模拟器共享缓存（同进程）：(hint_key, anchors) -> [{fp, sig, result, ts}, ...]
+    _shared_detect_cache: dict = {}
+
     def __init__(
         self,
         adapter: Union[EmulatorAdapter, AsyncEmulatorAdapter],
         *,
         capture_method: str = "adb",
+        cross_emulator_cache_enabled: Optional[bool] = None,
         registry: Optional[UIRegistry] = None,
         graph: Optional[UIGraph] = None,
         default_threshold: float = DEFAULT_THRESHOLD,
@@ -61,8 +75,28 @@ class UIManager(UIManagerProtocol):
         self.registry = registry or _global_registry
         self.graph = graph or build_default_graph()
         self.detector = UIDetector(self.registry, default_threshold=default_threshold)
+        if cross_emulator_cache_enabled is None:
+            cross_emulator_cache_enabled = bool(
+                getattr(settings, "vision_cross_emulator_cache_enabled", False)
+            )
+        self.cross_emulator_cache_enabled = bool(cross_emulator_cache_enabled)
         self._popup_handler = popup_handler
         self._last_ui: str | None = None  # 上下文感知：记住上一次检测到的 UI
+        self._detect_cache_fp: int | None = None
+        self._detect_cache_sig = None
+        self._detect_cache_key: tuple[tuple[str, ...], bool] | None = None
+        self._detect_cache_result: UIDetectResult | None = None
+        self._detect_cache_ts: float = 0.0
+        self._detect_cache_calls: int = 0
+        self._detect_cache_hits: int = 0
+        self._detect_cache_shared_hits: int = 0
+        self._detect_cache_last_log_ts: float = 0.0
+        self._detect_cache_log_interval_sec: float = float(
+            max(1, int(getattr(settings, "vision_cache_stats_interval_sec", 10)))
+        )
+        self._shared_cache_bucket_size: int = max(
+            1, int(getattr(settings, "vision_cross_emulator_shared_bucket_size", 8))
+        )
 
     @property
     def _is_async(self) -> bool:
@@ -87,38 +121,116 @@ class UIManager(UIManagerProtocol):
             await self.adapter.start_app(mode=mode)
         else:
             self.adapter.start_app(mode)
+        self._invalidate_detect_cache()
 
     async def _stop_app(self) -> None:
         if self._is_async:
             await self.adapter.stop_app()
         else:
             self.adapter.stop_app()
+        self._invalidate_detect_cache()
 
     async def _is_app_running(self) -> bool:
+        if self._is_async:
+            return await self.adapter.adb_is_app_running()
         addr = self.adapter.cfg.adb_addr
         pkg = self.adapter.cfg.pkg_name
-        if self._is_async:
-            from ...core.thread_pool import run_in_io
-            return await run_in_io(self.adapter.adb.is_app_running, addr, pkg)
         return self.adapter.adb.is_app_running(addr, pkg)
 
     async def _adb_tap(self, x: int, y: int) -> None:
         """通过 adb 直接 tap（绕过 adapter.tap 的场景）。"""
-        addr = self.adapter.cfg.adb_addr
         if self._is_async:
-            from ...core.thread_pool import run_in_io
-            await run_in_io(self.adapter.adb.tap, addr, x, y)
+            await self.adapter.adb_tap(x, y)
         else:
+            addr = self.adapter.cfg.adb_addr
             self.adapter.adb.tap(addr, x, y)
+
+    def _invalidate_detect_cache(self) -> None:
+        self._detect_cache_fp = None
+        self._detect_cache_sig = None
+        self._detect_cache_key = None
+        self._detect_cache_result = None
+        self._detect_cache_ts = 0.0
+
+    @staticmethod
+    def _normalize_shared_bucket(
+        shared_value: object,
+    ) -> list[dict]:
+        """兼容旧结构：dict -> [dict]，并返回可修改 bucket。"""
+        if isinstance(shared_value, list):
+            return [entry for entry in shared_value if isinstance(entry, dict)]
+        if isinstance(shared_value, dict):
+            return [shared_value]
+        return []
+
+    def _get_shared_bucket(self, cache_key: tuple[tuple[str, ...], bool]) -> list[dict]:
+        return self._normalize_shared_bucket(
+            UIManager._shared_detect_cache.get(cache_key)
+        )
+
+    def _set_shared_bucket(
+        self, cache_key: tuple[tuple[str, ...], bool], bucket: list[dict]
+    ) -> None:
+        if bucket:
+            UIManager._shared_detect_cache[cache_key] = bucket[
+                : self._shared_cache_bucket_size
+            ]
+        else:
+            UIManager._shared_detect_cache.pop(cache_key, None)
+
+    def _maybe_log_detect_cache_stats(
+        self, *, now: float | None = None, force: bool = False
+    ) -> None:
+        current = time.monotonic() if now is None else now
+        if (
+            (not force)
+            and current - self._detect_cache_last_log_ts
+            < self._detect_cache_log_interval_sec
+        ):
+            return
+        calls = self._detect_cache_calls
+        if calls <= 0:
+            return
+        hits = self._detect_cache_hits
+        shared_hits = self._detect_cache_shared_hits
+        misses = calls - hits
+        hit_rate = (hits / calls) * 100.0
+        ttl_ms = int(getattr(settings, "vision_frame_cache_ttl_ms", 5000))
+        similarity_thr = float(
+            getattr(settings, "vision_frame_similarity_threshold", 0.8)
+        )
+        self._detect_cache_last_log_ts = current
+        logger.info(
+            "detect_ui cache stats: calls={} hits={} shared_hits={} misses={} hit_rate={:.1f}% ttl_ms={} sim_thr={:.2f} shared={} shared_bucket={}",
+            calls,
+            hits,
+            shared_hits,
+            misses,
+            hit_rate,
+            ttl_ms,
+            similarity_thr,
+            self.cross_emulator_cache_enabled,
+            self._shared_cache_bucket_size,
+        )
+
+    def log_cache_stats(self, *, force: bool = True) -> None:
+        """输出 detect_ui 缓存统计，并透传输出弹窗统计（若已初始化）。"""
+        self._maybe_log_detect_cache_stats(now=time.monotonic(), force=force)
+        if self._popup_handler is not None and hasattr(
+            self._popup_handler, "log_cache_stats"
+        ):
+            self._popup_handler.log_cache_stats(force=force)
 
     @property
     def popup_handler(self) -> "PopupHandler":
         """获取弹窗处理器，懒初始化"""
         if self._popup_handler is None:
             from .popup_handler import PopupHandler
+
             self._popup_handler = PopupHandler(
                 self.adapter,
                 capture_method=self.capture_method,
+                cross_emulator_cache_enabled=self.cross_emulator_cache_enabled,
             )
         return self._popup_handler
 
@@ -146,11 +258,124 @@ class UIManager(UIManagerProtocol):
     ) -> UIDetectResult:
         if image is None:
             image = await self._capture()
+        if image is None:
+            return UIDetectResult(
+                ui="UNKNOWN", score=0.0, debug={"reason": "capture_none"}
+            )
         # 使用传入的 hints 或自动构建
         effective_hints = hints if hints is not None else self._build_hints()
-        result = await self.detector.async_detect(
-            image, hints=effective_hints, anchors=anchors,
-        )
+        # hints 仅用于检测优先级，缓存 key 忽略顺序以提高命中率
+        hint_key = tuple(sorted(set(effective_hints)))
+
+        if getattr(settings, "vision_frame_cache_enabled", True):
+            self._detect_cache_calls += 1
+            frame_sig = compute_frame_signature(image)
+            frame_fp = fingerprint_from_signature(frame_sig)
+            cache_key = (hint_key, bool(anchors))
+            now = time.monotonic()
+            ttl_ms = int(getattr(settings, "vision_frame_cache_ttl_ms", 5000))
+            similarity_thr = float(
+                getattr(settings, "vision_frame_similarity_threshold", 0.8)
+            )
+            same_frame = self._detect_cache_fp == frame_fp
+            if (
+                not same_frame
+                and self._detect_cache_sig is not None
+                and signatures_similar(
+                    frame_sig,
+                    self._detect_cache_sig,
+                    mean_abs_threshold=similarity_thr,
+                )
+            ):
+                same_frame = True
+            if (
+                self._detect_cache_result is not None
+                and same_frame
+                and self._detect_cache_key == cache_key
+                and is_cache_fresh(self._detect_cache_ts, ttl_ms, now=now)
+            ):
+                result = self._detect_cache_result
+                self._detect_cache_hits += 1
+                self._maybe_log_detect_cache_stats(now=now)
+                if result.ui != "UNKNOWN":
+                    self._last_ui = result.ui
+                return result
+
+            if self.cross_emulator_cache_enabled:
+                shared_bucket = self._get_shared_bucket(cache_key)
+                if shared_bucket:
+                    fresh_bucket: list[dict] = []
+                    hit_index: int | None = None
+                    for idx, entry in enumerate(shared_bucket):
+                        if not is_cache_fresh(entry.get("ts", 0.0), ttl_ms, now=now):
+                            continue
+                        fresh_bucket.append(entry)
+                        shared_same_frame = entry.get("fp") == frame_fp
+                        if (
+                            hit_index is None
+                            and not shared_same_frame
+                            and entry.get("sig") is not None
+                            and signatures_similar(
+                                frame_sig,
+                                entry["sig"],
+                                mean_abs_threshold=similarity_thr,
+                            )
+                        ):
+                            shared_same_frame = True
+                        if hit_index is None and shared_same_frame:
+                            hit_index = len(fresh_bucket) - 1
+
+                    if hit_index is not None:
+                        hit_entry = fresh_bucket.pop(hit_index)
+                        fresh_bucket.insert(0, hit_entry)
+                        self._set_shared_bucket(cache_key, fresh_bucket)
+                        result = hit_entry["result"]
+                        self._detect_cache_hits += 1
+                        self._detect_cache_shared_hits += 1
+                        self._detect_cache_fp = frame_fp
+                        self._detect_cache_sig = frame_sig
+                        self._detect_cache_key = cache_key
+                        self._detect_cache_result = result
+                        self._detect_cache_ts = now
+                        self._maybe_log_detect_cache_stats(now=now)
+                        if result.ui != "UNKNOWN":
+                            self._last_ui = result.ui
+                        return result
+
+                    if len(fresh_bucket) != len(shared_bucket):
+                        self._set_shared_bucket(cache_key, fresh_bucket)
+            result = await self.detector.async_detect(
+                image,
+                hints=effective_hints,
+                anchors=anchors,
+            )
+            self._detect_cache_fp = frame_fp
+            self._detect_cache_sig = frame_sig
+            self._detect_cache_key = cache_key
+            self._detect_cache_result = result
+            self._detect_cache_ts = now
+            if self.cross_emulator_cache_enabled:
+                shared_bucket = self._get_shared_bucket(cache_key)
+                shared_bucket = [
+                    entry for entry in shared_bucket if entry.get("fp") != frame_fp
+                ]
+                shared_bucket.insert(
+                    0,
+                    {
+                        "fp": frame_fp,
+                        "sig": frame_sig,
+                        "result": result,
+                        "ts": now,
+                    },
+                )
+                self._set_shared_bucket(cache_key, shared_bucket)
+            self._maybe_log_detect_cache_stats(now=now)
+        else:
+            result = await self.detector.async_detect(
+                image,
+                hints=effective_hints,
+                anchors=anchors,
+            )
         # 更新上下文
         if result.ui != "UNKNOWN":
             self._last_ui = result.ui
@@ -168,7 +393,13 @@ class UIManager(UIManagerProtocol):
             m = match_template(image, tpl_path)
             if m is not None:
                 cx, cy = m.random_point()
-                logger.info("_try_click_exit_or_back: 检测到 {} 按钮 score={:.3f}，点击 ({}, {})", label, m.score, cx, cy)
+                logger.info(
+                    "_try_click_exit_or_back: 检测到 {} 按钮 score={:.3f}，点击 ({}, {})",
+                    label,
+                    m.score,
+                    cx,
+                    cy,
+                )
                 await self._tap(cx, cy)
                 return True
         # 检查 exit_dark（ENTER→庭院过渡期间可能出现的中间界面）
@@ -176,7 +407,12 @@ class UIManager(UIManagerProtocol):
         if m is not None:
             cx = random.randint(424, 533)
             cy = random.randint(439, 461)
-            logger.info("_try_click_exit_or_back: 检测到 exit_dark score={:.3f}，点击 ({}, {})", m.score, cx, cy)
+            logger.info(
+                "_try_click_exit_or_back: 检测到 exit_dark score={:.3f}，点击 ({}, {})",
+                m.score,
+                cx,
+                cy,
+            )
             await self._tap(cx, cy)
             return True
         return False
@@ -194,7 +430,8 @@ class UIManager(UIManagerProtocol):
             if m is not None:
                 logger.warning(
                     "_check_shixiao_on_enter: 在 ENTER 界面检测到 shixiao 模板 {} score={:.3f}",
-                    tpl_path, m.score,
+                    tpl_path,
+                    m.score,
                 )
                 raise AccountExpiredException("检测到账号失效界面（ENTER 界面二次校验）")
 
@@ -206,7 +443,8 @@ class UIManager(UIManagerProtocol):
             return
         if m is not None:
             logger.warning(
-                "_check_cangbaoge: 检测到藏宝阁界面 score={:.3f}", m.score,
+                "_check_cangbaoge: 检测到藏宝阁界面 score={:.3f}",
+                m.score,
             )
             raise CangbaogeListedException("检测到账号已上架藏宝阁")
 
@@ -338,7 +576,9 @@ class UIManager(UIManagerProtocol):
                 cx, cy = accept_match.random_point()
                 logger.info(
                     "launch_game: 检测到 accept 弹窗 score={:.3f}，点击 ({}, {})",
-                    accept_match.score, cx, cy,
+                    accept_match.score,
+                    cx,
+                    cy,
                 )
                 await self._tap(cx, cy)
                 continue
@@ -349,18 +589,21 @@ class UIManager(UIManagerProtocol):
                 cx, cy = accept_1_match.random_point()
                 logger.info(
                     "launch_game: 检测到 accept_1 弹窗 score={:.3f}，点击 ({}, {})",
-                    accept_1_match.score, cx, cy,
+                    accept_1_match.score,
+                    cx,
+                    cy,
                 )
                 await self._tap(cx, cy)
                 continue
 
             # UI 检测（复用截图 + hints 优先）
-            result = await self.detector.async_detect(image, hints=launch_hints)
-            logger.debug("launch_game: 检测结果 ui={} score={:.3f} elapsed={:.1f}s", result.ui, result.score, elapsed)
-
-            # 更新上下文
-            if result.ui != "UNKNOWN":
-                self._last_ui = result.ui
+            result = await self.detect_ui(image=image, hints=launch_hints)
+            logger.debug(
+                "launch_game: 检测结果 ui={} score={:.3f} elapsed={:.1f}s",
+                result.ui,
+                result.score,
+                elapsed,
+            )
 
             if result.ui == "TINGYUAN":
                 logger.info("launch_game: 已到达庭院界面")
@@ -368,7 +611,11 @@ class UIManager(UIManagerProtocol):
 
             if result.ui == "ENTER":
                 self._check_shixiao_on_enter(image)
-                logger.info("launch_game: 检测到 ENTER 界面，点击固定坐标 ({}, {})", ENTER_TAP_X, ENTER_TAP_Y)
+                logger.info(
+                    "launch_game: 检测到 ENTER 界面，点击固定坐标 ({}, {})",
+                    ENTER_TAP_X,
+                    ENTER_TAP_Y,
+                )
                 await self._tap(ENTER_TAP_X, ENTER_TAP_Y)
 
             if result.ui == "SHIXIAO":
@@ -405,12 +652,13 @@ class UIManager(UIManagerProtocol):
                 continue
 
             # UI 检测（复用截图 + hints 优先）
-            result = await self.detector.async_detect(image, hints=tingyuan_hints)
-            logger.debug("go_to_tingyuan: ui={} score={:.3f} elapsed={:.1f}s", result.ui, result.score, elapsed)
-
-            # 更新上下文
-            if result.ui != "UNKNOWN":
-                self._last_ui = result.ui
+            result = await self.detect_ui(image=image, hints=tingyuan_hints)
+            logger.debug(
+                "go_to_tingyuan: ui={} score={:.3f} elapsed={:.1f}s",
+                result.ui,
+                result.score,
+                elapsed,
+            )
 
             if result.ui == "TINGYUAN":
                 logger.info("go_to_tingyuan: 已到达庭院界面")
@@ -418,7 +666,11 @@ class UIManager(UIManagerProtocol):
 
             if result.ui == "ENTER":
                 self._check_shixiao_on_enter(image)
-                logger.info("go_to_tingyuan: 检测到 ENTER，点击固定坐标 ({}, {})", ENTER_TAP_X, ENTER_TAP_Y)
+                logger.info(
+                    "go_to_tingyuan: 检测到 ENTER，点击固定坐标 ({}, {})",
+                    ENTER_TAP_X,
+                    ENTER_TAP_Y,
+                )
                 await self._tap(ENTER_TAP_X, ENTER_TAP_Y)
 
             elif result.ui != "UNKNOWN":
@@ -461,7 +713,9 @@ class UIManager(UIManagerProtocol):
 
         if not running:
             logger.info("ensure_game_ready: 游戏未启动，执行启动流程")
-            return await self.launch_game(mode=mode, timeout=timeout, poll_interval=poll_interval)
+            return await self.launch_game(
+                mode=mode, timeout=timeout, poll_interval=poll_interval
+            )
 
         logger.info("ensure_game_ready: 游戏已启动，检测当前 UI")
         try:
@@ -474,7 +728,9 @@ class UIManager(UIManagerProtocol):
 
             if cur.ui == "ENTER":
                 # ENTER 界面不在导航图中，必须完成进入流程到达庭院
-                ok = await self.go_to_tingyuan(timeout=min(timeout, 45.0), poll_interval=poll_interval)
+                ok = await self.go_to_tingyuan(
+                    timeout=min(timeout, 45.0), poll_interval=poll_interval
+                )
                 if ok:
                     return True
 
@@ -495,7 +751,9 @@ class UIManager(UIManagerProtocol):
         except Exception as e:
             logger.warning("ensure_game_ready: 停止游戏失败，继续尝试启动: {}", e)
 
-        return await self.launch_game(mode=mode, timeout=timeout, poll_interval=poll_interval)
+        return await self.launch_game(
+            mode=mode, timeout=timeout, poll_interval=poll_interval
+        )
 
     def navigate(self, source: str, target: str) -> bool:
         path = self.graph.find_path(source, target)
@@ -562,6 +820,7 @@ class UIManager(UIManagerProtocol):
 
             if not already_visible:
                 from ..executor.helpers import wait_for_template
+
                 m = await wait_for_template(
                     self.adapter,
                     self.capture_method,
@@ -587,7 +846,9 @@ class UIManager(UIManagerProtocol):
             raw_text = result.text.strip()
             logger.debug(
                 "read_asset: {} OCR 原始文本='{}' (attempt={})",
-                asset_def.label, raw_text, attempt + 1,
+                asset_def.label,
+                raw_text,
+                attempt + 1,
             )
 
             value = asset_def.parser(raw_text)

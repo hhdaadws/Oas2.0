@@ -1,10 +1,10 @@
 import request from './request'
 
-export function login(code) {
+export function login(payload) {
   return request({
     url: '/auth/login',
     method: 'post',
-    data: { code }
+    data: payload
   })
 }
 

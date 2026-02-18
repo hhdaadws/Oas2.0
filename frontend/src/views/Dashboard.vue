@@ -184,54 +184,6 @@
 
       <el-empty v-if="!scheduledPreview.length" description="暂无计划任务" />
     </el-card>
-
-    <el-card class="system-logs" style="margin-top: 20px">
-      <template #header>
-        <div class="card-header">
-          <span>系统日志</span>
-          <div>
-            <el-select v-model="logFilter.level" placeholder="日志级别" clearable style="width: 120px; margin-right: 10px" @change="fetchLogs">
-              <el-option label="INFO" value="INFO" />
-              <el-option label="WARNING" value="WARNING" />
-              <el-option label="ERROR" value="ERROR" />
-            </el-select>
-            <el-select v-model="logFilter.account_id" placeholder="账号（仅显示 login_id != -1）" clearable style="width: 200px; margin-right: 10px" filterable @change="fetchLogs">
-              <el-option label="全部账号" :value="null" />
-              <el-option v-for="opt in accountOptions" :key="opt.value" :label="opt.label" :value="opt.value" />
-            </el-select>
-            <el-button link @click="fetchLogs">
-              <el-icon><Refresh /></el-icon>
-              刷新
-            </el-button>
-          </div>
-        </div>
-      </template>
-
-      <el-table :data="systemLogs" stripe height="400">
-        <el-table-column prop="timestamp" label="时间" width="180">
-          <template #default="{ row }">
-            {{ formatTime(row.timestamp) }}
-          </template>
-        </el-table-column>
-        <el-table-column prop="level" label="级别" width="80">
-          <template #default="{ row }">
-            <el-tag :type="getLevelType(row.level)" size="small">{{ row.level }}</el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column prop="type" label="类型" width="120" />
-        <el-table-column prop="account_id" label="账号ID" width="100" />
-        <el-table-column label="登录ID" width="160">
-          <template #default="{ row }">
-            {{ accountLoginMap[row.account_id] ?? '-' }}
-          </template>
-        </el-table-column>
-        <el-table-column prop="message" label="消息" min-width="200" />
-      </el-table>
-
-      <div style="margin-top: 10px; text-align: center; color: #909399; font-size: 12px">
-        显示最近 {{ systemLogs.length }} 条日志
-      </div>
-    </el-card>
   </div>
 </template>
 
@@ -241,7 +193,6 @@ import dayjs from 'dayjs'
 import { ElMessage } from 'element-plus'
 import { API_ENDPOINTS, apiRequest } from '@/config'
 import { getDashboard, getRealtimeStats } from '@/api/dashboard'
-import { getAccounts } from '@/api/accounts'
 
 const stats = ref({ active_accounts: 0, running_accounts: 0, queue_size: 0, coop_active_accounts: 0 })
 const runningTasks = ref([])
@@ -253,18 +204,10 @@ const runtimeLogs = ref([])
 const runtimeLogFilter = reactive({ level: '', emulator_id: null })
 const runtimeEmulatorOptions = ref([])
 
-// 日志相关
-const systemLogs = ref([])
-const logFilter = reactive({ level: '', account_id: null })
-const accountOptions = ref([])
-const accountLoginMap = ref({})
-const LOG_LIMIT = 30
-
 const runtimeLogCursor = ref(null)
 
 let coreRefreshTimer = null
 let runtimeLogTimer = null
-let logRefreshTimer = null
 let isFetchingData = false
 let pendingFetchData = false
 
@@ -429,13 +372,6 @@ const formatTime = (time) => {
   return dayjs(time).format('YYYY-MM-DD HH:mm:ss')
 }
 
-const formatDuration = (seconds) => {
-  if (!seconds) return '-'
-  const minutes = Math.floor(seconds / 60)
-  const secs = Math.floor(seconds % 60)
-  return `${minutes}分${secs}秒`
-}
-
 const formatModuleName = (name) => {
   if (!name) return '-'
   return name.replace('app.modules.', '')
@@ -448,65 +384,17 @@ const getPriorityType = (priority) => {
   return 'info'
 }
 
-const getLevelType = (level) => {
-  const map = { INFO: 'success', WARNING: 'warning', ERROR: 'danger' }
-  return map[level] || 'info'
-}
-
-const fetchLogs = async () => {
-  try {
-    const params = new URLSearchParams()
-    params.set('limit', LOG_LIMIT.toString())
-    params.set('offset', '0')
-    if (logFilter.level) params.set('level', logFilter.level)
-    if (logFilter.account_id) params.set('account_id', logFilter.account_id.toString())
-    const response = await apiRequest(`${API_ENDPOINTS.tasks.logs}?${params}`)
-    const data = await response.json()
-    let logs = data.logs || []
-    const map = accountLoginMap.value || {}
-    logs = logs.filter((l) => {
-      const lid = map[l.account_id]
-      return l.account_id && lid !== undefined && lid !== '-1'
-    })
-    systemLogs.value = logs
-  } catch (error) {
-    console.error('获取系统日志失败:', error)
-  }
-}
-
-const fetchAccountsForLogs = async () => {
-  try {
-    const data = await getAccounts()
-    const options = []
-    const amap = {}
-    for (const n of data) {
-      if (n.type === 'game') {
-        amap[n.id] = n.login_id
-        if (n.login_id !== '-1') options.push({ label: n.login_id, value: n.id })
-      }
-    }
-    accountOptions.value = options
-    accountLoginMap.value = amap
-  } catch (e) {
-    // ignore
-  }
-}
-
 onMounted(async () => {
-  await fetchAccountsForLogs()
   await fetchData()
-  await fetchLogs()
   await fetchRuntimeLogs(true)
   await fetchTaskSwitches()
   coreRefreshTimer = setInterval(fetchData, 5000)
   runtimeLogTimer = setInterval(() => fetchRuntimeLogs(false), 15000)
-  logRefreshTimer = setInterval(fetchLogs, 15000)
 })
 
 onUnmounted(() => {
   if (coreRefreshTimer) clearInterval(coreRefreshTimer)
   if (runtimeLogTimer) clearInterval(runtimeLogTimer)
-  if (logRefreshTimer) clearInterval(logRefreshTimer)
 })
 </script>
 

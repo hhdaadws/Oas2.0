@@ -116,7 +116,7 @@ class InitShikigamiTrainExecutor(BaseExecutor):
 
             self.adapter = self._build_adapter()
 
-            ok = self.adapter.push_login_data(
+            ok = await self._push_login_data(
                 account.login_id, data_dir="putonglogindata"
             )
             if not ok:
@@ -155,7 +155,7 @@ class InitShikigamiTrainExecutor(BaseExecutor):
             capture_method = "adb"
             if self.system_config and getattr(self.system_config, "capture_method", None):
                 capture_method = self.system_config.capture_method
-            self.ui = UIManager(self.adapter, capture_method=capture_method)
+            self.ui = UIManager(self.adapter, capture_method=capture_method, cross_emulator_cache_enabled=self._cross_emulator_cache_enabled())
 
         capture_method = self.ui.capture_method
 
@@ -446,7 +446,7 @@ class InitShikigamiTrainExecutor(BaseExecutor):
                 self.logger.info("[起号_式神养成] 批次中非最后任务，无 UIManager，跳过 cleanup")
             return
         if self.adapter:
-            self.adapter.adb.force_stop(self.adapter.cfg.adb_addr, PKG_NAME)
+            await self._adb_force_stop(PKG_NAME)
 
     # ---- 私有辅助方法 ----
 

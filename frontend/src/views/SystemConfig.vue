@@ -79,6 +79,13 @@
           </span>
         </el-form-item>
 
+        <el-form-item label="跨模拟器共享缓存">
+          <el-switch v-model="form.cross_emulator_cache_enabled" />
+          <span style="margin-left: 8px; color: #909399; font-size: 12px;">
+            开启后，识图缓存可在不同模拟器间复用；关闭则仅本模拟器内缓存（默认）
+          </span>
+        </el-form-item>
+
         <el-form-item>
           <el-button @click="load" :loading="loading">刷新</el-button>
           <el-button type="primary" @click="save" :loading="loading">保存</el-button>
@@ -289,7 +296,8 @@ const form = reactive({
   capture_method: 'adb',
   ipc_dll_path: '',
   activity_name: '.MainActivity',
-  save_fail_screenshot: false
+  save_fail_screenshot: false,
+  cross_emulator_cache_enabled: false
 })
 const loading = ref(false)
 const emulators = ref([])

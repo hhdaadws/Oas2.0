@@ -13,7 +13,11 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from ...core.constants import AccountStatus, TaskStatus, TaskType
 from ...core.logger import logger
-from ...core.thread_pool import run_in_db
+from ...core.thread_pool import (
+    get_emulator_io_pool,
+    run_in_db,
+    run_in_emulator_io,
+)
 from ...core.timeutils import (
     add_hours_to_beijing_time,
     format_beijing_time,
@@ -26,6 +30,7 @@ from ...db.models import Emulator, GameAccount, SystemConfig, Task
 from ..ui.manager import AccountExpiredException, CangbaogeListedException
 from ..ui.popups import JihaoPopupException
 from ..emu.adapter import EmulatorAdapter
+from ..emu.async_adapter import AsyncEmulatorAdapter
 from .base import MockExecutor
 from .collect_login_gift import CollectLoginGiftExecutor
 from .collect_mail import CollectMailExecutor
@@ -154,6 +159,10 @@ class WorkerActor:
 
     async def run_forever(self) -> None:
         self._log.info("WorkerActor started")
+        try:
+            get_emulator_io_pool(self.emulator.adb_addr)
+        except Exception as e:
+            self._log.warning(f"预热模拟器 I/O 线程池失败: {e}")
         while not self._stop.is_set():
             batch = await self.inbox.get()
             if self._stop.is_set():
@@ -248,7 +257,7 @@ class WorkerActor:
                     current_batch = new_intents
 
                 # === 所有轮次完成，最终 cleanup ===
-                self._final_cleanup(shared_adapter)
+                await self._final_cleanup(shared_adapter)
 
             self.current = None
             if self.on_done:
@@ -286,6 +295,7 @@ class WorkerActor:
         batch_success = True
         abort = False
         account_id = account.id
+        pending_next_time_ops: List[Tuple[str, str, Optional[str]]] = []
 
         for intent in batch:
             if self._stop.is_set():
@@ -306,15 +316,21 @@ class WorkerActor:
                     intent_task, self._stale_timeout_sec
                 )
                 if ok:
-                    await self._update_next_time_for_intent(intent, account_id)
+                    op = self._build_success_next_time_op(intent)
+                    if op:
+                        pending_next_time_ops.append(op)
                     task_name = intent.task_type.value if isinstance(intent.task_type, TaskType) else str(intent.task_type)
                     db_log(account_id, f"{task_name}任务执行成功")
                 else:
                     batch_success = False
                     task_name = intent.task_type.value if isinstance(intent.task_type, TaskType) else str(intent.task_type)
                     db_log(account_id, f"{task_name}任务执行失败", level="WARNING")
-                    await self._update_next_time_on_failure(intent, account_id)
-                    self._save_fail_screenshot(intent, shared_adapter, reason="task_failed")
+                    op = self._build_failure_next_time_op(intent)
+                    if op:
+                        pending_next_time_ops.append(op)
+                    await self._save_fail_screenshot(
+                        intent, shared_adapter, reason="task_failed"
+                    )
                 # 提取 adapter/ui 供后续任务复用
                 if not shared_adapter and hasattr(self, '_last_executor_adapter'):
                     shared_adapter = self._last_executor_adapter
@@ -328,8 +344,12 @@ class WorkerActor:
                 )
                 task_name = intent.task_type.value if isinstance(intent.task_type, TaskType) else str(intent.task_type)
                 db_log(intent.account_id, f"{task_name}任务空闲超时 ({self._stale_timeout_sec}s 无活动)", level="ERROR")
-                await self._update_next_time_on_failure(intent, account_id)
-                self._save_fail_screenshot(intent, shared_adapter, reason="stale_timeout")
+                op = self._build_failure_next_time_op(intent)
+                if op:
+                    pending_next_time_ops.append(op)
+                await self._save_fail_screenshot(
+                    intent, shared_adapter, reason="stale_timeout"
+                )
             except JihaoPopupException:
                 if not shared_adapter and hasattr(self, '_last_executor_adapter') and self._last_executor_adapter:
                     shared_adapter = self._last_executor_adapter
@@ -337,13 +357,15 @@ class WorkerActor:
                 abort = True
                 self._log.warning(f"检测到祭号弹窗，关闭游戏并批量延后任务: account={intent.account_id}")
                 db_log(intent.account_id, "检测到祭号弹窗，关闭游戏并批量延后任务", level="WARNING")
-                self._save_fail_screenshot(intent, shared_adapter, reason="jihao_popup")
+                await self._save_fail_screenshot(
+                    intent, shared_adapter, reason="jihao_popup"
+                )
+                await self._flush_next_time_updates(account_id, pending_next_time_ops)
+                pending_next_time_ops.clear()
                 await self._delay_all_tasks_on_jihao(account_id)
                 if shared_adapter:
                     try:
-                        shared_adapter.adb.force_stop(
-                            shared_adapter.cfg.adb_addr, self._PKG_NAME
-                        )
+                        await self._force_stop_game(shared_adapter)
                     except Exception as e:
                         self._log.error(f"祭号弹窗关闭游戏失败: {e}")
                 break
@@ -355,7 +377,9 @@ class WorkerActor:
                 self._log.warning(f"账号失效: account={intent.account_id}")
                 await self._mark_account_invalid(intent.account_id)
                 db_log(intent.account_id, "账号登录失效，已标记为无效", level="ERROR")
-                self._save_fail_screenshot(intent, shared_adapter, reason="account_expired")
+                await self._save_fail_screenshot(
+                    intent, shared_adapter, reason="account_expired"
+                )
                 break
             except CangbaogeListedException:
                 if not shared_adapter and hasattr(self, '_last_executor_adapter') and self._last_executor_adapter:
@@ -365,12 +389,12 @@ class WorkerActor:
                 self._log.warning(f"检测到藏宝阁界面，关闭游戏并标记账号: account={intent.account_id}")
                 await self._mark_account_cangbaoge(intent.account_id)
                 db_log(intent.account_id, "检测到账号已上架藏宝阁，已标记状态", level="WARNING")
-                self._save_fail_screenshot(intent, shared_adapter, reason="cangbaoge_listed")
+                await self._save_fail_screenshot(
+                    intent, shared_adapter, reason="cangbaoge_listed"
+                )
                 if shared_adapter:
                     try:
-                        shared_adapter.adb.force_stop(
-                            shared_adapter.cfg.adb_addr, self._PKG_NAME
-                        )
+                        await self._force_stop_game(shared_adapter)
                     except Exception as e:
                         self._log.error(f"藏宝阁关闭游戏失败: {e}")
                 break
@@ -379,9 +403,14 @@ class WorkerActor:
                 self._log.error(f"Intent error: {exc}")
                 task_name = intent.task_type.value if isinstance(intent.task_type, TaskType) else str(intent.task_type)
                 db_log(intent.account_id, f"{task_name}任务异常: {str(exc)[:200]}", level="ERROR")
-                await self._update_next_time_on_failure(intent, account_id)
-                self._save_fail_screenshot(intent, shared_adapter, reason=str(exc)[:50])
+                op = self._build_failure_next_time_op(intent)
+                if op:
+                    pending_next_time_ops.append(op)
+                await self._save_fail_screenshot(
+                    intent, shared_adapter, reason=str(exc)[:50]
+                )
 
+        await self._flush_next_time_updates(account_id, pending_next_time_ops)
         return batch_success, shared_adapter, shared_ui, abort
 
     async def _do_rescan(self, account_id: int) -> List[TaskIntent]:
@@ -394,17 +423,57 @@ class WorkerActor:
             self._log.error(f"rescan 回调异常: account={account_id}, error={e}")
             return []
 
-    def _final_cleanup(self, shared_adapter) -> None:
+    async def _force_stop_game(self, shared_adapter) -> None:
+        if isinstance(shared_adapter, AsyncEmulatorAdapter):
+            await shared_adapter.adb_force_stop(self._PKG_NAME)
+            return
+        adb_addr = shared_adapter.cfg.adb_addr
+        await run_in_emulator_io(
+            adb_addr,
+            shared_adapter.adb.force_stop,
+            adb_addr,
+            self._PKG_NAME,
+        )
+
+    async def _adb_root(self, shared_adapter) -> bool:
+        if isinstance(shared_adapter, AsyncEmulatorAdapter):
+            return await shared_adapter.adb_root()
+        adb_addr = shared_adapter.cfg.adb_addr
+        return await run_in_emulator_io(
+            adb_addr,
+            shared_adapter.adb.root,
+            adb_addr,
+        )
+
+    async def _adb_shell(
+        self, shared_adapter, cmd: str, timeout: Optional[float] = None
+    ) -> Tuple[int, str]:
+        if isinstance(shared_adapter, AsyncEmulatorAdapter):
+            return await shared_adapter.adb_shell(cmd, timeout=timeout)
+
+        adb_addr = shared_adapter.cfg.adb_addr
+        if timeout is None:
+            return await run_in_emulator_io(
+                adb_addr,
+                shared_adapter.adb.shell,
+                adb_addr,
+                cmd,
+            )
+
+        return await run_in_emulator_io(
+            adb_addr,
+            lambda: shared_adapter.adb.shell(adb_addr, cmd, timeout=timeout),
+        )
+
+    async def _final_cleanup(self, shared_adapter) -> None:
         """所有任务（含 re-scan）完成后关闭游戏、删除登录数据。"""
         if not shared_adapter:
             self._log.info("最终 cleanup: 无 adapter，跳过")
             return
 
-        adb_addr = shared_adapter.cfg.adb_addr
-
         # 1. 停止游戏
         try:
-            shared_adapter.adb.force_stop(adb_addr, self._PKG_NAME)
+            await self._force_stop_game(shared_adapter)
             self._log.info("最终 cleanup: 游戏已停止")
         except Exception as e:
             self._log.error(f"最终 cleanup 停止游戏失败: {e}")
@@ -412,10 +481,12 @@ class WorkerActor:
         # 2. 删除登录数据 (shared_prefs)
         shared_prefs_path = f"/data/user/0/{self._PKG_NAME}/shared_prefs"
         try:
-            rooted = shared_adapter.adb.root(adb_addr)
+            rooted = await self._adb_root(shared_adapter)
             if rooted:
-                code, out = shared_adapter.adb.shell(
-                    adb_addr, f"rm -rf {shared_prefs_path}", timeout=30.0
+                code, out = await self._adb_shell(
+                    shared_adapter,
+                    f"rm -rf {shared_prefs_path}",
+                    timeout=30.0,
                 )
                 if code == 0:
                     self._log.info(f"最终 cleanup: 已删除登录数据 {shared_prefs_path}")
@@ -690,69 +761,100 @@ class WorkerActor:
 
         return result.get("status") in (TaskStatus.SUCCEEDED, TaskStatus.SKIPPED)
 
+    def _build_success_next_time_op(
+        self, intent: TaskIntent
+    ) -> Optional[Tuple[str, str, Optional[str]]]:
+        """构建任务成功后的 next_time 更新操作。"""
+        task_type = TaskType(intent.task_type)
+        if task_type in _EXECUTOR_HAS_OWN_UPDATE:
+            return None
+        config_key = task_type.value
+        next_time = self._compute_next_time(task_type)
+        if next_time is None:
+            return None
+        return "set", config_key, next_time
+
+    def _build_failure_next_time_op(
+        self, intent: TaskIntent
+    ) -> Optional[Tuple[str, str, Optional[str]]]:
+        """构建任务失败后的 next_time 延迟操作。"""
+        task_type = TaskType(intent.task_type)
+        return "delay", task_type.value, None
+
+    async def _flush_next_time_updates(
+        self,
+        account_id: int,
+        ops: List[Tuple[str, str, Optional[str]]],
+    ) -> None:
+        """批量刷新 next_time 更新，单次 DB 读写完成。"""
+        if not ops:
+            return
+
+        ops_copy = list(ops)
+
+        def _do_update():
+            try:
+                with SessionLocal() as db:
+                    account = db.query(GameAccount).filter(GameAccount.id == account_id).first()
+                    if not account:
+                        return
+                    cfg = account.task_config or {}
+                    changed = False
+                    bj_now = now_beijing()
+                    for action, config_key, value in ops_copy:
+                        task_cfg = cfg.get(config_key, {})
+                        if not isinstance(task_cfg, dict):
+                            task_cfg = {}
+
+                        if action == "set":
+                            if not value:
+                                continue
+                            task_cfg["next_time"] = value
+                            cfg[config_key] = task_cfg
+                            changed = True
+                            self._log.info(
+                                f"[{config_key}] next_time 更新为 {value} (account={account_id})"
+                            )
+                            continue
+
+                        if action == "delay":
+                            fail_delay = task_cfg.get("fail_delay", 30)
+                            if not isinstance(fail_delay, (int, float)) or fail_delay <= 0:
+                                continue
+                            new_next_time = format_beijing_time(
+                                bj_now + timedelta(minutes=int(fail_delay))
+                            )
+                            task_cfg["next_time"] = new_next_time
+                            cfg[config_key] = task_cfg
+                            changed = True
+                            self._log.info(
+                                f"[{config_key}] 任务失败，next_time 延后 {int(fail_delay)} 分钟至 {new_next_time} (account={account_id})"
+                            )
+
+                    if changed:
+                        account.task_config = cfg
+                        flag_modified(account, "task_config")
+                        db.commit()
+            except Exception as e:
+                self._log.error(f"批量更新 next_time 失败: account={account_id}, error={e}")
+
+        await run_in_db(_do_update)
+
     async def _update_next_time_for_intent(self, intent: TaskIntent, account_id: int) -> None:
         """任务成功后统一更新 task_config 中的 next_time。
         已有自定义 _update_next_time 的执行器（弥助、领取登录礼包）会跳过。
         """
-        task_type = TaskType(intent.task_type)
-        if task_type in _EXECUTOR_HAS_OWN_UPDATE:
+        op = self._build_success_next_time_op(intent)
+        if not op:
             return
-
-        config_key = task_type.value  # 例如 "寄养", "悬赏" 等
-        next_time = self._compute_next_time(task_type)
-        if next_time is None:
-            return
-
-        def _do_update():
-            try:
-                with SessionLocal() as db:
-                    account = db.query(GameAccount).filter(GameAccount.id == account_id).first()
-                    if not account:
-                        return
-                    cfg = account.task_config or {}
-                    task_cfg = cfg.get(config_key, {})
-                    task_cfg["next_time"] = next_time
-                    cfg[config_key] = task_cfg
-                    account.task_config = cfg
-                    flag_modified(account, "task_config")
-                    db.commit()
-                    self._log.info(f"[{config_key}] next_time 更新为 {next_time} (account={account_id})")
-            except Exception as e:
-                self._log.error(f"更新 next_time 失败: task={config_key}, account={account_id}, error={e}")
-
-        await run_in_db(_do_update)
+        await self._flush_next_time_updates(account_id, [op])
 
     async def _update_next_time_on_failure(self, intent: TaskIntent, account_id: int) -> None:
         """任务失败后，根据 task_config 中的 fail_delay 延迟 next_time。"""
-        task_type = TaskType(intent.task_type)
-        config_key = task_type.value
-
-        def _do_update():
-            try:
-                with SessionLocal() as db:
-                    account = db.query(GameAccount).filter(GameAccount.id == account_id).first()
-                    if not account:
-                        return
-                    cfg = account.task_config or {}
-                    task_cfg = cfg.get(config_key, {})
-                    fail_delay = task_cfg.get("fail_delay", 30)
-                    if fail_delay <= 0:
-                        return
-
-                    bj_now = now_beijing()
-                    new_next_time = format_beijing_time(bj_now + timedelta(minutes=fail_delay))
-                    task_cfg["next_time"] = new_next_time
-                    cfg[config_key] = task_cfg
-                    account.task_config = cfg
-                    flag_modified(account, "task_config")
-                    db.commit()
-                    self._log.info(
-                        f"[{config_key}] 任务失败，next_time 延后 {fail_delay} 分钟至 {new_next_time} (account={account_id})"
-                    )
-            except Exception as e:
-                self._log.error(f"更新失败延迟 next_time 失败: task={config_key}, account={account_id}, error={e}")
-
-        await run_in_db(_do_update)
+        op = self._build_failure_next_time_op(intent)
+        if not op:
+            return
+        await self._flush_next_time_updates(account_id, [op])
 
     async def _delay_all_tasks_on_jihao(self, account_id: int) -> None:
         """祭号弹窗出现后，批量延后所有即将到期的任务。
@@ -801,7 +903,7 @@ class WorkerActor:
 
         await run_in_db(_do_delay)
 
-    def _save_fail_screenshot(
+    async def _save_fail_screenshot(
         self,
         intent: TaskIntent,
         shared_adapter,
@@ -820,15 +922,15 @@ class WorkerActor:
             from pathlib import Path
 
             capture_method = getattr(self.syscfg, 'capture_method', None) or 'adb'
-            # shared_adapter 可能已被包装为 AsyncEmulatorAdapter，
-            # 此处为同步上下文，需通过底层同步 adapter 截图
-            from ..emu.async_adapter import AsyncEmulatorAdapter
-            sync_adapter = (
-                shared_adapter.sync
-                if isinstance(shared_adapter, AsyncEmulatorAdapter)
-                else shared_adapter
-            )
-            png_data = sync_adapter.capture(method=capture_method)
+            if isinstance(shared_adapter, AsyncEmulatorAdapter):
+                png_data = await shared_adapter.capture(method=capture_method)
+            else:
+                adb_addr = shared_adapter.cfg.adb_addr
+                png_data = await run_in_emulator_io(
+                    adb_addr,
+                    shared_adapter.capture,
+                    capture_method,
+                )
             if not png_data:
                 self._log.warning("保存失败截图：截图数据为空")
                 return

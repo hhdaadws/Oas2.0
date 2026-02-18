@@ -29,6 +29,7 @@ def init_db():
     _migrate_rest_config_enabled_column()
     _ensure_performance_indexes()
     _migrate_save_fail_screenshot_column()
+    _migrate_cross_emulator_cache_enabled_column()
     _migrate_default_task_enabled_column()
     _migrate_drop_zone_column()
     _migrate_global_rest_columns()
@@ -374,6 +375,33 @@ def _migrate_save_fail_screenshot_column():
         try:
             from ..core.logger import logger
             logger.error(f"save_fail_screenshot 列迁移失败: {e}")
+        except Exception:
+            pass
+
+
+def _migrate_cross_emulator_cache_enabled_column():
+    """确保 system_config 表包含 cross_emulator_cache_enabled 列。"""
+    try:
+        from ..core.logger import logger
+
+        with engine.begin() as conn:
+            cols = [
+                r[1]
+                for r in conn.exec_driver_sql(
+                    "PRAGMA table_info('system_config')"
+                ).fetchall()
+            ]
+            if not cols or "cross_emulator_cache_enabled" in cols:
+                return
+            conn.exec_driver_sql(
+                "ALTER TABLE system_config ADD COLUMN cross_emulator_cache_enabled BOOLEAN DEFAULT 0"
+            )
+            logger.info("已为 system_config 表新增 cross_emulator_cache_enabled 列")
+    except Exception as e:
+        try:
+            from ..core.logger import logger
+
+            logger.error(f"cross_emulator_cache_enabled 列迁移失败: {e}")
         except Exception:
             pass
 

@@ -11,7 +11,7 @@ from pydantic import Field
 
 def _get_base_dir() -> Path:
     """获取项目根目录，兼容开发模式和 PyInstaller 打包模式。"""
-    if getattr(sys, 'frozen', False):
+    if getattr(sys, "frozen", False):
         # PyInstaller 打包模式：exe 所在目录
         return Path(sys.executable).resolve().parent
     else:
@@ -39,11 +39,11 @@ class Settings(BaseSettings):
 
     # JWT 签名密钥（持久化，重启后 token 仍有效）
     jwt_secret: str = Field(default="", env="JWT_SECRET")
-    
+
     # OCR
     paddle_ocr_lang: str = Field(default="ch", env="PADDLE_OCR_LANG")
     ocr_model_dir: str = Field(default=str(BASE_DIR / "ocr_model"), env="OCR_MODEL_DIR")
-    
+
     # 模拟器/启动配置
     mumu_manager_path: str = Field(default="", env="MUMU_MANAGER_PATH")
     adb_path: str = Field(default="adb", env="ADB_PATH")
@@ -58,20 +58,64 @@ class Settings(BaseSettings):
     activity_name: str = Field(default=".MainActivity", env="ACTIVITY_NAME")
     # 运行链路截图方式
     capture_method: str = Field(default="adb", env="CAPTURE_METHOD")
-    
+    # 识图帧缓存总开关
+    vision_frame_cache_enabled: bool = Field(
+        default=True, env="VISION_FRAME_CACHE_ENABLED"
+    )
+    # 同帧识图结果缓存有效期（毫秒）
+    # 默认 5000ms，覆盖 ensure_game_ready 的 2s 轮询与处理耗时。
+    vision_frame_cache_ttl_ms: int = Field(
+        default=5000, env="VISION_FRAME_CACHE_TTL_MS"
+    )
+    # 同帧近似判定阈值（缩略量化图的平均差值）
+    # 值越大越宽松，命中率更高，但需防止 UI 变化被误判为同帧。
+    vision_frame_similarity_threshold: float = Field(
+        default=0.8, env="VISION_FRAME_SIMILARITY_THRESHOLD"
+    )
+    # 是否开启跨模拟器共享识图缓存（仅共享同帧识别结果）
+    vision_cross_emulator_cache_enabled: bool = Field(
+        default=False, env="VISION_CROSS_EMULATOR_CACHE_ENABLED"
+    )
+    # 跨模拟器共享缓存每个桶的最大保留条数（LRU）
+    vision_cross_emulator_shared_bucket_size: int = Field(
+        default=8, env="VISION_CROSS_EMULATOR_SHARED_BUCKET_SIZE"
+    )
+    # 同帧连续 miss 最多跳过次数（到达后强制重检）
+    vision_unchanged_skip_max: int = Field(default=2, env="VISION_UNCHANGED_SKIP_MAX")
+    # 弹窗关闭后立即重试的最小 sleep（毫秒）
+    vision_min_retry_sleep_ms: int = Field(default=50, env="VISION_MIN_RETRY_SLEEP_MS")
+    # 识图缓存统计日志输出间隔（秒）
+    vision_cache_stats_interval_sec: int = Field(
+        default=10, env="VISION_CACHE_STATS_INTERVAL_SEC"
+    )
+
     # 调度
     coop_times: str = Field(default="18:00,21:00", env="COOP_TIMES")
     stamina_threshold: int = Field(default=1000, env="STAMINA_THRESHOLD")
-    
+
     # Web服务
     api_host: str = Field(default="0.0.0.0", env="API_HOST")
     api_port: int = Field(default=9001, env="API_PORT")
-    
+    run_mode: str = Field(default="local", env="RUN_MODE")
+    cloud_api_base_url: str = Field(default="", env="CLOUD_API_BASE_URL")
+    cloud_agent_node_id: str = Field(default="local-node", env="CLOUD_AGENT_NODE_ID")
+    cloud_manager_username: str = Field(default="", env="CLOUD_MANAGER_USERNAME")
+    cloud_manager_password: str = Field(default="", env="CLOUD_MANAGER_PASSWORD")
+    cloud_poll_interval_sec: int = Field(default=5, env="CLOUD_POLL_INTERVAL_SEC")
+    cloud_lease_sec: int = Field(default=90, env="CLOUD_LEASE_SEC")
+    cloud_timeout_sec: int = Field(default=15, env="CLOUD_TIMEOUT_SEC")
+
     # 日志
     log_level: str = Field(default="INFO", env="LOG_LEVEL")
     log_path: str = Field(default=str(BASE_DIR / "logs"), env="LOG_PATH")
     log_retention_days: int = Field(default=3, env="LOG_RETENTION_DAYS")
-    
+    log_console_enabled: bool = Field(default=True, env="LOG_CONSOLE_ENABLED")
+    log_enqueue_enabled: bool = Field(default=True, env="LOG_ENQUEUE_ENABLED")
+    log_file_format: str = Field(default="text", env="LOG_FILE_FORMAT")
+    log_access_enabled: bool = Field(default=True, env="LOG_ACCESS_ENABLED")
+    log_access_path: str = Field(default="", env="LOG_ACCESS_PATH")
+    log_rotation: str = Field(default="00:00", env="LOG_ROTATION")
+
     # 备份
     backup_interval_days: int = Field(default=3, env="BACKUP_INTERVAL_DAYS")
     backup_retention_count: int = Field(default=3, env="BACKUP_RETENTION_COUNT")
@@ -83,12 +127,12 @@ class Settings(BaseSettings):
     # OCR 实例池（支持并行推理）
     ocr_pool_size: int = Field(default=2, env="OCR_POOL_SIZE")
     digit_ocr_pool_size: int = Field(default=2, env="DIGIT_OCR_POOL_SIZE")
-    
+
     class Config:
         env_file = str(BASE_DIR / ".env")
         case_sensitive = False
         extra = "ignore"
-    
+
     @property
     def coop_time_list(self) -> list[str]:
         """获取勾协时间列表"""

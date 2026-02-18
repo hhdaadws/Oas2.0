@@ -110,3 +110,12 @@ export function updateShikigamiConfig(id, data) {
     data
   })
 }
+
+// 获取账号任务执行日志
+export function getAccountLogs(id, params = {}) {
+  return request({
+    url: `/accounts/${id}/logs`,
+    method: 'get',
+    params
+  })
+}

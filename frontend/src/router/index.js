@@ -12,7 +12,7 @@ const routes = [
   {
     path: '/',
     component: Layout,
-    redirect: '/dashboard',
+    redirect: '/login',
     children: [
       {
         path: 'dashboard',
@@ -68,11 +68,8 @@ const router = createRouter({
 // 路由守卫：未登录跳转到登录页
 router.beforeEach((to, from, next) => {
   if (to.meta.public) {
-    if (to.path === '/login' && getToken()) {
-      next('/dashboard')
-    } else {
-      next()
-    }
+    // 登录页始终可访问，避免 24h 内被强制跳过而无法切换云端登录
+    next()
     return
   }
 

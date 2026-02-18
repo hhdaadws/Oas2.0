@@ -28,6 +28,8 @@ class DismissAction:
     # TAP 模式: 固定坐标
     tap_x: int = 0
     tap_y: int = 0
+    # TAP 模式: 随机点击矩形区域 (x1, y1, x2, y2)，边界包含端点
+    tap_rect: Optional[Tuple[int, int, int, int]] = None
     # TAP_TEMPLATE 模式: 按钮模板路径 + 可选 ROI + 阈值
     template_path: str = ""
     template_roi: Optional[Tuple[int, int, int, int]] = None

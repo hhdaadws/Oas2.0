@@ -179,7 +179,8 @@
       "Bash(\"e:\\\\new_oas\\\\Oas2.0\\\\venv\\\\Scripts\\\\python.exe\" -c \"import ast, glob, os; os.chdir\\(r''e:\\\\new_oas\\\\Oas2.0''\\); files = glob.glob\\(''src/app/modules/executor/*.py''\\); [ast.parse\\(open\\(f, encoding=''utf-8''\\).read\\(\\)\\) for f in files]; print\\(f''All {len\\(files\\)} executor files parse OK''\\)\")",
       "Bash(\"C:/Users/herbwork0p/projects/agents-5e1bb3cc43/venv/Scripts/python.exe\" -c \"import ast; print\\(''ast ok''\\)\")",
       "Bash(\"e:\\\\new_oas\\\\Oas2.0\\\\venv\\\\Scripts\\\\python.exe\" -c \"import py_compile; py_compile.compile\\(r''e:\\\\new_oas\\\\Oas2.0\\\\src\\\\app\\\\modules\\\\executor\\\\duiyi_jingcai.py'', doraise=True\\); print\\(''ok''\\)\")",
-      "Bash(git reset:*)"
+      "Bash(git reset:*)",
+      "Bash(\"venv\\\\Scripts\\\\pytest.exe\" tests/modules/executor/test_duiyi_jingcai.py -v)"
     ],
     "deny": [],
     "ask": []

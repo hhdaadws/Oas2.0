@@ -682,6 +682,30 @@ def build_default_graph() -> UIGraph:
         )
     )
 
+    # 庭院 -> 对弈竞猜：点击 dy_rukou 锚点
+    graph.add_edge(
+        Edge(
+            src="TINGYUAN",
+            dst="DUIYI_JINGCAI",
+            actions=[
+                Action(type="tap_anchor", args=("dy_rukou",)),
+                Action(type="sleep", args=(1200,)),
+            ],
+        )
+    )
+
+    # 对弈竞猜 -> 庭院：点击返回按钮（back.png）
+    graph.add_edge(
+        Edge(
+            src="DUIYI_JINGCAI",
+            dst="TINGYUAN",
+            actions=[
+                Action(type="tap_anchor", args=("back",)),
+                Action(type="sleep", args=(800,)),
+            ],
+        )
+    )
+
     return graph
 
 

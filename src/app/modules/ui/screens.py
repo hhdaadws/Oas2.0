@@ -71,6 +71,7 @@ registry.register(UIDef(
         TemplateDef(name="qiandao", path="assets/ui/templates/qiandao.png"),
         TemplateDef(name="huahezhan", path="assets/ui/templates/huahezhan.png"),
         TemplateDef(name="tujian", path="assets/ui/templates/tujian.png"),
+        TemplateDef(name="dy_rukou", path="assets/ui/templates/dy/dy_rukou.png"),
     ],
 ))
 
@@ -366,6 +367,16 @@ registry.register(UIDef(
     templates=[
         TemplateDef(name="meizhou_shishen", path="assets/ui/templates/meizhou_shishen.png"),
         TemplateDef(name="shishen_liebiao", path="assets/ui/templates/shishen_liebiao.png"),
+        TemplateDef(name="back", path="assets/ui/templates/back.png"),
+    ],
+))
+
+# 对弈竞猜界面：tag=tag_dy 用于识别；back 用于返回庭院的导航锚点
+registry.register(UIDef(
+    id="DUIYI_JINGCAI",
+    tag="tag_dy",
+    templates=[
+        TemplateDef(name="tag_dy", path="assets/ui/templates/tag_dy.png"),
         TemplateDef(name="back", path="assets/ui/templates/back.png"),
     ],
 ))

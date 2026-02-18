@@ -81,7 +81,7 @@ class AddFriendExecutor(BaseExecutor):
 
         self.adapter = self._build_adapter()
 
-        ok = self.adapter.push_login_data(account.login_id, data_dir="putonglogindata")
+        ok = await self._push_login_data(account.login_id, data_dir="putonglogindata")
         if not ok:
             self.logger.error(f"[加好友] push 登录数据失败: {account.login_id}")
             return False
@@ -99,7 +99,7 @@ class AddFriendExecutor(BaseExecutor):
             capture_method = (
                 self.system_config.capture_method if self.system_config else None
             ) or "adb"
-            self.ui = UIManager(self.adapter, capture_method=capture_method)
+            self.ui = UIManager(self.adapter, capture_method=capture_method, cross_emulator_cache_enabled=self._cross_emulator_cache_enabled())
 
         # 1. 确保游戏就绪（进入庭院）
         entered = await self.ui.ensure_game_ready(timeout=90.0)
@@ -238,7 +238,7 @@ class AddFriendExecutor(BaseExecutor):
             return
         if self.adapter:
             try:
-                self.adapter.adb.force_stop(self.adapter.cfg.adb_addr, PKG_NAME)
+                await self._adb_force_stop(PKG_NAME)
                 self.logger.info("[加好友] 游戏已停止")
             except Exception as e:
                 self.logger.error(f"[加好友] 停止游戏失败: {e}")

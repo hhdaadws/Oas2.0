@@ -1261,6 +1261,52 @@
               <span v-else>暂无休息计划</span>
             </template>
           </div>
+
+          <!-- 任务执行日志 -->
+          <el-divider>任务执行日志</el-divider>
+          <div class="account-logs">
+            <div class="logs-toolbar">
+              <el-select
+                v-model="accountLogFilter.level"
+                placeholder="日志级别"
+                clearable
+                style="width: 140px"
+                @change="handleAccountLogFilterChange"
+              >
+                <el-option label="全部级别" value="" />
+                <el-option label="INFO" value="INFO" />
+                <el-option label="WARNING" value="WARNING" />
+                <el-option label="ERROR" value="ERROR" />
+              </el-select>
+              <el-button link @click="fetchAccountLogs">
+                刷新
+              </el-button>
+            </div>
+
+            <div class="logs-content" v-loading="accountLogLoading">
+              <template v-if="accountLogs.length">
+                <el-table :data="accountLogs" stripe height="360">
+                  <el-table-column prop="timestamp" label="时间" width="180">
+                    <template #default="{ row }">
+                      {{ formatLogTime(row.timestamp) }}
+                    </template>
+                  </el-table-column>
+                  <el-table-column prop="level" label="级别" width="90">
+                    <template #default="{ row }">
+                      <el-tag :type="getLogLevelType(row.level)" size="small">{{ row.level }}</el-tag>
+                    </template>
+                  </el-table-column>
+                  <el-table-column prop="type" label="类型" width="120" />
+                  <el-table-column prop="message" label="消息" min-width="260" />
+                </el-table>
+              </template>
+              <el-empty v-else description="暂无任务执行日志" />
+            </div>
+
+            <div class="logs-summary">
+              显示最近 {{ accountLogs.length }} 条日志
+            </div>
+          </div>
         </el-card>
 
         <el-empty v-else description="请选择一个账号查看详情" />
@@ -1322,7 +1368,8 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
+import dayjs from 'dayjs'
 import {
   getAccounts,
   createGameAccount,
@@ -1335,7 +1382,8 @@ import {
   deleteGameAccounts,
   getLineupConfig,
   updateLineupConfig,
-  updateShikigamiConfig
+  updateShikigamiConfig,
+  getAccountLogs
 } from '@/api/accounts'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { API_ENDPOINTS, apiRequest } from '@/config'
@@ -1392,6 +1440,11 @@ const restConfig = reactive({
   duration: 2
 })
 const restPlan = ref({})
+const accountLogs = ref([])
+const accountLogFilter = reactive({ level: '' })
+const accountLogLoading = ref(false)
+const ACCOUNT_LOG_LIMIT = 30
+let accountLogTimer = null
 
 // 对话框
 const gameDialogVisible = ref(false)
@@ -1472,6 +1525,67 @@ const formatAccountTree = (data) => {
   }))
 }
 
+const formatLogTime = (time) => {
+  if (!time) return '-'
+  return dayjs(time).format('YYYY-MM-DD HH:mm:ss')
+}
+
+const getLogLevelType = (level) => {
+  const map = { INFO: 'success', WARNING: 'warning', ERROR: 'danger' }
+  return map[level] || 'info'
+}
+
+const stopAccountLogAutoRefresh = () => {
+  if (accountLogTimer) {
+    clearInterval(accountLogTimer)
+    accountLogTimer = null
+  }
+}
+
+const startAccountLogAutoRefresh = () => {
+  stopAccountLogAutoRefresh()
+  if (!selectedAccount.value?.id) return
+  accountLogTimer = setInterval(() => {
+    void fetchAccountLogs({ silent: true })
+  }, 15000)
+}
+
+const fetchAccountLogs = async ({ silent = false } = {}) => {
+  const accountId = selectedAccount.value?.id
+  if (!accountId) {
+    accountLogs.value = []
+    return
+  }
+
+  if (!silent) accountLogLoading.value = true
+
+  try {
+    const params = {
+      limit: ACCOUNT_LOG_LIMIT,
+      offset: 0
+    }
+    if (accountLogFilter.level) {
+      params.level = accountLogFilter.level
+    }
+
+    const data = await getAccountLogs(accountId, params)
+    if (selectedAccount.value?.id !== accountId) return
+    accountLogs.value = data.logs || []
+  } catch (error) {
+    if (selectedAccount.value?.id === accountId) {
+      ElMessage.error('获取任务执行日志失败')
+    }
+  } finally {
+    if (!silent && selectedAccount.value?.id === accountId) {
+      accountLogLoading.value = false
+    }
+  }
+}
+
+const handleAccountLogFilterChange = () => {
+  fetchAccountLogs()
+}
+
 // 勾选变化，收集被选中的游戏账号ID
 const handleTreeCheck = () => {
   const keys = accountTreeRef.value?.getCheckedKeys(false) || []
@@ -1518,6 +1632,8 @@ const handleBatchDelete = async () => {
     selectedGameIds.value = []
     selectedAccount.value = null
     restPlan.value = {}
+    accountLogs.value = []
+    stopAccountLogAutoRefresh()
     await fetchAccounts()
   } catch (e) {
     ElMessage.error('批量删除失败')
@@ -1528,6 +1644,9 @@ const handleBatchDelete = async () => {
 const handleNodeClick = async (data) => {
   if (data.type === 'game') {
     selectedAccount.value = data
+    accountLogFilter.level = ''
+    accountLogs.value = []
+    stopAccountLogAutoRefresh()
     // 加载任务配置，支持新的配置结构
     const savedConfig = data.task_config || {}
 
@@ -1803,6 +1922,9 @@ const handleNodeClick = async (data) => {
       }
       shikigamiConfig.租借式神 = sConfig.租借式神 || []
     }
+
+    await fetchAccountLogs()
+    startAccountLogAutoRefresh()
   }
 }
 
@@ -2208,6 +2330,8 @@ const handleDeleteGame = async (id) => {
     if (selectedAccount.value && selectedAccount.value.id === id) {
       selectedAccount.value = null
       restPlan.value = {}
+      accountLogs.value = []
+      stopAccountLogAutoRefresh()
     }
     await fetchAccounts()
   } catch (e) {
@@ -2285,6 +2409,10 @@ onMounted(() => {
     .then(data => { globalRestEnabled.value = data.enabled ?? true })
     .catch(() => {})
 })
+
+onUnmounted(() => {
+  stopAccountLogAutoRefresh()
+})
 </script>
 
 <style scoped lang="scss">
@@ -2333,6 +2461,26 @@ onMounted(() => {
 
     .rest-plan {
       padding: 10px 0;
+    }
+
+    .account-logs {
+      .logs-toolbar {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 10px;
+      }
+
+      .logs-content {
+        min-height: 320px;
+      }
+
+      .logs-summary {
+        margin-top: 10px;
+        text-align: center;
+        color: #909399;
+        font-size: 12px;
+      }
     }
   }
 }

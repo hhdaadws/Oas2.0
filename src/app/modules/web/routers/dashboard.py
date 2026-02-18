@@ -12,12 +12,9 @@ from ....db.base import get_db
 from ....db.models import CoopAccount, GameAccount, Log
 from ...executor.service import executor_service
 from ...tasks.feeder import feeder
-from ...tasks.simple_scheduler import simple_scheduler
 
 
 router = APIRouter(prefix="/api", tags=["dashboard"])
-
-ENABLE_LEGACY_DASHBOARD_FALLBACK = False
 
 # 时间类任务（有 next_time 字段）
 _TIME_TASK_KEYS = [
@@ -59,63 +56,55 @@ async def get_dashboard(db: Session = Depends(get_db)):
     executor_running = executor_service.running_info()
     executor_queue = executor_service.queue_info()
 
-    if ENABLE_LEGACY_DASHBOARD_FALLBACK and not executor_running:
-        running_account_ids = list(simple_scheduler.running_accounts)
-        running_tasks = simple_scheduler.get_running_tasks()
-    else:
-        running_account_ids = [
-            item.get("account_id")
-            for item in executor_running
-            if item.get("account_id")
-        ]
-        account_map = {acc.id: acc.login_id for acc in active_accounts}
-        running_tasks = []
-        now_iso = datetime.utcnow().isoformat()
-        for item in executor_running:
-            account_id = item.get("account_id")
-            running_tasks.append(
-                {
-                    "account_id": account_id,
-                    "account_login_id": account_map.get(account_id),
-                    "task_type": item.get("task_type") or "执行中",
-                    "started_at": item.get("started_at") or now_iso,
-                    "emulator_name": item.get("emulator_name"),
-                }
-            )
+    running_account_ids = [
+        item.get("account_id")
+        for item in executor_running
+        if item.get("account_id")
+    ]
+    account_map = {acc.id: acc.login_id for acc in active_accounts}
+    running_tasks = []
+    now_iso = datetime.utcnow().isoformat()
+    for item in executor_running:
+        account_id = item.get("account_id")
+        running_tasks.append(
+            {
+                "account_id": account_id,
+                "account_login_id": account_map.get(account_id),
+                "task_type": item.get("task_type") or "执行中",
+                "started_at": item.get("started_at") or now_iso,
+                "emulator_name": item.get("emulator_name"),
+            }
+        )
 
-    if ENABLE_LEGACY_DASHBOARD_FALLBACK and not executor_queue:
-        queue_preview = simple_scheduler.get_queue_info()
-    else:
-        account_map = {acc.id: acc.login_id for acc in active_accounts}
-        priority_map = {
-            "加好友": 90,
-            "勾协": 80,
-            "悬赏": 70,
-            "弥助": 65,
-            "寄养": 60,
-            "领取登录礼包": 55,
-            "探索突破": 50,
-            "领取邮件": 45,
-            "结界卡合成": 40,
-            "爬塔": 35,
-            "斗技": 36,
-            "休息": 20,
-        }
-        queue_preview = []
-        for item in executor_queue[:10]:
-            task_type = item.get("task_type")
-            queue_preview.append(
-                {
-                    "account_id": item.get("account_id"),
-                    "account_login_id": account_map.get(item.get("account_id")),
-                    "task_type": task_type,
-                    "next_time": item.get("enqueue_time"),
-                    "enqueue_time": item.get("enqueue_time"),
-                    "priority": priority_map.get(task_type, 30),
-                    "state": item.get("state") or "queued",
-                    "retry_count": item.get("retry_count") or 0,
-                }
-            )
+    priority_map = {
+        "加好友": 90,
+        "勾协": 80,
+        "悬赏": 70,
+        "弥助": 65,
+        "寄养": 60,
+        "领取登录礼包": 55,
+        "探索突破": 50,
+        "领取邮件": 45,
+        "结界卡合成": 40,
+        "爬塔": 35,
+        "斗技": 36,
+        "休息": 20,
+    }
+    queue_preview = []
+    for item in executor_queue[:10]:
+        task_type = item.get("task_type")
+        queue_preview.append(
+            {
+                "account_id": item.get("account_id"),
+                "account_login_id": account_map.get(item.get("account_id")),
+                "task_type": task_type,
+                "next_time": item.get("enqueue_time"),
+                "enqueue_time": item.get("enqueue_time"),
+                "priority": priority_map.get(task_type, 30),
+                "state": item.get("state") or "queued",
+                "retry_count": item.get("retry_count") or 0,
+            }
+        )
 
     today = datetime.now().date()
     coop_all = (
@@ -236,11 +225,6 @@ async def get_realtime_stats(db: Session = Depends(get_db)):
 
     queue_size = len(executor_service.queue_info())
     running_count = len(executor_service.running_info())
-    if ENABLE_LEGACY_DASHBOARD_FALLBACK:
-        if queue_size == 0:
-            queue_size = len(simple_scheduler.get_queue_info())
-        if running_count == 0:
-            running_count = len(simple_scheduler.running_accounts)
 
     today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
     today_completed = (

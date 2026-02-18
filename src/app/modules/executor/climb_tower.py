@@ -15,6 +15,7 @@ import asyncio
 from datetime import datetime
 from typing import Any, Dict, Optional
 
+from ...core.config import settings
 from ...core.constants import TaskStatus
 from ...db.base import SessionLocal
 from ...db.models import Emulator, GameAccount, SystemConfig, Task
@@ -23,6 +24,7 @@ from ..ocr.async_recognize import async_ocr_digits
 from ..shikigami import build_manual_lineup_info
 from ..ui.assets import parse_number
 from ..ui.manager import UIManager
+from ..vision.frame_cache import compute_frame_fingerprint
 from ..vision.template import find_all_templates, match_template
 from ..vision.utils import load_image
 from .base import BaseExecutor
@@ -117,7 +119,7 @@ class ClimbTowerExecutor(BaseExecutor):
 
         self.adapter = self._build_adapter()
 
-        ok = self.adapter.push_login_data(account.login_id, data_dir="putonglogindata")
+        ok = await self._push_login_data(account.login_id, data_dir="putonglogindata")
         if not ok:
             self.logger.error(f"[爬塔] push 登录数据失败: {account.login_id}")
             return False
@@ -136,7 +138,7 @@ class ClimbTowerExecutor(BaseExecutor):
             capture_method = (
                 self.system_config.capture_method if self.system_config else None
             ) or "adb"
-            self.ui = UIManager(self.adapter, capture_method=capture_method)
+            self.ui = UIManager(self.adapter, capture_method=capture_method, cross_emulator_cache_enabled=self._cross_emulator_cache_enabled())
 
         # 1. 确保游戏就绪
         entered = await self.ui.ensure_game_ready(timeout=90.0)
@@ -174,9 +176,7 @@ class ClimbTowerExecutor(BaseExecutor):
             }
 
         # 4. 循环战斗（每轮结束后重新 OCR 读票，票数为 0 退出）
-        victories, total_rounds = await self._run_battle_loop(
-            max_battles, ticket_cfg
-        )
+        victories, total_rounds = await self._run_battle_loop(max_battles, ticket_cfg)
 
         self.logger.info(f"[爬塔] 完成: 胜利 {victories}/{total_rounds}")
 
@@ -217,29 +217,19 @@ class ClimbTowerExecutor(BaseExecutor):
         if verify_tpl:
             m = match_template(screenshot, verify_tpl)
             if m:
-                self.logger.info(
-                    f"[爬塔] 状态检测: 已在挑战界面 (score={m.score:.3f})"
-                )
+                self.logger.info(f"[爬塔] 状态检测: 已在挑战界面 (score={m.score:.3f})")
                 return _CLIMB_STATE_CHALLENGE
 
         # 地图界面
-        m = match_template(
-            screenshot, "assets/ui/templates/climb/pata_tag_ditu.png"
-        )
+        m = match_template(screenshot, "assets/ui/templates/climb/pata_tag_ditu.png")
         if m:
-            self.logger.info(
-                f"[爬塔] 状态检测: 已在地图界面 (score={m.score:.3f})"
-            )
+            self.logger.info(f"[爬塔] 状态检测: 已在地图界面 (score={m.score:.3f})")
             return _CLIMB_STATE_PATA_MAP
 
         # 爬塔主界面
-        m = match_template(
-            screenshot, "assets/ui/templates/climb/pata_tag.png"
-        )
+        m = match_template(screenshot, "assets/ui/templates/climb/pata_tag.png")
         if m:
-            self.logger.info(
-                f"[爬塔] 状态检测: 已在爬塔主界面 (score={m.score:.3f})"
-            )
+            self.logger.info(f"[爬塔] 状态检测: 已在爬塔主界面 (score={m.score:.3f})")
             return _CLIMB_STATE_PATA_MAIN
 
         # 用 UIManager 检测是否在庭院
@@ -248,9 +238,7 @@ class ClimbTowerExecutor(BaseExecutor):
             self.logger.info("[爬塔] 状态检测: 在庭院")
             return _CLIMB_STATE_TINGYUAN
 
-        self.logger.info(
-            f"[爬塔] 状态检测: 未知 (UI={detect_result.ui})"
-        )
+        self.logger.info(f"[爬塔] 状态检测: 未知 (UI={detect_result.ui})")
         return _CLIMB_STATE_UNKNOWN
 
     def _steps_to_skip(self, state: str) -> int:
@@ -285,9 +273,7 @@ class ClimbTowerExecutor(BaseExecutor):
             return True
 
         if detect_result.ui != "UNKNOWN":
-            ok = await self.ui.ensure_ui(
-                "TINGYUAN", max_steps=6, step_timeout=3.0
-            )
+            ok = await self.ui.ensure_ui("TINGYUAN", max_steps=6, step_timeout=3.0)
             if ok:
                 return True
 
@@ -322,13 +308,9 @@ class ClimbTowerExecutor(BaseExecutor):
                 return True
 
         # 最终兜底
-        return await self.ui.ensure_ui(
-            "TINGYUAN", max_steps=6, step_timeout=3.0
-        )
+        return await self.ui.ensure_ui("TINGYUAN", max_steps=6, step_timeout=3.0)
 
-    async def _execute_remaining_steps(
-        self, steps: list, step_offset: int = 0
-    ) -> bool:
+    async def _execute_remaining_steps(self, steps: list, step_offset: int = 0) -> bool:
         """从指定位置开始执行导航步骤（复用原有重试逻辑）。
 
         Args:
@@ -347,20 +329,14 @@ class ClimbTowerExecutor(BaseExecutor):
             for attempt in range(1, max_retries + 2):
                 self.logger.info(
                     f"[爬塔] 导航 {actual_idx + 1}/{total}: {label}"
-                    + (
-                        f" (尝试 {attempt}/{max_retries + 1})"
-                        if max_retries > 0
-                        else ""
-                    )
+                    + (f" (尝试 {attempt}/{max_retries + 1})" if max_retries > 0 else "")
                 )
                 ok = await self._execute_step(step)
                 if ok:
                     break
 
                 if attempt <= max_retries:
-                    self.logger.warning(
-                        f"[爬塔] 步骤 {actual_idx + 1} 第 {attempt} 次失败，重试"
-                    )
+                    self.logger.warning(f"[爬塔] 步骤 {actual_idx + 1} 第 {attempt} 次失败，重试")
                     for retry_action in retry_actions:
                         ra_label = retry_action.get("label", "重试动作")
                         self.logger.info(f"[爬塔] 重试动作: {ra_label}")
@@ -425,9 +401,7 @@ class ClimbTowerExecutor(BaseExecutor):
             verify_tpl = nav_cfg.get("verify_template")
             if verify_tpl:
                 # 步骤全部成功时用完整超时，步骤失败时缩短超时（快速确认）
-                verify_timeout = (
-                    nav_cfg.get("verify_timeout", 8.0) if nav_ok else 3.0
-                )
+                verify_timeout = nav_cfg.get("verify_timeout", 8.0) if nav_ok else 3.0
                 m = await wait_for_template(
                     self.adapter,
                     self.ui.capture_method,
@@ -442,8 +416,7 @@ class ClimbTowerExecutor(BaseExecutor):
                     return True
 
                 self.logger.warning(
-                    f"[爬塔] 导航后验证失败 "
-                    f"(attempt={attempt + 1}/{max_retries + 1})"
+                    f"[爬塔] 导航后验证失败 " f"(attempt={attempt + 1}/{max_retries + 1})"
                 )
                 await self._try_back_to_tingyuan()
                 continue
@@ -494,9 +467,7 @@ class ClimbTowerExecutor(BaseExecutor):
             await asyncio.sleep(0.5)
             screenshot = await self._capture()
             if screenshot is None:
-                self.logger.warning(
-                    f"[爬塔] 门票 OCR 截图失败 (attempt={attempt + 1})"
-                )
+                self.logger.warning(f"[爬塔] 门票 OCR 截图失败 (attempt={attempt + 1})")
                 continue
 
             # 检查弹窗
@@ -507,9 +478,7 @@ class ClimbTowerExecutor(BaseExecutor):
 
             result = await async_ocr_digits(screenshot, roi=roi)
             raw = result.text.strip()
-            self.logger.info(
-                f"[爬塔] 门票 OCR: raw='{raw}' (attempt={attempt + 1})"
-            )
+            self.logger.info(f"[爬塔] 门票 OCR: raw='{raw}' (attempt={attempt + 1})")
 
             value = parse_number(raw)
             if value is not None:
@@ -586,8 +555,7 @@ class ClimbTowerExecutor(BaseExecutor):
         ]
         if not nearby_buttons:
             self.logger.info(
-                f"{tag} 同一水平线无借用按钮，推断已借用 "
-                f"(target_y={target_y}, tolerance={y_tol})"
+                f"{tag} 同一水平线无借用按钮，推断已借用 " f"(target_y={target_y}, tolerance={y_tol})"
             )
             await self._click_exit(rent_cfg)
             return True
@@ -595,9 +563,7 @@ class ClimbTowerExecutor(BaseExecutor):
         # 取 score 最高的
         best_button = nearby_buttons[0]  # 已按 score 降序排列
         bx, by = best_button.random_point()
-        self.logger.info(
-            f"{tag} 选中借用按钮 ({bx}, {by}) score={best_button.score:.3f}"
-        )
+        self.logger.info(f"{tag} 选中借用按钮 ({bx}, {by}) score={best_button.score:.3f}")
 
         # 5. 点击借用按钮
         await self._tap(bx, by)
@@ -725,13 +691,11 @@ class ClimbTowerExecutor(BaseExecutor):
                 new_locked, new_score = _check_locked(screenshot)
                 if new_locked == should_lock:
                     self.logger.info(
-                        f"[爬塔-锁定] 切换成功: "
-                        f"{'锁定' if should_lock else '解锁'}"
+                        f"[爬塔-锁定] 切换成功: " f"{'锁定' if should_lock else '解锁'}"
                     )
                     return True
                 self.logger.warning(
-                    f"[爬塔-锁定] 切换验证失败 (attempt={attempt}): "
-                    f"score={new_score:.2f}"
+                    f"[爬塔-锁定] 切换验证失败 (attempt={attempt}): " f"score={new_score:.2f}"
                 )
 
         self.logger.error("[爬塔-锁定] 锁定状态切换失败")
@@ -793,10 +757,7 @@ class ClimbTowerExecutor(BaseExecutor):
         while round_idx < max_rounds:
             round_idx += 1
             is_first = round_idx == 1
-            self.logger.info(
-                f"[爬塔] 第 {round_idx} 轮"
-                f" ({'首次' if is_first else '后续'})"
-            )
+            self.logger.info(f"[爬塔] 第 {round_idx} 轮" f" ({'首次' if is_first else '后续'})")
 
             if is_first:
                 # 首次战斗流程
@@ -949,6 +910,14 @@ class ClimbTowerExecutor(BaseExecutor):
             await asyncio.sleep(settle)
 
         # Phase 3: 快速连续检测 + 点击
+        cache_enabled = bool(getattr(settings, "vision_frame_cache_enabled", True))
+        unchanged_skip_max = max(
+            0,
+            int(getattr(settings, "vision_unchanged_skip_max", 2)),
+        )
+        last_frame_fp: Optional[int] = None
+        same_frame_miss_streak = 0
+        same_frame_skip_count = 0
         clicked_count = 0
         for i in range(rapid_count):
             screenshot = await self._capture()
@@ -956,12 +925,28 @@ class ClimbTowerExecutor(BaseExecutor):
                 await asyncio.sleep(rapid_interval)
                 continue
 
+            frame_fp: Optional[int] = None
+            if cache_enabled:
+                frame_fp = compute_frame_fingerprint(screenshot)
+                if frame_fp != last_frame_fp:
+                    last_frame_fp = frame_fp
+                    same_frame_miss_streak = 0
+                elif (
+                    unchanged_skip_max > 0
+                    and same_frame_miss_streak > 0
+                    and same_frame_miss_streak % (unchanged_skip_max + 1) != 0
+                ):
+                    same_frame_miss_streak += 1
+                    same_frame_skip_count += 1
+                    await asyncio.sleep(rapid_interval)
+                    continue
+
             # 弹窗检查
             if self.ui.popup_handler:
-                dismissed = await self.ui.popup_handler.check_and_dismiss(
-                    screenshot
-                )
+                dismissed = await self.ui.popup_handler.check_and_dismiss(screenshot)
                 if dismissed > 0:
+                    last_frame_fp = None
+                    same_frame_miss_streak = 0
                     await asyncio.sleep(rapid_interval)
                     continue
 
@@ -970,22 +955,27 @@ class ClimbTowerExecutor(BaseExecutor):
                 cx, cy = rm.random_point()
                 await self._tap(cx, cy)
                 clicked_count += 1
+                same_frame_miss_streak = 0
                 self.logger.info(
                     f"{tag}快速点击 ({cx}, {cy}) "
                     f"(cycle={i + 1}/{rapid_count}, "
                     f"total_clicks={clicked_count}, "
                     f"score={rm.score:.3f})"
                 )
+            elif frame_fp is not None:
+                same_frame_miss_streak += 1
 
             await asyncio.sleep(rapid_interval)
 
         if clicked_count > 0:
             self.logger.info(
-                f"{tag}快速检测完成, 共点击{clicked_count}次"
+                f"{tag}快速检测完成, 共点击{clicked_count}次, "
+                f"same_frame_skips={same_frame_skip_count}"
             )
         else:
             self.logger.warning(
-                f"{tag}快速检测{rapid_count}次均未找到模板"
+                f"{tag}快速检测{rapid_count}次均未找到模板, "
+                f"same_frame_skips={same_frame_skip_count}"
             )
 
         # Phase 4: post_delay（仅点击成功时）
@@ -1085,7 +1075,7 @@ class ClimbTowerExecutor(BaseExecutor):
             return
         if self.adapter:
             try:
-                self.adapter.adb.force_stop(self.adapter.cfg.adb_addr, PKG_NAME)
+                await self._adb_force_stop(PKG_NAME)
                 self.logger.info("[爬塔] 游戏已停止")
             except Exception as e:
                 self.logger.error(f"[爬塔] 停止游戏失败: {e}")

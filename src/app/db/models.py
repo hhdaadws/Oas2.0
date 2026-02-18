@@ -274,4 +274,5 @@ class SystemConfig(Base):
     default_rest_config = Column(JSON, nullable=True)  # 新建账号默认休息配置 {"enabled": false, "mode": "random", "duration": 2}
     duiyi_jingcai_answers = Column(JSON, nullable=True)  # 对弈竞猜每窗口答案 {"10:00": "左", "12:00": "右", ...}
     duiyi_reward_coord = Column(JSON, nullable=True)  # 对弈竞猜领奖点击区域 {"x1": 0, "y1": 0, "x2": 100, "y2": 100}
+    cross_emulator_cache_enabled = Column(Boolean, default=False)  # 是否开启跨模拟器共享识图缓存
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

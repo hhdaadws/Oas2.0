@@ -11,11 +11,12 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
-from datetime import datetime
-from typing import Dict, List, Optional, Set, Tuple
+from datetime import datetime, timedelta
+from typing import Callable, Dict, List, Optional, Set, Tuple
 
 from ...core.constants import TASK_PRIORITY, TaskType
 from ...core.logger import logger
+from ...core.thread_pool import emulator_io_pool_stats
 from ...db.base import SessionLocal
 from ...db.models import Emulator, SystemConfig
 from .types import TaskIntent
@@ -47,6 +48,10 @@ class ExecutorService:
         self._max_batch_retry = 1
         self._queue_wait_samples_ms: List[float] = []
         self._failed_batches: List[dict] = []
+        self._batch_done_samples: List[datetime] = []
+        self._batch_done_listeners: List[
+            Callable[[int, bool, List[TaskIntent]], object]
+        ] = []
         self._metrics = {
             "dispatch_attempt": 0,
             "dispatch_success": 0,
@@ -57,6 +62,18 @@ class ExecutorService:
         }
         self._last_dispatch_at: Optional[datetime] = None
         self._log = logger.bind(module="ExecutorService")
+
+    def register_batch_done_listener(
+        self, listener: Callable[[int, bool, List[TaskIntent]], object]
+    ) -> None:
+        if listener not in self._batch_done_listeners:
+            self._batch_done_listeners.append(listener)
+
+    def unregister_batch_done_listener(
+        self, listener: Callable[[int, bool, List[TaskIntent]], object]
+    ) -> None:
+        if listener in self._batch_done_listeners:
+            self._batch_done_listeners.remove(listener)
 
     async def start(self) -> None:
         if self._started:
@@ -114,6 +131,7 @@ class ExecutorService:
         self._queued_accounts.clear()
         self._running_accounts.clear()
         self._running_batches.clear()
+        self._batch_done_samples.clear()
         self._have_items.clear()
         self._log.info("ExecutorService stopped")
 
@@ -241,6 +259,7 @@ class ExecutorService:
         return None
 
     async def _on_task_done(self, account_id: int, success: bool) -> None:
+        notify_intents: List[TaskIntent] = []
         async with self._lock:
             self._running_accounts.discard(account_id)
             batch = self._running_batches.pop(account_id, None)
@@ -248,6 +267,14 @@ class ExecutorService:
                 if self._pending:
                     self._have_items.set()
                 return
+            notify_intents = list(batch.intents)
+
+            done_at = datetime.utcnow()
+            self._batch_done_samples.append(done_at)
+            cutoff = done_at - timedelta(minutes=5)
+            self._batch_done_samples = [
+                ts for ts in self._batch_done_samples if ts >= cutoff
+            ]
 
             if success:
                 self._metrics["batch_succeeded"] += 1
@@ -273,6 +300,17 @@ class ExecutorService:
 
             if self._pending:
                 self._have_items.set()
+
+        if notify_intents and self._batch_done_listeners:
+            for listener in list(self._batch_done_listeners):
+                try:
+                    result = listener(account_id, success, notify_intents)
+                    if asyncio.iscoroutine(result):
+                        await result
+                except Exception as exc:
+                    self._log.warning(
+                        f"batch done listener error: account={account_id}, error={exc}"
+                    )
 
     def rescan_account(self, account_id: int) -> List[TaskIntent]:
         """为正在执行的 account 做即时 re-scan，收集新到期任务。
@@ -382,6 +420,12 @@ class ExecutorService:
     def metrics_snapshot(self) -> dict:
         queue_wait_p50 = self._percentile(self._queue_wait_samples_ms, 50)
         queue_wait_p95 = self._percentile(self._queue_wait_samples_ms, 95)
+        now = datetime.utcnow()
+        cutoff_1m = now - timedelta(minutes=1)
+        cutoff_5m = now - timedelta(minutes=5)
+        throughput_1m = sum(1 for ts in self._batch_done_samples if ts >= cutoff_1m)
+        throughput_5m = sum(1 for ts in self._batch_done_samples if ts >= cutoff_5m)
+        io_stats = emulator_io_pool_stats()
         return {
             "engine": "feeder_executor",
             "queue": {
@@ -399,6 +443,14 @@ class ExecutorService:
                 "window": self._dispatch_window,
                 "max_batch_retry": self._max_batch_retry,
                 **self._metrics,
+            },
+            "throughput": {
+                "last_1m_batches": throughput_1m,
+                "last_5m_batches": throughput_5m,
+            },
+            "io": {
+                "emulator_pools": io_stats.get("pool_count", 0),
+                "active_keys": io_stats.get("active_keys", 0),
             },
             "last_dispatch_at": self._last_dispatch_at.isoformat()
             if self._last_dispatch_at

@@ -11,7 +11,7 @@ from fastapi.responses import FileResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
 
-from .core.logger import logger
+from .core.logger import logger, setup_logger
 from .core.config import settings, BASE_DIR
 from .db import init_db
 from .modules.web import register_routers
@@ -83,6 +83,7 @@ app.add_middleware(
 
 @app.on_event("startup")
 async def startup() -> None:
+    setup_logger(force=True)
     logger.info("starting app ...")
     init_db()
     register_routers(app)
@@ -106,6 +107,8 @@ async def _init_ocr_pools() -> None:
 @app.on_event("shutdown")
 async def shutdown() -> None:
     logger.info("shutting down ...")
+    from .modules.cloud import cloud_task_poller
+    await cloud_task_poller.stop()
     await feeder.stop()
     await executor_service.stop()
     from .core.thread_pool import shutdown_pools

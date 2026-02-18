@@ -98,7 +98,7 @@ class WeeklyShopExecutor(BaseExecutor):
 
         self.adapter = self._build_adapter()
 
-        ok = self.adapter.push_login_data(account.login_id, data_dir="putonglogindata")
+        ok = await self._push_login_data(account.login_id, data_dir="putonglogindata")
         if not ok:
             self.logger.error(f"[每周商店] push 登录数据失败: {account.login_id}")
             return False
@@ -198,16 +198,22 @@ class WeeklyShopExecutor(BaseExecutor):
         screenshot = await self._capture()
         if screenshot is None:
             return
+
         # 通用弹窗检测
         if await self.ui.popup_handler.check_and_dismiss(screenshot) > 0:
             screenshot = await self._capture()
-        # 检测 jiangli.png 奖励画面
+            if screenshot is None:
+                return
+
+        # 仅在检测到 jiangli.png 奖励画面时才点击关闭
         jiangli_match = match_template(screenshot, "assets/ui/templates/jiangli.png")
-        if jiangli_match:
-            self.logger.info("[每周商店] 检测到奖励画面，点击关闭")
-        else:
-            self.logger.warning("[每周商店] 未检测到奖励画面，仍尝试点击关闭")
+        if not jiangli_match:
+            self.logger.info("[每周商店] 未检测到奖励画面，跳过关闭点击")
+            return
+
+        self.logger.info("[每周商店] 检测到奖励画面，点击关闭")
         from ..vision.utils import random_point_in_circle
+
         close_x, close_y = random_point_in_circle(20, 20, 20)
         await self._tap(close_x, close_y)
         self.logger.info(f"[每周商店] 随机点击 ({close_x}, {close_y}) 关闭奖励画面")
@@ -226,7 +232,7 @@ class WeeklyShopExecutor(BaseExecutor):
             capture_method = (
                 self.system_config.capture_method if self.system_config else None
             ) or "adb"
-            self.ui = UIManager(self.adapter, capture_method=capture_method)
+            self.ui = UIManager(self.adapter, capture_method=capture_method, cross_emulator_cache_enabled=self._cross_emulator_cache_enabled())
 
         # 1. 确保游戏就绪（进入庭院）
         entered = await self.ui.ensure_game_ready(timeout=90.0)
@@ -338,7 +344,7 @@ class WeeklyShopExecutor(BaseExecutor):
             }
 
         # 7. 按优先级遍历商品并购买
-        MAX_SCROLL = 5
+        MAX_RETRY = 5
         all_done = True
         insufficient_xunzhang = False
 
@@ -349,10 +355,7 @@ class WeeklyShopExecutor(BaseExecutor):
 
             # 查找商品模板
             item_remaining = 0
-            for scroll_i in range(MAX_SCROLL):
-                if scroll_i > 0:
-                    await self._swipe(480, 350, 480, 150, 500)
-                    await asyncio.sleep(1.5)
+            for retry_i in range(MAX_RETRY):
                 screenshot = await self._capture()
                 if screenshot is None:
                     continue
@@ -371,11 +374,11 @@ class WeeklyShopExecutor(BaseExecutor):
                             f"[每周商店] {label}剩余数量 OCR 失败，假定为 1"
                         )
                     self.logger.info(
-                        f"[每周商店] 第{scroll_i + 1}次查找找到{label}, 剩余={item_remaining}"
+                        f"[每周商店] 第{retry_i + 1}次查找找到{label}, 剩余={item_remaining}"
                     )
                     break
             else:
-                self.logger.warning(f"[每周商店] {MAX_SCROLL}次查找未找到{label}")
+                self.logger.warning(f"[每周商店] {MAX_RETRY}次查找未找到{label}")
 
             if item_remaining > 0:
                 if xunzhang >= cost:
@@ -488,7 +491,7 @@ class WeeklyShopExecutor(BaseExecutor):
             return
         if self.adapter:
             try:
-                self.adapter.adb.force_stop(self.adapter.cfg.adb_addr, PKG_NAME)
+                await self._adb_force_stop(PKG_NAME)
                 self.logger.info("[每周商店] 游戏已停止")
             except Exception as e:
                 self.logger.error(f"[每周商店] 停止游戏失败: {e}")

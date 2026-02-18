@@ -11,14 +11,18 @@ from __future__ import annotations
 
 import asyncio
 import os
+import threading
 from concurrent.futures import ThreadPoolExecutor
-from typing import Optional
+from typing import Dict, Optional
 
 from .config import settings
 from .logger import logger
 
 _io_pool: Optional[ThreadPoolExecutor] = None
 _compute_pool: Optional[ThreadPoolExecutor] = None
+_emu_io_pools: Dict[str, ThreadPoolExecutor] = {}
+_emu_io_inflight: Dict[str, int] = {}
+_emu_io_lock = threading.Lock()
 
 
 def _auto_io_pool_size() -> int:
@@ -75,10 +79,52 @@ def get_compute_pool() -> ThreadPoolExecutor:
     return _compute_pool
 
 
+def get_emulator_io_pool(io_key: str) -> ThreadPoolExecutor:
+    """获取指定模拟器的单线程 I/O 池。"""
+    key = str(io_key or "").strip()
+    if not key:
+        return get_io_pool()
+
+    with _emu_io_lock:
+        pool = _emu_io_pools.get(key)
+        if pool is None:
+            index = len(_emu_io_pools) + 1
+            pool = ThreadPoolExecutor(
+                max_workers=1,
+                thread_name_prefix=f"emu-io-{index}",
+            )
+            _emu_io_pools[key] = pool
+            logger.info("模拟器 I/O 线程池已创建: io_key={}", key)
+        return pool
+
+
 async def run_in_io(func, *args):
     """在 I/O 线程池中执行同步函数并 await 结果。"""
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(get_io_pool(), func, *args)
+
+
+async def run_in_emulator_io(io_key: str, func, *args):
+    """在指定模拟器单线程 I/O 池中执行同步函数并 await 结果。"""
+    key = str(io_key or "").strip()
+    if not key:
+        return await run_in_io(func, *args)
+
+    loop = asyncio.get_running_loop()
+    pool = get_emulator_io_pool(key)
+
+    with _emu_io_lock:
+        _emu_io_inflight[key] = _emu_io_inflight.get(key, 0) + 1
+
+    try:
+        return await loop.run_in_executor(pool, func, *args)
+    finally:
+        with _emu_io_lock:
+            current = _emu_io_inflight.get(key, 0)
+            if current <= 1:
+                _emu_io_inflight.pop(key, None)
+            else:
+                _emu_io_inflight[key] = current - 1
 
 
 async def run_in_compute(func, *args):
@@ -97,6 +143,15 @@ async def run_in_db(func, *args):
     return await loop.run_in_executor(get_io_pool(), func, *args)
 
 
+def emulator_io_pool_stats() -> dict:
+    """返回模拟器 I/O 池统计。"""
+    with _emu_io_lock:
+        return {
+            "pool_count": len(_emu_io_pools),
+            "active_keys": len(_emu_io_inflight),
+        }
+
+
 def shutdown_pools() -> None:
     """关闭所有线程池（在 app shutdown 时调用）。"""
     global _io_pool, _compute_pool
@@ -106,4 +161,9 @@ def shutdown_pools() -> None:
     if _compute_pool:
         _compute_pool.shutdown(wait=False)
         _compute_pool = None
+    with _emu_io_lock:
+        for pool in _emu_io_pools.values():
+            pool.shutdown(wait=False)
+        _emu_io_pools.clear()
+        _emu_io_inflight.clear()
     logger.info("线程池已关闭")

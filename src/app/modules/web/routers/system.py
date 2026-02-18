@@ -30,6 +30,7 @@ class SystemSettings(BaseModel):
     python_path: Optional[str] = None
     pull_post_mode: str = "none"
     save_fail_screenshot: bool = False
+    cross_emulator_cache_enabled: bool = False
 
 
 class SystemSettingsUpdate(BaseModel):
@@ -44,6 +45,7 @@ class SystemSettingsUpdate(BaseModel):
     python_path: Optional[str] = None
     pull_post_mode: Optional[str] = None
     save_fail_screenshot: Optional[bool] = None
+    cross_emulator_cache_enabled: Optional[bool] = None
 
 
 class CaptureBenchmarkRequest(BaseModel):
@@ -63,6 +65,9 @@ def _serialize_settings() -> Dict[str, str]:
         "activity_name": settings.activity_name,
         "python_path": None,
         "save_fail_screenshot": False,
+        "cross_emulator_cache_enabled": bool(
+            getattr(settings, "vision_cross_emulator_cache_enabled", False)
+        ),
     }
 
 
@@ -83,6 +88,9 @@ async def get_settings(db: Session = Depends(get_db)) -> SystemSettings:
             python_path=row.python_path or None,
             pull_post_mode=row.pull_post_mode or "none",
             save_fail_screenshot=bool(row.save_fail_screenshot) if row.save_fail_screenshot is not None else False,
+            cross_emulator_cache_enabled=bool(row.cross_emulator_cache_enabled)
+            if row.cross_emulator_cache_enabled is not None
+            else bool(getattr(settings, "vision_cross_emulator_cache_enabled", False)),
         )
     return SystemSettings(**_serialize_settings())
 
@@ -131,6 +139,8 @@ async def update_settings(body: SystemSettingsUpdate, db: Session = Depends(get_
         apply["pull_post_mode"] = body.pull_post_mode
     if body.save_fail_screenshot is not None:
         apply["save_fail_screenshot"] = body.save_fail_screenshot
+    if body.cross_emulator_cache_enabled is not None:
+        apply["cross_emulator_cache_enabled"] = body.cross_emulator_cache_enabled
 
     if not apply:
         return {"message": "未提供任何需要更新的配置"}
@@ -150,6 +160,7 @@ async def update_settings(body: SystemSettingsUpdate, db: Session = Depends(get_
             "activity_name": row.activity_name,
             "python_path": row.python_path,
             "save_fail_screenshot": row.save_fail_screenshot,
+            "cross_emulator_cache_enabled": row.cross_emulator_cache_enabled,
         },
     }
 

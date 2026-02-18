@@ -17,7 +17,7 @@ async def test_dispatchable_index_skips_blocked_head():
         ),
         PendingBatch(
             account_id=2,
-            intents=[TaskIntent(account_id=2, task_type=TaskType.DELEGATE)],
+            intents=[TaskIntent(account_id=2, task_type=TaskType.DELEGATE_HELP)],
             state="queued",
         ),
         PendingBatch(
@@ -32,7 +32,7 @@ async def test_dispatchable_index_skips_blocked_head():
 
 
 @pytest.mark.asyncio
-async def test_on_task_done_retries_then_fails():
+async def test_on_task_done_marks_failed_without_retry():
     service = ExecutorService()
 
     batch = PendingBatch(
@@ -47,17 +47,7 @@ async def test_on_task_done_retries_then_fails():
 
     await service._on_task_done(10, success=False)
 
-    assert len(service._pending) == 1
-    assert service._pending[0].retry_count == 1
-    assert service._metrics["dispatch_retry"] == 1
-
-    retried_batch = service._pending.pop(0)
-    retried_batch.state = "running"
-    service._running_accounts.add(10)
-    service._running_batches[10] = retried_batch
-
-    await service._on_task_done(10, success=False)
-
     assert service._metrics["batch_failed"] == 1
     assert len(service._failed_batches) == 1
     assert service._failed_batches[0]["account_id"] == 10
+    assert len(service._pending) == 0
