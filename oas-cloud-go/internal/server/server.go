@@ -2410,6 +2410,11 @@ func (s *Server) updateJobStatusByAgent(c *gin.Context, eventType string, nextSt
 		s.updateTaskNextTime(jobID, eventType, now)
 	}
 
+	// Apply execution result to User (account_status, assets, explore_progress, etc.)
+	if (eventType == "success" || eventType == "fail") && req.Result != nil {
+		s.applyJobResult(jobID, req.Result)
+	}
+
 	c.JSON(http.StatusOK, gin.H{"message": "ok"})
 }
 
@@ -2468,6 +2473,51 @@ func (s *Server) updateTaskNextTime(jobID uint, eventType string, now time.Time)
 			"updated_at":  now,
 			"version":     gorm.Expr("version + 1"),
 		}).Error
+}
+
+// applyJobResult updates the User record with execution result data sent by the agent.
+func (s *Server) applyJobResult(jobID uint, result *agentJobResult) {
+	var job models.TaskJob
+	if err := s.db.Where("id = ?", jobID).First(&job).Error; err != nil {
+		return
+	}
+
+	updates := map[string]any{"updated_at": time.Now().UTC()}
+	hasUpdate := false
+
+	if result.AccountStatus != nil {
+		updates["account_status"] = *result.AccountStatus
+		hasUpdate = true
+	}
+	if result.LoginID != nil {
+		updates["login_id"] = *result.LoginID
+		hasUpdate = true
+	}
+	if result.CurrentTask != nil {
+		updates["current_task"] = *result.CurrentTask
+		hasUpdate = true
+	}
+	if result.Assets != nil {
+		base := taskmeta.BuildDefaultUserAssets()
+		for key, value := range result.Assets {
+			if taskmeta.ValidateAssetKey(key) == nil {
+				base[key] = taskmeta.ParseAssetInt(value, taskmeta.ParseAssetInt(base[key], 0))
+			}
+		}
+		updates["assets"] = datatypes.JSONMap(base)
+		hasUpdate = true
+	}
+	if result.ExploreProgress != nil {
+		epJSON, err := json.Marshal(result.ExploreProgress)
+		if err == nil {
+			updates["explore_progress"] = gorm.Expr("?::jsonb", string(epJSON))
+			hasUpdate = true
+		}
+	}
+
+	if hasUpdate {
+		s.db.Model(&models.User{}).Where("id = ?", job.UserID).Updates(updates)
+	}
 }
 
 func (s *Server) createUserByActivationCode(tx *gorm.DB, code *models.UserActivationCode, createdBy string, now time.Time) (*models.User, error) {

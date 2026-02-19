@@ -236,6 +236,8 @@ class CloudTaskPoller:
             intent_payload["lineup_config"] = full_config["lineup_config"]
         if full_config.get("shikigami_config"):
             intent_payload["shikigami_config"] = full_config["shikigami_config"]
+        if full_config.get("task_config"):
+            intent_payload["cloud_task_config"] = full_config["task_config"]
         enqueued = executor_service.enqueue(
             account_id=account_id,
             task_type=task_type,
@@ -280,6 +282,9 @@ class CloudTaskPoller:
         if not job_ids:
             return
 
+        # Collect current account state for cloud sync
+        result = self._collect_account_result(account_id, success)
+
         task_names = [intent.task_type.value for intent in intents]
         message = f"local batch done, account={account_id}, tasks={task_names}"
         for job_id in job_ids:
@@ -290,6 +295,7 @@ class CloudTaskPoller:
                         node_id=self._node_id,
                         job_id=job_id,
                         message=message,
+                        result=result,
                     )
                 else:
                     await cloud_api_client.report_job_fail(
@@ -298,11 +304,12 @@ class CloudTaskPoller:
                         job_id=job_id,
                         message=message,
                         error_code="LOCAL_BATCH_FAILED",
+                        result=result,
                     )
             except Exception as exc:
                 self.log.warning(f"report cloud job result failed: job_id={job_id}, err={exc}")
 
-        # Clear current_task on cloud after batch completes
+        # Report task-level execution logs to cloud
         cloud_uid = None
         for intent in intents:
             if hasattr(intent, "payload") and isinstance(intent.payload, dict):
@@ -312,13 +319,62 @@ class CloudTaskPoller:
 
         if cloud_uid:
             try:
-                await cloud_api_client.update_game_profile(
-                    user_id=int(cloud_uid),
-                    fields={"current_task": ""},
-                    token=self._agent_token,
-                )
+                logs = []
+                for intent in intents:
+                    task_name = intent.task_type.value if hasattr(intent.task_type, "value") else str(intent.task_type)
+                    ts = (intent.started_at or intent.enqueue_time).isoformat() + "Z"
+                    logs.append({
+                        "type": task_name,
+                        "level": "INFO" if success else "WARNING",
+                        "message": f"batch {'completed' if success else 'failed'}: {task_name}",
+                        "ts": ts,
+                    })
+                if logs:
+                    await cloud_api_client.report_logs(
+                        user_id=int(cloud_uid),
+                        logs=logs,
+                        token=self._agent_token,
+                    )
             except Exception as exc:
-                self.log.warning(f"post-job cloud update failed for user_id={cloud_uid}: {exc}")
+                self.log.warning(f"report cloud logs failed for user_id={cloud_uid}: {exc}")
+
+    def _collect_account_result(self, account_id: int, success: bool) -> dict:
+        """Read local GameAccount after execution and build result dict for cloud sync."""
+        _STATUS_MAP = {1: "active", 2: "invalid", 3: "cangbaoge"}
+
+        try:
+            with SessionLocal() as db:
+                account = db.query(GameAccount).filter(GameAccount.id == account_id).first()
+                if not account:
+                    return {"current_task": ""}
+        except Exception:
+            return {"current_task": ""}
+
+        result: dict = {
+            "account_status": _STATUS_MAP.get(account.status, "active"),
+            "login_id": account.login_id or "",
+            "current_task": "",
+        }
+
+        # Only sync assets and explore_progress on success (data may be incomplete on failure)
+        if success:
+            result["assets"] = {
+                "level": account.level or 0,
+                "stamina": account.stamina or 0,
+                "gouyu": account.gouyu or 0,
+                "lanpiao": account.lanpiao or 0,
+                "gold": account.gold or 0,
+                "gongxun": account.gongxun or 0,
+                "xunzhang": account.xunzhang or 0,
+                "tupo_ticket": account.tupo_ticket or 0,
+                "fanhe_level": account.fanhe_level or 0,
+                "jiuhu_level": account.jiuhu_level or 0,
+                "liao_level": account.liao_level or 0,
+            }
+            if account.explore_progress:
+                result["explore_progress"] = account.explore_progress
+
+        return result
 
     async def _report_fail(self, job_id: int, message: str, error_code: str) -> None:
         if job_id <= 0 or not self._agent_token:

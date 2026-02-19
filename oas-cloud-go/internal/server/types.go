@@ -89,10 +89,21 @@ type agentPollJobsRequest struct {
 }
 
 type agentJobUpdateRequest struct {
-	NodeID       string `json:"node_id" binding:"required,min=3,max=128"`
-	Message      string `json:"message"`
-	ErrorCode    string `json:"error_code"`
-	LeaseSeconds int    `json:"lease_seconds"`
+	NodeID       string          `json:"node_id" binding:"required,min=3,max=128"`
+	Message      string          `json:"message"`
+	ErrorCode    string          `json:"error_code"`
+	LeaseSeconds int             `json:"lease_seconds"`
+	Result       *agentJobResult `json:"result,omitempty"`
+}
+
+// agentJobResult carries post-execution account state from the agent.
+// All fields are optional; nil/omitted means "no change".
+type agentJobResult struct {
+	AccountStatus   *string        `json:"account_status,omitempty"`
+	LoginID         *string        `json:"login_id,omitempty"`
+	CurrentTask     *string        `json:"current_task,omitempty"`
+	Assets          map[string]any `json:"assets,omitempty"`
+	ExploreProgress map[string]any `json:"explore_progress,omitempty"`
 }
 
 // ── Batch request types ───────────────────────────────

@@ -150,14 +150,18 @@ class CloudApiClient:
         node_id: str,
         job_id: int,
         message: str = "completed",
+        result: Optional[dict] = None,
     ) -> None:
+        payload: dict = {
+            "node_id": node_id,
+            "message": message,
+        }
+        if result is not None:
+            payload["result"] = result
         await self._request(
             "POST",
             f"/api/v1/agent/jobs/{job_id}/complete",
-            {
-                "node_id": node_id,
-                "message": message,
-            },
+            payload,
             token=agent_token,
         )
 
@@ -168,15 +172,19 @@ class CloudApiClient:
         job_id: int,
         message: str = "failed",
         error_code: str = "LOCAL_EXEC_FAIL",
+        result: Optional[dict] = None,
     ) -> None:
+        payload: dict = {
+            "node_id": node_id,
+            "message": message,
+            "error_code": error_code,
+        }
+        if result is not None:
+            payload["result"] = result
         await self._request(
             "POST",
             f"/api/v1/agent/jobs/{job_id}/fail",
-            {
-                "node_id": node_id,
-                "message": message,
-                "error_code": error_code,
-            },
+            payload,
             token=agent_token,
         )
 
