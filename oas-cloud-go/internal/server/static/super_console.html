@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>OAS Super Console</title>
+  <style>
+    body { font-family: "Segoe UI", sans-serif; margin: 2rem; background: #f3f6fb; color: #1a2330; }
+    .card { background: #fff; border-radius: 10px; padding: 1rem 1.2rem; margin-bottom: 1rem; box-shadow: 0 2px 8px rgba(0,0,0,.08); }
+    input, button { padding: .5rem; margin-right: .5rem; }
+    button { cursor: pointer; }
+    pre { background: #101723; color: #e8eef8; padding: .8rem; border-radius: 8px; overflow-x: auto; }
+  </style>
+</head>
+<body>
+  <h1>OAS 超级管理员简易控制台</h1>
+  <p>首期用途：初始化、登录、生成管理员续费秘钥。生产建议仅内网访问。</p>
+
+  <div class="card">
+    <h3>1) Bootstrap 初始化</h3>
+    <input id="initUser" placeholder="username" />
+    <input id="initPass" type="password" placeholder="password" />
+    <button onclick="bootstrapInit()">初始化</button>
+  </div>
+
+  <div class="card">
+    <h3>2) Super 登录</h3>
+    <input id="loginUser" placeholder="username" />
+    <input id="loginPass" type="password" placeholder="password" />
+    <button onclick="superLogin()">登录</button>
+  </div>
+
+  <div class="card">
+    <h3>3) 生成管理员续费秘钥</h3>
+    <input id="days" type="number" placeholder="duration_days" value="30" />
+    <button onclick="createRenewalKey()">生成</button>
+  </div>
+
+  <pre id="out">Ready.</pre>
+
+  <script>
+    let token = '';
+    const out = document.getElementById('out');
+    const api = (path, method='GET', body=null, auth=false) => fetch('/api/v1' + path, {
+      method,
+      headers: {
+        'Content-Type': 'application/json',
+        ...(auth && token ? { Authorization: 'Bearer ' + token } : {})
+      },
+      body: body ? JSON.stringify(body) : null,
+    }).then(r => r.json());
+
+    function log(obj) {
+      out.textContent = JSON.stringify(obj, null, 2);
+    }
+
+    function bootstrapInit() {
+      api('/bootstrap/init', 'POST', {
+        username: document.getElementById('initUser').value,
+        password: document.getElementById('initPass').value,
+      }).then(log).catch(e => log({error: String(e)}));
+    }
+
+    function superLogin() {
+      api('/super/auth/login', 'POST', {
+        username: document.getElementById('loginUser').value,
+        password: document.getElementById('loginPass').value,
+      }).then(res => {
+        if (res.token) token = res.token;
+        log(res);
+      }).catch(e => log({error: String(e)}));
+    }
+
+    function createRenewalKey() {
+      api('/super/manager-renewal-keys', 'POST', {
+        duration_days: Number(document.getElementById('days').value || 30),
+      }, true).then(log).catch(e => log({error: String(e)}));
+    }
+  </script>
+</body>
+</html>

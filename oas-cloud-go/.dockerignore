@@ -1,0 +1,7 @@
+.git
+.github
+**/*_test.go
+**/.DS_Store
+bin
+frontend/node_modules
+frontend/dist
