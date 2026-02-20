@@ -118,25 +118,38 @@ class ScanQRExecutor:
         self.log.info(f"Phase 更新: {phase}")
 
     async def _heartbeat(self) -> None:
-        """续约心跳"""
-        await self.cloud_client.scan_heartbeat(
-            agent_token=self.agent_token,
-            node_id=self.node_id,
-            scan_id=self.scan_job_id,
-            lease_seconds=self.lease_seconds,
-        )
+        """续约心跳 - 容忍网络波动"""
+        try:
+            await self.cloud_client.scan_heartbeat(
+                agent_token=self.agent_token,
+                node_id=self.node_id,
+                scan_id=self.scan_job_id,
+                lease_seconds=self.lease_seconds,
+            )
+        except Exception as e:
+            self.log.warning(f"心跳失败(可恢复): {e!r}")
 
     async def _wait_user_choice(self, choice_type: str, timeout: float = 300) -> str:
         """轮询等待用户选择"""
         start = time.monotonic()
+        consecutive_errors = 0
         while time.monotonic() - start < timeout:
             await self._heartbeat()
 
-            resp = await self.cloud_client.scan_get_choice(
-                agent_token=self.agent_token,
-                scan_id=self.scan_job_id,
-                node_id=self.node_id,
-            )
+            try:
+                resp = await self.cloud_client.scan_get_choice(
+                    agent_token=self.agent_token,
+                    scan_id=self.scan_job_id,
+                    node_id=self.node_id,
+                )
+                consecutive_errors = 0
+            except Exception as e:
+                consecutive_errors += 1
+                self.log.warning(f"获取用户选择失败({consecutive_errors}): {e!r}")
+                if consecutive_errors >= 5:
+                    raise Exception(f"连续{consecutive_errors}次获取用户选择失败") from e
+                await asyncio.sleep(3)
+                continue
 
             if resp.get("cancelled"):
                 raise ScanCancelledException("用户取消了扫码")
@@ -280,14 +293,22 @@ class ScanQRExecutor:
         await self._update_phase("qrcode_ready", screenshot_key="qrcode", screenshot_b64=screenshot_b64)
         self.log.info("二维码已就绪，等待用户扫码...")
 
-        # 等待二维码消失（用户扫码后）
+        # 等待用户扫码后出现系统选择界面（ios.png 或 anzhuo.png）
+        self.log.info("等待用户扫码（检测 ios.png / anzhuo.png 出现）...")
         for _ in range(150):  # 最多等300秒（5分钟）
             await self._heartbeat()
             img = await self._capture_ndarray()
-            if img is not None and not detect_qrcode(img):
-                self.log.info("二维码已消失，用户已扫码")
-                await asyncio.sleep(2)  # 等待画面稳定
-                return
+            if img is not None:
+                ios_pos = await self._match_template("ios.png", image=img)
+                if ios_pos:
+                    self.log.info("检测到 ios.png，用户已扫码")
+                    await asyncio.sleep(2)  # 等待画面稳定
+                    return
+                anzhuo_pos = await self._match_template("anzhuo.png", image=img)
+                if anzhuo_pos:
+                    self.log.info("检测到 anzhuo.png，用户已扫码")
+                    await asyncio.sleep(2)  # 等待画面稳定
+                    return
             await asyncio.sleep(2)
 
         raise asyncio.TimeoutError("等待用户扫码超时（5分钟）")
@@ -339,16 +360,36 @@ class ScanQRExecutor:
             await asyncio.sleep(2)
 
     async def _phase_entering(self) -> None:
-        """Phase 5: 检测enter -> 点击 -> 检测tag_dark -> 可能需要选角色"""
+        """Phase 5: 检测enter -> 点击 -> 验证消失 -> 检测tag_dark -> 可能需要选角色"""
         await self._update_phase("entering")
 
-        # 等待 enter.png
+        # 等待 enter.png 出现
         self.log.info("等待进入按钮...")
-        if not await self._click_template("enter.png", timeout=60):
-            # 可能已经自动进入了
+        enter_pos = await self._wait_for_template("enter.png", timeout=60)
+        if enter_pos:
+            # 点击 enter.png
+            await self._tap(enter_pos[0], enter_pos[1])
+            self.log.info("已点击 enter.png，等待其消失...")
+
+            # 循环验证 enter.png 消失，最多等 60 秒
+            disappeared = False
+            for attempt in range(30):  # 30 * 2s = 60s
+                await asyncio.sleep(2)
+                pos = await self._match_template("enter.png")
+                if pos is None:
+                    self.log.info("enter.png 已消失，进入成功")
+                    disappeared = True
+                    break
+                # 每 10 秒再点一次，防止点击没生效
+                if attempt > 0 and attempt % 5 == 0:
+                    self.log.info("enter.png 仍在，再次点击...")
+                    await self._tap(pos[0], pos[1])
+
+            if not disappeared:
+                self.log.warning("等待 enter.png 消失超时，强制继续")
+        else:
             self.log.warning("未检测到 enter.png，继续")
 
-        await self._tap(467, 446)
         await asyncio.sleep(3)
 
         # 检测 tag_dy.png（需要选角色?）
@@ -387,11 +428,16 @@ class ScanQRExecutor:
                 break
 
     async def _wait_for_tingyuan(self) -> None:
-        """等待进入庭院界面"""
+        """等待进入庭院界面 - 以 jiacheng.png 出现为标准"""
         self.log.info("等待进入庭院...")
-        # 多次点击和等待，处理可能的弹窗
         for i in range(60):  # 最多等120秒
             await self._heartbeat()
+
+            # 检测 jiacheng.png（庭院标志）
+            jiacheng_pos = await self._match_template("jiacheng.png")
+            if jiacheng_pos:
+                self.log.info("检测到 jiacheng.png，已进入庭院")
+                return
 
             # 检测 accept.png（可能有新弹窗）
             accept_pos = await self._match_template("accept.png")
@@ -406,13 +452,6 @@ class ScanQRExecutor:
                 await self._tap(480, 270)
                 await asyncio.sleep(2)
                 continue
-
-            # 简单检测：截图后检查是否进入了庭院
-            # 这里可以通过检测庭院特征来判断
-            # 暂时用等待时间来判断
-            if i > 15:  # 至少等30秒
-                self.log.info("假设已进入庭院")
-                return
 
             await asyncio.sleep(2)
 
