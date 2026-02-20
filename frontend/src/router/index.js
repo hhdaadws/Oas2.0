@@ -1,6 +1,8 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import Layout from '@/views/Layout.vue'
-import { getToken } from '@/api/request'
+import { getToken, getMode } from '@/api/request'
+
+const CLOUD_RESTRICTED = ['/accounts', '/coop']
 
 const routes = [
   {
@@ -75,6 +77,11 @@ router.beforeEach((to, from, next) => {
 
   if (!getToken()) {
     next('/login')
+    return
+  }
+
+  if (getMode() === 'cloud' && CLOUD_RESTRICTED.includes(to.path)) {
+    next('/dashboard')
     return
   }
 

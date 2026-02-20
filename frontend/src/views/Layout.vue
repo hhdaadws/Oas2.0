@@ -53,11 +53,14 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
 import dayjs from 'dayjs'
+import { getMode } from '@/api/request'
 
 const route = useRoute()
 
+const CLOUD_HIDDEN_PATHS = ['/accounts', '/coop']
+
 // 菜单路由
-const menuRoutes = [
+const allMenuRoutes = [
   { path: '/dashboard', meta: { title: '仪表盘', icon: 'Monitor' } },
   { path: '/accounts', meta: { title: '账号管理', icon: 'User' } },
   { path: '/coop', meta: { title: '勾协管理', icon: 'Connection' } },
@@ -66,12 +69,19 @@ const menuRoutes = [
   { path: '/settings', meta: { title: '系统配置', icon: 'Setting' } }
 ]
 
+const menuRoutes = computed(() => {
+  if (getMode() === 'cloud') {
+    return allMenuRoutes.filter(r => !CLOUD_HIDDEN_PATHS.includes(r.path))
+  }
+  return allMenuRoutes
+})
+
 // 当前激活菜单
 const activeMenu = computed(() => route.path)
 
 // 当前页面标题
 const currentTitle = computed(() => {
-  const current = menuRoutes.find(r => r.path === route.path)
+  const current = allMenuRoutes.find(r => r.path === route.path)
   return current ? current.meta.title : '仪表盘'
 })
 

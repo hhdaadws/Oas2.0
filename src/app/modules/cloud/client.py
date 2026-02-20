@@ -224,6 +224,105 @@ class CloudApiClient:
             token=token,
         )
 
+    # ── 扫码相关 API ──
+
+    async def scan_poll(
+        self, agent_token: str, node_id: str, limit: int = 2, lease_seconds: int = 120
+    ) -> List[Dict[str, Any]]:
+        """拉取待执行的扫码任务"""
+        resp = await self._request(
+            "POST",
+            "/api/v1/agent/scan/poll",
+            json_data={"node_id": node_id, "limit": limit, "lease_seconds": lease_seconds},
+            token=agent_token,
+        )
+        return resp.get("data", {}).get("jobs", [])
+
+    async def scan_start(
+        self, agent_token: str, node_id: str, scan_id: int, lease_seconds: int = 120
+    ) -> Dict[str, Any]:
+        """标记扫码任务开始执行"""
+        return await self._request(
+            "POST",
+            f"/api/v1/agent/scan/{scan_id}/start",
+            json_data={"node_id": node_id, "lease_seconds": lease_seconds},
+            token=agent_token,
+        )
+
+    async def scan_update_phase(
+        self,
+        agent_token: str,
+        node_id: str,
+        scan_id: int,
+        phase: str,
+        screenshot: Optional[str] = None,
+        screenshot_key: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """更新扫码阶段+上传截图"""
+        payload: Dict[str, Any] = {"node_id": node_id, "phase": phase}
+        if screenshot:
+            payload["screenshot"] = screenshot
+        if screenshot_key:
+            payload["screenshot_key"] = screenshot_key
+        return await self._request(
+            "POST",
+            f"/api/v1/agent/scan/{scan_id}/phase",
+            json_data=payload,
+            token=agent_token,
+        )
+
+    async def scan_get_choice(
+        self, agent_token: str, scan_id: int, node_id: str = ""
+    ) -> Dict[str, Any]:
+        """获取用户选择结果"""
+        path = f"/api/v1/agent/scan/{scan_id}/choice"
+        if node_id:
+            path += f"?node_id={node_id}"
+        resp = await self._request(
+            "GET",
+            path,
+            token=agent_token,
+        )
+        return resp.get("data", {})
+
+    async def scan_heartbeat(
+        self, agent_token: str, node_id: str, scan_id: int, lease_seconds: int = 120
+    ) -> Dict[str, Any]:
+        """扫码任务续约心跳"""
+        return await self._request(
+            "POST",
+            f"/api/v1/agent/scan/{scan_id}/heartbeat",
+            json_data={"node_id": node_id, "lease_seconds": lease_seconds},
+            token=agent_token,
+        )
+
+    async def scan_complete(
+        self, agent_token: str, node_id: str, scan_id: int, message: str = ""
+    ) -> Dict[str, Any]:
+        """标记扫码任务完成"""
+        return await self._request(
+            "POST",
+            f"/api/v1/agent/scan/{scan_id}/complete",
+            json_data={"node_id": node_id, "message": message},
+            token=agent_token,
+        )
+
+    async def scan_fail(
+        self,
+        agent_token: str,
+        node_id: str,
+        scan_id: int,
+        message: str = "",
+        error_code: str = "",
+    ) -> Dict[str, Any]:
+        """标记扫码任务失败"""
+        return await self._request(
+            "POST",
+            f"/api/v1/agent/scan/{scan_id}/fail",
+            json_data={"node_id": node_id, "message": message, "error_code": error_code},
+            token=agent_token,
+        )
+
 
 cloud_api_client = CloudApiClient()
 

@@ -85,6 +85,7 @@
             <el-option label="通用任务" value="general" />
             <el-option label="勾协专用" value="coop" />
             <el-option label="起号专用" value="init" />
+            <el-option label="扫码专用" value="scan" />
           </el-select>
         </el-form-item>
         <el-form-item label="ADB端口" prop="adb_port">
@@ -338,7 +339,8 @@ const getRoleType = (role) => {
   const map = {
     'general': 'primary',
     'coop': 'warning',
-    'init': 'success'
+    'init': 'success',
+    'scan': 'danger'
   }
   return map[role] || 'info'
 }
@@ -348,7 +350,8 @@ const getRoleText = (role) => {
   const map = {
     'general': '通用任务',
     'coop': '勾协专用',
-    'init': '起号专用'
+    'init': '起号专用',
+    'scan': '扫码专用'
   }
   return map[role] || role
 }

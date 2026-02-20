@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Callable, Dict, List, Optional, Set, Tuple
 
-from ...core.constants import TASK_PRIORITY, TaskType
+from ...core.constants import TASK_PRIORITY, TaskType, WorkerRole
 from ...core.logger import logger
 from ...core.thread_pool import emulator_io_pool_stats
 from ...db.base import SessionLocal
@@ -52,6 +52,9 @@ class ExecutorService:
         self._batch_done_listeners: List[
             Callable[[int, bool, List[TaskIntent]], object]
         ] = []
+        self._intent_done_listeners: List[
+            Callable[[int, "TaskIntent", bool], object]
+        ] = []
         self._metrics = {
             "dispatch_attempt": 0,
             "dispatch_success": 0,
@@ -75,6 +78,34 @@ class ExecutorService:
         if listener in self._batch_done_listeners:
             self._batch_done_listeners.remove(listener)
 
+    def register_intent_done_listener(
+        self, listener: Callable[[int, "TaskIntent", bool], object]
+    ) -> None:
+        """注册 per-intent 完成回调。listener(account_id, intent, success)"""
+        if listener not in self._intent_done_listeners:
+            self._intent_done_listeners.append(listener)
+
+    def unregister_intent_done_listener(
+        self, listener: Callable[[int, "TaskIntent", bool], object]
+    ) -> None:
+        if listener in self._intent_done_listeners:
+            self._intent_done_listeners.remove(listener)
+
+    async def notify_intent_done(
+        self, account_id: int, intent: "TaskIntent", success: bool
+    ) -> None:
+        """通知所有 per-intent 监听器。"""
+        for listener in list(self._intent_done_listeners):
+            try:
+                result = listener(account_id, intent, success)
+                if asyncio.iscoroutine(result):
+                    await result
+            except Exception as exc:
+                self._log.warning(
+                    f"intent done listener error: account={account_id}, "
+                    f"task={intent.task_type}, error={exc}"
+                )
+
     async def start(self) -> None:
         if self._started:
             return
@@ -86,11 +117,16 @@ class ExecutorService:
         for row in rows:
             if row.id in self._workers:
                 continue
+            # scan 模拟器由 ScanTaskPoller 独立管理，不创建常规 WorkerActor
+            if row.role == WorkerRole.SCAN.value:
+                self._log.info(f"跳过 scan 模拟器: {row.name} (id={row.id})")
+                continue
             actor = WorkerActor(
                 row,
                 system_config=syscfg,
                 on_done=self._on_task_done,
                 rescan_callback=self.rescan_account,
+                executor_service_ref=self,
             )
             self._workers[row.id] = actor
             asyncio.create_task(actor.run_forever())

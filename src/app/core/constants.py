@@ -58,6 +58,7 @@ class TaskType(str, Enum):
     SUMMON_GIFT = "召唤礼包"
     COLLECT_FANHE_JIUHU = "领取饭盒酒壶"
     REST = "休息"
+    SCAN_QR = "扫码"
 
 
 class TaskStatus(str, Enum):
@@ -74,6 +75,7 @@ class WorkerRole(str, Enum):
     GENERAL = "general"
     COOP = "coop"
     INIT = "init"
+    SCAN = "scan"
 
 
 class WorkerState(str, Enum):
@@ -92,6 +94,7 @@ class EmulatorState(str, Enum):
 
 # 任务优先级配置
 TASK_PRIORITY = {
+    TaskType.SCAN_QR: 110,  # 扫码优先级最高（实时交互）
     TaskType.INIT: 100,
     TaskType.INIT_COLLECT_REWARD: 99,
     TaskType.INIT_RENT_SHIKIGAMI: 98,

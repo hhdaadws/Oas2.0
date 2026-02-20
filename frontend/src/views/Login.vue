@@ -64,6 +64,10 @@
           />
         </el-form-item>
 
+        <el-form-item v-if="loginForm.mode === 'cloud'">
+          <el-checkbox v-model="rememberCredentials">记住账号密码</el-checkbox>
+        </el-form-item>
+
         <el-form-item>
           <el-button
             type="primary"
@@ -92,12 +96,13 @@ import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Lock } from '@element-plus/icons-vue'
 import { login, checkAuthStatus } from '@/api/auth'
-import { setToken, getToken } from '@/api/request'
+import { setToken, setMode, getToken, getCloudCredentials, setCloudCredentials, removeCloudCredentials } from '@/api/request'
 
 const router = useRouter()
 const loginFormRef = ref(null)
 const loading = ref(false)
 const canAutoLoginLocal = ref(false)
+const rememberCredentials = ref(false)
 
 const loginForm = reactive({
   mode: 'local',
@@ -171,6 +176,13 @@ const refreshAutoLoginState = async () => {
 }
 
 onMounted(() => {
+  const saved = getCloudCredentials()
+  if (saved) {
+    loginForm.mode = 'cloud'
+    loginForm.username = saved.username
+    loginForm.password = saved.password
+    rememberCredentials.value = true
+  }
   refreshAutoLoginState()
 })
 
@@ -178,16 +190,26 @@ watch(
   () => loginForm.mode,
   async mode => {
     loginForm.code = ''
-    loginForm.username = ''
-    loginForm.password = ''
     if (loginFormRef.value) {
       loginFormRef.value.clearValidate()
     }
 
     if (mode === 'local') {
+      loginForm.username = ''
+      loginForm.password = ''
       await refreshAutoLoginState()
     } else {
       canAutoLoginLocal.value = false
+      const saved = getCloudCredentials()
+      if (saved) {
+        loginForm.username = saved.username
+        loginForm.password = saved.password
+        rememberCredentials.value = true
+      } else {
+        loginForm.username = ''
+        loginForm.password = ''
+        rememberCredentials.value = false
+      }
     }
   }
 )
@@ -221,6 +243,14 @@ const handleLogin = async () => {
 
     const res = await login(payload)
     setToken(res.token)
+    setMode(res.mode || loginForm.mode)
+    if (loginForm.mode === 'cloud') {
+      if (rememberCredentials.value) {
+        setCloudCredentials(payload.username, payload.password)
+      } else {
+        removeCloudCredentials()
+      }
+    }
     canAutoLoginLocal.value = res.mode === 'local'
     ElMessage.success('登录成功')
     router.push('/dashboard')

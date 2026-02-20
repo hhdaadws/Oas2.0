@@ -97,7 +97,7 @@ class Settings(BaseSettings):
     api_host: str = Field(default="0.0.0.0", env="API_HOST")
     api_port: int = Field(default=9001, env="API_PORT")
     run_mode: str = Field(default="local", env="RUN_MODE")
-    cloud_api_base_url: str = Field(default="", env="CLOUD_API_BASE_URL")
+    cloud_api_base_url: str = Field(default="http://localhost:7000", env="CLOUD_API_BASE_URL")
     cloud_agent_node_id: str = Field(default="local-node", env="CLOUD_AGENT_NODE_ID")
     cloud_manager_username: str = Field(default="", env="CLOUD_MANAGER_USERNAME")
     cloud_manager_password: str = Field(default="", env="CLOUD_MANAGER_PASSWORD")

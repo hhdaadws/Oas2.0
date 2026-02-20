@@ -17,7 +17,7 @@ router = APIRouter(prefix="/api/emulators", tags=["emulators"])
 class EmulatorCreate(BaseModel):
     """创建模拟器"""
     name: str
-    role: str  # coop|general|init
+    role: str  # coop|general|init|scan
     adb_addr: str
     instance_id: int
 

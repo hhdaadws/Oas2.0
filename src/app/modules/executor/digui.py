@@ -393,14 +393,19 @@ class DiGuiExecutor(BaseExecutor):
             victories += 1
             self.logger.info(f"[地鬼] 第 {round_idx} 轮战斗胜利")
 
-            # 4. 点击 exit 回到筛选界面（最后一轮不需要）
-            if round_idx < total_rounds:
-                await click_template(
-                    self.adapter, self.ui.capture_method, _TPL_EXIT,
-                    timeout=8.0, settle=0.5, post_delay=1.5,
-                    log=self.logger, label=f"地鬼R{round_idx}-返回",
-                    popup_handler=self.ui.popup_handler,
-                )
+            # 4. 点击 exit 回到筛选界面
+            await click_template(
+                self.adapter, self.ui.capture_method, _TPL_EXIT,
+                timeout=8.0, settle=0.5, post_delay=1.5,
+                log=self.logger, label=f"地鬼R{round_idx}-返回",
+                popup_handler=self.ui.popup_handler,
+            )
+
+        # ── 导航回地鬼界面 ──
+        self.logger.info("[地鬼] 战斗结束，导航回地鬼界面")
+        back_to_digui = await self.ui.ensure_ui("DIGUI", max_steps=6, step_timeout=3.0)
+        if not back_to_digui:
+            self.logger.warning("[地鬼] 导航回地鬼界面失败")
 
         if victories == total_rounds:
             self.logger.info(f"[地鬼] 全部 {total_rounds} 轮胜利，任务完成")

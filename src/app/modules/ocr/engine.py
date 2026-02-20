@@ -59,17 +59,33 @@ def get_ocr_engine():
             "正在初始化 PaddleOCR (lang={})...",
             settings.paddle_ocr_lang,
         )
-        from paddleocr import PaddleOCR  # noqa: delay import
+        try:
+            from paddleocr import PaddleOCR  # noqa: delay import
+        except ImportError as e:
+            logger.error(f"PaddleOCR 导入失败，请检查依赖: {e}")
+            raise
 
-        _ocr_instance = PaddleOCR(
-            use_textline_orientation=False,
-            use_doc_orientation_classify=False,
-            use_doc_unwarping=False,
-            lang=settings.paddle_ocr_lang,
-            device="cpu",
-            # mkldnn 加速：PaddlePaddle 3.0.0 (conda timeocr) 无 PIR+oneDNN bug
-            enable_mkldnn=True,
-        )
+        try:
+            _ocr_instance = PaddleOCR(
+                use_textline_orientation=False,
+                use_doc_orientation_classify=False,
+                use_doc_unwarping=False,
+                lang=settings.paddle_ocr_lang,
+                device="cpu",
+                # mkldnn 加速：PaddlePaddle 3.0.0 (conda timeocr) 无 PIR+oneDNN bug
+                enable_mkldnn=True,
+            )
+        except Exception as e:
+            # PaddleOCR 3.x 依赖 paddlex 进行 pipeline 创建
+            try:
+                import paddlex  # noqa
+            except ImportError:
+                logger.error(
+                    "paddlex 未安装，PaddleOCR 3.x 需要此依赖，"
+                    "请执行: pip install paddlex"
+                )
+            logger.error(f"PaddleOCR 初始化失败: {e}")
+            raise
         logger.info("PaddleOCR 初始化完成（本地模型）")
         return _ocr_instance
 

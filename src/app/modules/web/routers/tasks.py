@@ -16,7 +16,7 @@ from ....core.constants import TaskStatus
 from ....core.config import settings
 from ...tasks.feeder import feeder
 from ...executor.service import executor_service
-from ...cloud import cloud_task_poller, runtime_mode_state, CloudApiError
+from ...cloud import cloud_task_poller, scan_task_poller, runtime_mode_state, CloudApiError
 
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
@@ -167,6 +167,7 @@ async def start_scheduler():
         await feeder.stop()
         try:
             await cloud_task_poller.start()
+            await scan_task_poller.start()
         except CloudApiError as exc:
             await executor_service.stop()
             raise HTTPException(
@@ -188,6 +189,7 @@ async def start_scheduler():
         }
 
     await cloud_task_poller.stop()
+    await scan_task_poller.stop()
     await feeder.start()
     feeder_metrics = feeder.metrics_snapshot()
     return {
@@ -211,6 +213,7 @@ async def stop_scheduler():
     """
     mode = runtime_mode_state.get_mode()
     await cloud_task_poller.stop()
+    await scan_task_poller.stop()
     await feeder.stop()
     await executor_service.stop()
 

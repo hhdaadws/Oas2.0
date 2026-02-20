@@ -107,8 +107,9 @@ async def _init_ocr_pools() -> None:
 @app.on_event("shutdown")
 async def shutdown() -> None:
     logger.info("shutting down ...")
-    from .modules.cloud import cloud_task_poller
+    from .modules.cloud import cloud_task_poller, scan_task_poller
     await cloud_task_poller.stop()
+    await scan_task_poller.stop()
     await feeder.stop()
     await executor_service.stop()
     from .core.thread_pool import shutdown_pools

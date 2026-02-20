@@ -1,13 +1,16 @@
 import axios from 'axios'
 import { ElMessage } from 'element-plus'
 import router from '@/router'
+import { API_BASE_URL } from '@/config'
 
 const service = axios.create({
-  baseURL: 'http://127.0.0.1:9001/api',
+  baseURL: `${API_BASE_URL}/api`,
   timeout: 15000
 })
 
 const TOKEN_KEY = 'yys_auth_token'
+const MODE_KEY = 'yys_auth_mode'
+const CLOUD_CRED_KEY = 'yys_cloud_credentials'
 
 export function getToken() {
   return localStorage.getItem(TOKEN_KEY)
@@ -19,6 +22,34 @@ export function setToken(token) {
 
 export function removeToken() {
   localStorage.removeItem(TOKEN_KEY)
+  localStorage.removeItem(MODE_KEY)
+}
+
+export function getMode() {
+  return localStorage.getItem(MODE_KEY) || 'local'
+}
+
+export function setMode(mode) {
+  localStorage.setItem(MODE_KEY, mode)
+}
+
+export function getCloudCredentials() {
+  try {
+    const raw = localStorage.getItem(CLOUD_CRED_KEY)
+    if (!raw) return null
+    const { username, password } = JSON.parse(raw)
+    return username ? { username, password } : null
+  } catch {
+    return null
+  }
+}
+
+export function setCloudCredentials(username, password) {
+  localStorage.setItem(CLOUD_CRED_KEY, JSON.stringify({ username, password }))
+}
+
+export function removeCloudCredentials() {
+  localStorage.removeItem(CLOUD_CRED_KEY)
 }
 
 // 请求拦截器
@@ -52,6 +83,15 @@ service.interceptors.response.use(
           type: 'warning',
           duration: 3000
         })
+      } else {
+        const detail = error.response.data?.detail
+        if (detail) {
+          ElMessage({
+            message: detail,
+            type: 'error',
+            duration: 5000
+          })
+        }
       }
       return Promise.reject(error)
     }

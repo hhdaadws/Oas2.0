@@ -461,9 +461,7 @@ class DuiyiJingcaiExecutor(BaseExecutor):
                 continue
 
             gray = to_gray(screenshot)
-            still_visible = match_template(gray, self._TPL_JIANGLI) or match_template(
-                gray, self._TPL_POPUP_JINBI
-            )
+            still_visible = match_template(gray, self._TPL_JIANGLI)
             if not still_visible:
                 self.logger.info(f"[对弈竞猜] 奖励弹窗已关闭 (尝试 {attempt})")
                 # 检查级联弹窗（插画 chahua 等）
@@ -495,10 +493,7 @@ class DuiyiJingcaiExecutor(BaseExecutor):
                 continue
 
             gray = to_gray(screenshot)
-            has_popup = bool(
-                match_template(gray, self._TPL_JIANGLI)
-                or match_template(gray, self._TPL_POPUP_JINBI)
-            )
+            has_popup = bool(match_template(gray, self._TPL_JIANGLI))
 
             if has_popup:
                 saw_popup = True
@@ -507,8 +502,9 @@ class DuiyiJingcaiExecutor(BaseExecutor):
                 ok = await self._handle_dy_jiangli()
                 if not ok:
                     return False
-                await asyncio.sleep(0.25)
-                continue
+                # _handle_dy_jiangli 已截图验证弹窗消失，直接视为成功
+                self.logger.info("[对弈竞猜] 奖励弹窗已确认关闭（由 _handle_dy_jiangli 验证）")
+                return True
 
             clean_streak += 1
             elapsed = loop.time() - start

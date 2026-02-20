@@ -103,11 +103,13 @@ class WorkerActor:
         system_config: Optional[SystemConfig],
         on_done: Optional[Callable[[int, bool], Awaitable[None] | None]],
         rescan_callback: Optional[Callable[[int], List[TaskIntent]]] = None,
+        executor_service_ref=None,
     ) -> None:
         self.emulator = emulator_row
         self.syscfg = system_config
         self.on_done = on_done
         self.rescan_callback = rescan_callback
+        self._executor_service = executor_service_ref
         self.inbox: asyncio.Queue[List[TaskIntent]] = asyncio.Queue()
         self.current: Optional[TaskIntent] = None
         self._stop = asyncio.Event()
@@ -208,6 +210,43 @@ class WorkerActor:
                 self._log.warning(f"Account not found: {account_id}")
                 overall_success = False
             else:
+                # === Merge cloud task_config into local account (once per batch) ===
+                cloud_tc = batch[0].payload.get("cloud_task_config") if batch[0].payload else None
+                if cloud_tc:
+                    def _merge_cloud_task_config(aid: int, ctc: dict):
+                        with SessionLocal() as db:
+                            acc = db.query(GameAccount).filter(GameAccount.id == aid).first()
+                            if acc:
+                                local_tc = dict(acc.task_config or {})
+                                for task_name, task_cfg in ctc.items():
+                                    if isinstance(task_cfg, dict):
+                                        existing = local_tc.get(task_name, {})
+                                        if isinstance(existing, dict):
+                                            existing.update(task_cfg)
+                                            local_tc[task_name] = existing
+                                        else:
+                                            local_tc[task_name] = task_cfg
+                                acc.task_config = local_tc
+                                flag_modified(acc, "task_config")
+                                db.commit()
+
+                    await run_in_db(_merge_cloud_task_config, account_id, cloud_tc)
+                    self._log.info(f"已合并云端 task_config: account={account_id}")
+
+                # === Merge cloud lineup_config into local account (once per batch) ===
+                cloud_lineup = batch[0].payload.get("lineup_config") if batch[0].payload else None
+                if cloud_lineup and isinstance(cloud_lineup, dict):
+                    def _merge_cloud_lineup(aid: int, cfg: dict):
+                        with SessionLocal() as db:
+                            acc = db.query(GameAccount).filter(GameAccount.id == aid).first()
+                            if acc:
+                                acc.lineup_config = cfg
+                                flag_modified(acc, "lineup_config")
+                                db.commit()
+                    await run_in_db(_merge_cloud_lineup, account_id, cloud_lineup)
+                    account.lineup_config = cloud_lineup
+                    self._log.info(f"已合并云端 lineup_config: account={account_id}")
+
                 # === 主循环：batch 执行 + re-scan ===
                 current_batch = batch
                 abort = False
@@ -321,10 +360,16 @@ class WorkerActor:
                         pending_next_time_ops.append(op)
                     task_name = intent.task_type.value if isinstance(intent.task_type, TaskType) else str(intent.task_type)
                     db_log(account_id, f"{task_name}任务执行成功")
+                    # per-intent 完成回调
+                    if self._executor_service:
+                        await self._executor_service.notify_intent_done(account_id, intent, True)
                 else:
                     batch_success = False
                     task_name = intent.task_type.value if isinstance(intent.task_type, TaskType) else str(intent.task_type)
                     db_log(account_id, f"{task_name}任务执行失败", level="WARNING")
+                    # per-intent 完成回调
+                    if self._executor_service:
+                        await self._executor_service.notify_intent_done(account_id, intent, False)
                     op = self._build_failure_next_time_op(intent)
                     if op:
                         pending_next_time_ops.append(op)
@@ -344,6 +389,9 @@ class WorkerActor:
                 )
                 task_name = intent.task_type.value if isinstance(intent.task_type, TaskType) else str(intent.task_type)
                 db_log(intent.account_id, f"{task_name}任务空闲超时 ({self._stale_timeout_sec}s 无活动)", level="ERROR")
+                # per-intent 完成回调
+                if self._executor_service:
+                    await self._executor_service.notify_intent_done(account_id, intent, False)
                 op = self._build_failure_next_time_op(intent)
                 if op:
                     pending_next_time_ops.append(op)
@@ -357,6 +405,9 @@ class WorkerActor:
                 abort = True
                 self._log.warning(f"检测到祭号弹窗，关闭游戏并批量延后任务: account={intent.account_id}")
                 db_log(intent.account_id, "检测到祭号弹窗，关闭游戏并批量延后任务", level="WARNING")
+                # per-intent 完成回调
+                if self._executor_service:
+                    await self._executor_service.notify_intent_done(account_id, intent, False)
                 await self._save_fail_screenshot(
                     intent, shared_adapter, reason="jihao_popup"
                 )
@@ -377,6 +428,9 @@ class WorkerActor:
                 self._log.warning(f"账号失效: account={intent.account_id}")
                 await self._mark_account_invalid(intent.account_id)
                 db_log(intent.account_id, "账号登录失效，已标记为无效", level="ERROR")
+                # per-intent 完成回调
+                if self._executor_service:
+                    await self._executor_service.notify_intent_done(account_id, intent, False)
                 await self._save_fail_screenshot(
                     intent, shared_adapter, reason="account_expired"
                 )
@@ -389,6 +443,9 @@ class WorkerActor:
                 self._log.warning(f"检测到藏宝阁界面，关闭游戏并标记账号: account={intent.account_id}")
                 await self._mark_account_cangbaoge(intent.account_id)
                 db_log(intent.account_id, "检测到账号已上架藏宝阁，已标记状态", level="WARNING")
+                # per-intent 完成回调
+                if self._executor_service:
+                    await self._executor_service.notify_intent_done(account_id, intent, False)
                 await self._save_fail_screenshot(
                     intent, shared_adapter, reason="cangbaoge_listed"
                 )
@@ -403,6 +460,9 @@ class WorkerActor:
                 self._log.error(f"Intent error: {exc}")
                 task_name = intent.task_type.value if isinstance(intent.task_type, TaskType) else str(intent.task_type)
                 db_log(intent.account_id, f"{task_name}任务异常: {str(exc)[:200]}", level="ERROR")
+                # per-intent 完成回调
+                if self._executor_service:
+                    await self._executor_service.notify_intent_done(account_id, intent, False)
                 op = self._build_failure_next_time_op(intent)
                 if op:
                     pending_next_time_ops.append(op)
@@ -789,6 +849,10 @@ class WorkerActor:
         """批量刷新 next_time 更新，单次 DB 读写完成。"""
         if not ops:
             return
+
+        from ..cloud.runtime import runtime_mode_state
+        if runtime_mode_state.is_cloud():
+            return  # Cloud server manages next_time
 
         ops_copy = list(ops)
 

@@ -10,6 +10,7 @@ from ....core.constants import AccountStatus, DEFAULT_TASK_CONFIG, DEFAULT_INIT_
 from ....core.timeutils import format_beijing_time, is_time_reached, now_beijing
 from ....db.base import get_db
 from ....db.models import CoopAccount, GameAccount, Log
+from ...cloud import cloud_task_poller, runtime_mode_state
 from ...executor.service import executor_service
 from ...tasks.feeder import feeder
 
@@ -49,19 +50,136 @@ async def get_dashboard(db: Session = Depends(get_db)):
     """
     获取仪表盘数据
     """
-    active_accounts = (
-        db.query(GameAccount).filter(GameAccount.status == AccountStatus.ACTIVE).all()
-    )
+    mode = runtime_mode_state.get_mode()
 
     executor_running = executor_service.running_info()
     executor_queue = executor_service.queue_info()
+
+    if mode == "cloud":
+        # 云端模式：不查询勾协库，但需要查 GameAccount 获取 login_id 映射
+        active_count = 0
+        coop_active = 0
+        scheduled_preview = []
+
+        # 收集相关 account_id 并查 DB 获取 login_id
+        relevant_ids = set()
+        for item in executor_running:
+            if item.get("account_id"):
+                relevant_ids.add(item["account_id"])
+        for item in executor_queue:
+            if item.get("account_id"):
+                relevant_ids.add(item["account_id"])
+
+        account_map = {}
+        if relevant_ids:
+            accs = (
+                db.query(GameAccount)
+                .filter(GameAccount.id.in_(list(relevant_ids)))
+                .all()
+            )
+            account_map = {a.id: a.login_id for a in accs}
+    else:
+        # 本地模式：查询本地账号和勾协库
+        active_accounts = (
+            db.query(GameAccount).filter(GameAccount.status == AccountStatus.ACTIVE).all()
+        )
+        active_count = len(active_accounts)
+        account_map = {acc.id: acc.login_id for acc in active_accounts}
+
+        today = datetime.now().date()
+        coop_all = (
+            db.query(CoopAccount).filter(CoopAccount.status == AccountStatus.ACTIVE).all()
+        )
+        coop_active = 0
+        for coop in coop_all:
+            expired = False
+            if getattr(coop, "expire_date", None):
+                try:
+                    date_value = datetime.strptime(coop.expire_date, "%Y-%m-%d").date()
+                    expired = date_value < today
+                except Exception:
+                    expired = False
+            if not expired:
+                coop_active += 1
+
+        # 计划任务预览：扫描所有活跃账号的 task_config，展示即将执行的任务
+        preview_accounts = (
+            db.query(GameAccount)
+            .filter(
+                GameAccount.status == AccountStatus.ACTIVE,
+                GameAccount.progress.in_(["ok", "init"]),
+            )
+            .all()
+        )
+        scheduled_preview = []
+        for acc in preview_accounts:
+            if acc.progress == "init":
+                cfg = acc.task_config or DEFAULT_INIT_TASK_CONFIG.copy()
+                # 一次性任务（enabled 且未完成 → 即时执行）
+                for task_key in _INIT_ONETIME_TASK_KEYS:
+                    task_cfg = cfg.get(task_key, {})
+                    if task_cfg.get("enabled") is not True:
+                        continue
+                    if task_cfg.get("completed", False):
+                        continue
+                    scheduled_preview.append({
+                        "account_id": acc.id,
+                        "account_login_id": acc.login_id,
+                        "task_type": task_key,
+                        "next_time": "即时",
+                        "priority": _get_priority(task_key),
+                        "is_due": True,
+                    })
+                # 时间类任务
+                for task_key in _INIT_TIME_TASK_KEYS:
+                    task_cfg = cfg.get(task_key, {})
+                    if task_cfg.get("enabled") is not True:
+                        continue
+                    next_time = task_cfg.get("next_time")
+                    if not next_time:
+                        continue
+                    scheduled_preview.append({
+                        "account_id": acc.id,
+                        "account_login_id": acc.login_id,
+                        "task_type": task_key,
+                        "next_time": next_time,
+                        "priority": _get_priority(task_key),
+                        "is_due": is_time_reached(next_time),
+                    })
+            else:
+                cfg = acc.task_config or DEFAULT_TASK_CONFIG.copy()
+                for task_key in _TIME_TASK_KEYS:
+                    task_cfg = cfg.get(task_key, {})
+                    if task_cfg.get("enabled") is not True:
+                        continue
+                    next_time = task_cfg.get("next_time")
+                    if not next_time:
+                        continue
+                    scheduled_preview.append({
+                        "account_id": acc.id,
+                        "account_login_id": acc.login_id,
+                        "task_type": task_key,
+                        "next_time": next_time,
+                        "priority": _get_priority(task_key),
+                        "is_due": is_time_reached(next_time),
+                    })
+        # 分离已到期和未到期任务，分别排序后合并展示
+        due_tasks = [t for t in scheduled_preview if t.get("is_due")]
+        pending_tasks = [t for t in scheduled_preview if not t.get("is_due")]
+        due_tasks.sort(key=lambda x: x.get("next_time", ""))
+        pending_tasks.sort(key=lambda x: x.get("next_time", ""))
+        MAX_DUE = 20
+        MAX_TOTAL = 50
+        due_tasks = due_tasks[-MAX_DUE:] if len(due_tasks) > MAX_DUE else due_tasks
+        remaining_slots = MAX_TOTAL - len(due_tasks)
+        pending_tasks = pending_tasks[:remaining_slots]
+        scheduled_preview = due_tasks + pending_tasks
 
     running_account_ids = [
         item.get("account_id")
         for item in executor_running
         if item.get("account_id")
     ]
-    account_map = {acc.id: acc.login_id for acc in active_accounts}
     running_tasks = []
     now_iso = datetime.utcnow().isoformat()
     for item in executor_running:
@@ -106,105 +224,41 @@ async def get_dashboard(db: Session = Depends(get_db)):
             }
         )
 
-    today = datetime.now().date()
-    coop_all = (
-        db.query(CoopAccount).filter(CoopAccount.status == AccountStatus.ACTIVE).all()
-    )
-    coop_active = 0
-    for coop in coop_all:
-        expired = False
-        if getattr(coop, "expire_date", None):
-            try:
-                date_value = datetime.strptime(coop.expire_date, "%Y-%m-%d").date()
-                expired = date_value < today
-            except Exception:
-                expired = False
-        if not expired:
-            coop_active += 1
+    # 云端模式：构建已获取任务预览
+    cloud_jobs_preview = []
+    if mode == "cloud":
+        poller_status = cloud_task_poller.status()
+        tracked = poller_status.get("tracked_job_details", [])
+        deferred = poller_status.get("deferred_job_details", [])
 
-    # 计划任务预览：扫描所有活跃账号的 task_config，展示即将执行的任务
-    account_map = {acc.id: acc.login_id for acc in active_accounts}
-    preview_accounts = (
-        db.query(GameAccount)
-        .filter(
-            GameAccount.status == AccountStatus.ACTIVE,
-            GameAccount.progress.in_(["ok", "init"]),
-        )
-        .all()
-    )
-    scheduled_preview = []
-    for acc in preview_accounts:
-        if acc.progress == "init":
-            cfg = acc.task_config or DEFAULT_INIT_TASK_CONFIG.copy()
-            # 一次性任务（enabled 且未完成 → 即时执行）
-            for task_key in _INIT_ONETIME_TASK_KEYS:
-                task_cfg = cfg.get(task_key, {})
-                if task_cfg.get("enabled") is not True:
-                    continue
-                if task_cfg.get("completed", False):
-                    continue
-                scheduled_preview.append({
-                    "account_id": acc.id,
-                    "account_login_id": acc.login_id,
-                    "task_type": task_key,
-                    "next_time": "即时",
-                    "priority": _get_priority(task_key),
-                    "is_due": True,
-                })
-            # 时间类任务
-            for task_key in _INIT_TIME_TASK_KEYS:
-                task_cfg = cfg.get(task_key, {})
-                if task_cfg.get("enabled") is not True:
-                    continue
-                next_time = task_cfg.get("next_time")
-                if not next_time:
-                    continue
-                scheduled_preview.append({
-                    "account_id": acc.id,
-                    "account_login_id": acc.login_id,
-                    "task_type": task_key,
-                    "next_time": next_time,
-                    "priority": _get_priority(task_key),
-                    "is_due": is_time_reached(next_time),
-                })
-        else:
-            cfg = acc.task_config or DEFAULT_TASK_CONFIG.copy()
-            for task_key in _TIME_TASK_KEYS:
-                task_cfg = cfg.get(task_key, {})
-                if task_cfg.get("enabled") is not True:
-                    continue
-                next_time = task_cfg.get("next_time")
-                if not next_time:
-                    continue
-                scheduled_preview.append({
-                    "account_id": acc.id,
-                    "account_login_id": acc.login_id,
-                    "task_type": task_key,
-                    "next_time": next_time,
-                    "priority": _get_priority(task_key),
-                    "is_due": is_time_reached(next_time),
-                })
-    # 分离已到期和未到期任务，分别排序后合并展示
-    due_tasks = [t for t in scheduled_preview if t.get("is_due")]
-    pending_tasks = [t for t in scheduled_preview if not t.get("is_due")]
-    due_tasks.sort(key=lambda x: x.get("next_time", ""))
-    pending_tasks.sort(key=lambda x: x.get("next_time", ""))
-    MAX_DUE = 20
-    MAX_TOTAL = 50
-    due_tasks = due_tasks[-MAX_DUE:] if len(due_tasks) > MAX_DUE else due_tasks
-    remaining_slots = MAX_TOTAL - len(due_tasks)
-    pending_tasks = pending_tasks[:remaining_slots]
-    scheduled_preview = due_tasks + pending_tasks
+        for item in tracked:
+            cloud_jobs_preview.append({
+                "job_id": item.get("job_id"),
+                "account_id": item.get("account_id"),
+                "account_login_id": item.get("login_id") or account_map.get(item.get("account_id"), ""),
+                "task_type": item.get("task_type", ""),
+                "status": "执行中",
+            })
+        for item in deferred:
+            cloud_jobs_preview.append({
+                "job_id": item.get("job_id"),
+                "account_id": item.get("account_id"),
+                "account_login_id": item.get("login_id") or account_map.get(item.get("account_id"), ""),
+                "task_type": item.get("task_type", ""),
+                "status": "等待中",
+            })
 
     return {
-        "active_accounts": len(active_accounts),
+        "active_accounts": active_count,
         "running_accounts": len(running_account_ids),
         "running_tasks": running_tasks,
         "queue_preview": queue_preview,
         "scheduled_preview": scheduled_preview,
         "coop_active_accounts": coop_active,
-        "engine": "feeder_executor",
+        "mode": mode,
+        "engine": "cloud_poller_executor" if mode == "cloud" else "feeder_executor",
         "feeder": feeder.metrics_snapshot(),
+        "cloud_jobs_preview": cloud_jobs_preview,
     }
 
 

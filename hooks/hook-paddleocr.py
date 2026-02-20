@@ -1,5 +1,4 @@
 """PyInstaller hook for PaddleOCR."""
-from PyInstaller.utils.hooks import collect_all, collect_submodules
+from PyInstaller.utils.hooks import collect_all
 
 datas, binaries, hiddenimports = collect_all('paddleocr')
-hiddenimports += collect_submodules('paddleocr')

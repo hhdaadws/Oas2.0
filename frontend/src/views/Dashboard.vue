@@ -15,7 +15,7 @@
       </div>
     </el-card>
 
-    <el-card style="margin-bottom: 20px">
+    <el-card v-if="!isCloud" style="margin-bottom: 20px">
       <template #header>
         <div class="card-header">
           <span>全局任务开关</span>
@@ -28,22 +28,22 @@
     </el-card>
 
     <el-row :gutter="20" class="stat-cards">
-      <el-col :span="6">
+      <el-col v-if="!isCloud" :span="6">
         <el-card>
           <el-statistic title="活跃账号数" :value="stats.active_accounts" />
         </el-card>
       </el-col>
-      <el-col :span="6">
+      <el-col :span="isCloud ? 12 : 6">
         <el-card>
           <el-statistic title="运行中任务" :value="stats.running_accounts" />
         </el-card>
       </el-col>
-      <el-col :span="6">
+      <el-col :span="isCloud ? 12 : 6">
         <el-card>
           <el-statistic title="队列任务数" :value="stats.queue_size" />
         </el-card>
       </el-col>
-      <el-col :span="6">
+      <el-col v-if="!isCloud" :span="6">
         <el-card>
           <el-statistic title="勾协库活跃账号" :value="stats.coop_active_accounts" />
         </el-card>
@@ -153,7 +153,7 @@
       </el-col>
     </el-row>
 
-    <el-card class="queue-preview">
+    <el-card v-if="!isCloud" class="queue-preview">
       <template #header>
         <div class="card-header">
           <span>计划任务预览（已到期 + 等待中）</span>
@@ -184,20 +184,55 @@
 
       <el-empty v-if="!scheduledPreview.length" description="暂无计划任务" />
     </el-card>
+
+    <el-card v-if="isCloud" class="queue-preview">
+      <template #header>
+        <div class="card-header">
+          <span>已获取的云端任务</span>
+          <el-button link @click="refreshData">
+            <el-icon><Refresh /></el-icon>
+            刷新
+          </el-button>
+        </div>
+      </template>
+
+      <el-table :data="cloudJobsPreview" stripe>
+        <el-table-column prop="job_id" label="Job ID" width="100" />
+        <el-table-column prop="account_login_id" label="账号" width="200">
+          <template #default="{ row }">
+            {{ row.account_login_id || row.account_id || '-' }}
+          </template>
+        </el-table-column>
+        <el-table-column prop="task_type" label="任务类型" width="120" />
+        <el-table-column prop="status" label="状态" width="100">
+          <template #default="{ row }">
+            <el-tag :type="row.status === '执行中' ? 'primary' : 'warning'" size="small">
+              {{ row.status }}
+            </el-tag>
+          </template>
+        </el-table-column>
+      </el-table>
+
+      <el-empty v-if="!cloudJobsPreview.length" description="暂无已获取的云端任务" />
+    </el-card>
   </div>
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, onUnmounted } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
 import dayjs from 'dayjs'
 import { ElMessage } from 'element-plus'
 import { API_ENDPOINTS, apiRequest } from '@/config'
 import { getDashboard, getRealtimeStats } from '@/api/dashboard'
+import { getMode } from '@/api/request'
+
+const isCloud = computed(() => getMode() === 'cloud')
 
 const stats = ref({ active_accounts: 0, running_accounts: 0, queue_size: 0, coop_active_accounts: 0 })
 const runningTasks = ref([])
 const queuePreview = ref([])
 const scheduledPreview = ref([])
+const cloudJobsPreview = ref([])
 const schedulerRunning = ref(false)
 const taskSwitches = reactive({ '召唤礼包': false })
 const runtimeLogs = ref([])
@@ -240,6 +275,7 @@ const fetchData = async () => {
     runningTasks.value = dashboardData.running_tasks || []
     queuePreview.value = dashboardData.queue_preview || []
     scheduledPreview.value = dashboardData.scheduled_preview || []
+    cloudJobsPreview.value = dashboardData.cloud_jobs_preview || []
     schedulerRunning.value = Boolean(schedulerData.running)
   } catch (error) {
     console.error('Failed to fetch dashboard data:', error)
@@ -266,7 +302,11 @@ const startScheduler = async () => {
   try {
     await apiRequest(API_ENDPOINTS.tasks.scheduler.start, { method: 'POST' })
     schedulerRunning.value = true
-    ElMessage.success('执行引擎已启动（feeder + executor）')
+    ElMessage.success(
+      isCloud.value
+        ? '执行引擎已启动（cloud poller + executor）'
+        : '执行引擎已启动（feeder + executor）'
+    )
   } catch (error) {
     ElMessage.error('启动执行引擎失败')
   }
@@ -276,7 +316,11 @@ const stopScheduler = async () => {
   try {
     await apiRequest(API_ENDPOINTS.tasks.scheduler.stop, { method: 'POST' })
     schedulerRunning.value = false
-    ElMessage.success('执行引擎已停止（feeder + executor）')
+    ElMessage.success(
+      isCloud.value
+        ? '执行引擎已停止（cloud poller + executor）'
+        : '执行引擎已停止（feeder + executor）'
+    )
   } catch (error) {
     ElMessage.error('停止执行引擎失败')
   }
