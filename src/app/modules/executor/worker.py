@@ -36,7 +36,6 @@ from .collect_login_gift import CollectLoginGiftExecutor
 from .collect_mail import CollectMailExecutor
 from .delegate_help import DelegateHelpExecutor
 from .liao_shop import LiaoShopExecutor
-from .liao_coin import LiaoCoinExecutor
 from .add_friend import AddFriendExecutor
 from .init_executor import InitExecutor
 from .init_collect_reward import InitCollectRewardExecutor
@@ -59,6 +58,9 @@ from .summon_gift import SummonGiftExecutor
 from .weekly_share import WeeklyShareExecutor
 from .collect_fanhe_jiuhu import CollectFanheJiuhuExecutor
 from .duiyi_jingcai import DuiyiJingcaiExecutor
+from .team_yuhun import TeamYuhunExecutor
+from .foster import FosterExecutor
+from .fangka import FangkaExecutor
 from .db_logger import emit as db_log
 from .types import TaskIntent
 
@@ -75,7 +77,6 @@ _EXECUTOR_HAS_OWN_UPDATE = {
     TaskType.COLLECT_LOGIN_GIFT,
     TaskType.COLLECT_MAIL,
     TaskType.LIAO_SHOP,
-    TaskType.LIAO_COIN,
     TaskType.ADD_FRIEND,
     TaskType.WEEKLY_SHOP,
     TaskType.SIGNIN,
@@ -83,6 +84,8 @@ _EXECUTOR_HAS_OWN_UPDATE = {
     TaskType.COLLECT_ACHIEVEMENT,
     TaskType.SUMMON_GIFT,
     TaskType.COLLECT_FANHE_JIUHU,
+    TaskType.FOSTER,
+    TaskType.FANGKA,
 }
 
 # 弥助固定时间点
@@ -210,28 +213,49 @@ class WorkerActor:
                 self._log.warning(f"Account not found: {account_id}")
                 overall_success = False
             else:
+                # 判断是否为云端任务（由 CloudTaskPoller 注入 cloud_job_id）
+                is_cloud_job = bool(
+                    batch[0].payload.get("cloud_job_id") if batch[0].payload else None
+                )
+
                 # === Merge cloud task_config into local account (once per batch) ===
                 cloud_tc = batch[0].payload.get("cloud_task_config") if batch[0].payload else None
                 if cloud_tc:
-                    def _merge_cloud_task_config(aid: int, ctc: dict):
-                        with SessionLocal() as db:
-                            acc = db.query(GameAccount).filter(GameAccount.id == aid).first()
-                            if acc:
-                                local_tc = dict(acc.task_config or {})
-                                for task_name, task_cfg in ctc.items():
-                                    if isinstance(task_cfg, dict):
-                                        existing = local_tc.get(task_name, {})
-                                        if isinstance(existing, dict):
-                                            existing.update(task_cfg)
-                                            local_tc[task_name] = existing
-                                        else:
-                                            local_tc[task_name] = task_cfg
-                                acc.task_config = local_tc
-                                flag_modified(acc, "task_config")
-                                db.commit()
+                    if is_cloud_job:
+                        # 云端任务：仅合并到内存中的 account 对象（不持久化到本地 DB）
+                        # 使执行器能读取云端配置（如寄养扩展字段、探索中断白名单等）
+                        local_tc = dict(account.task_config or {})
+                        for task_name, task_cfg in cloud_tc.items():
+                            if isinstance(task_cfg, dict):
+                                existing = local_tc.get(task_name, {})
+                                if isinstance(existing, dict):
+                                    existing.update(task_cfg)
+                                    local_tc[task_name] = existing
+                                else:
+                                    local_tc[task_name] = task_cfg
+                        account.task_config = local_tc
+                        self._log.info(f"云端任务已合并 task_config 到内存: account={account_id}")
+                    else:
+                        # 非云端任务：持久化合并到本地 DB
+                        def _merge_cloud_task_config(aid: int, ctc: dict):
+                            with SessionLocal() as db:
+                                acc = db.query(GameAccount).filter(GameAccount.id == aid).first()
+                                if acc:
+                                    local_tc = dict(acc.task_config or {})
+                                    for task_name, task_cfg in ctc.items():
+                                        if isinstance(task_cfg, dict):
+                                            existing = local_tc.get(task_name, {})
+                                            if isinstance(existing, dict):
+                                                existing.update(task_cfg)
+                                                local_tc[task_name] = existing
+                                            else:
+                                                local_tc[task_name] = task_cfg
+                                    acc.task_config = local_tc
+                                    flag_modified(acc, "task_config")
+                                    db.commit()
 
-                    await run_in_db(_merge_cloud_task_config, account_id, cloud_tc)
-                    self._log.info(f"已合并云端 task_config: account={account_id}")
+                        await run_in_db(_merge_cloud_task_config, account_id, cloud_tc)
+                        self._log.info(f"已合并云端 task_config: account={account_id}")
 
                 # === Merge cloud lineup_config into local account (once per batch) ===
                 cloud_lineup = batch[0].payload.get("lineup_config") if batch[0].payload else None
@@ -265,6 +289,10 @@ class WorkerActor:
 
                     # 中断判断
                     if abort or self._stop.is_set():
+                        break
+
+                    # 云端任务不做 re-scan：云端模式下由云端调度器决定任务
+                    if is_cloud_job:
                         break
 
                     # re-scan：检查是否有新到期任务
@@ -334,7 +362,6 @@ class WorkerActor:
         batch_success = True
         abort = False
         account_id = account.id
-        pending_next_time_ops: List[Tuple[str, str, Optional[str]]] = []
 
         for intent in batch:
             if self._stop.is_set():
@@ -357,7 +384,7 @@ class WorkerActor:
                 if ok:
                     op = self._build_success_next_time_op(intent)
                     if op:
-                        pending_next_time_ops.append(op)
+                        await self._flush_next_time_updates(account_id, [op])
                     task_name = intent.task_type.value if isinstance(intent.task_type, TaskType) else str(intent.task_type)
                     db_log(account_id, f"{task_name}任务执行成功")
                     # per-intent 完成回调
@@ -372,7 +399,7 @@ class WorkerActor:
                         await self._executor_service.notify_intent_done(account_id, intent, False)
                     op = self._build_failure_next_time_op(intent)
                     if op:
-                        pending_next_time_ops.append(op)
+                        await self._flush_next_time_updates(account_id, [op])
                     await self._save_fail_screenshot(
                         intent, shared_adapter, reason="task_failed"
                     )
@@ -394,7 +421,7 @@ class WorkerActor:
                     await self._executor_service.notify_intent_done(account_id, intent, False)
                 op = self._build_failure_next_time_op(intent)
                 if op:
-                    pending_next_time_ops.append(op)
+                    await self._flush_next_time_updates(account_id, [op])
                 await self._save_fail_screenshot(
                     intent, shared_adapter, reason="stale_timeout"
                 )
@@ -411,8 +438,6 @@ class WorkerActor:
                 await self._save_fail_screenshot(
                     intent, shared_adapter, reason="jihao_popup"
                 )
-                await self._flush_next_time_updates(account_id, pending_next_time_ops)
-                pending_next_time_ops.clear()
                 await self._delay_all_tasks_on_jihao(account_id)
                 if shared_adapter:
                     try:
@@ -465,12 +490,11 @@ class WorkerActor:
                     await self._executor_service.notify_intent_done(account_id, intent, False)
                 op = self._build_failure_next_time_op(intent)
                 if op:
-                    pending_next_time_ops.append(op)
+                    await self._flush_next_time_updates(account_id, [op])
                 await self._save_fail_screenshot(
                     intent, shared_adapter, reason=str(exc)[:50]
                 )
 
-        await self._flush_next_time_updates(account_id, pending_next_time_ops)
         return batch_success, shared_adapter, shared_ui, abort
 
     async def _do_rescan(self, account_id: int) -> List[TaskIntent]:
@@ -680,13 +704,6 @@ class WorkerActor:
                 emulator_row=self.emulator,
                 system_config=self.syscfg,
             )
-        elif intent.task_type == TaskType.LIAO_COIN:
-            executor = LiaoCoinExecutor(
-                worker_id=self.emulator.id,
-                emulator_id=self.emulator.id,
-                emulator_row=self.emulator,
-                system_config=self.syscfg,
-            )
         elif intent.task_type == TaskType.COLLECT_MAIL:
             executor = CollectMailExecutor(
                 worker_id=self.emulator.id,
@@ -715,9 +732,12 @@ class WorkerActor:
                 emulator_row=self.emulator,
                 system_config=self.syscfg,
             )
-            # 注入中断回调：探索 yield point 时检查并执行高优先级任务
+            # 从 task_config 读取允许中断的任务白名单
+            explore_cfg = (account.task_config or {}).get("探索突破", {})
+            allowed_interrupts = explore_cfg.get("allowed_interrupts", ["寄养"])
+            # 注入中断回调：探索 yield point 时检查白名单内的到期任务
             executor.interrupt_callback = self._make_interrupt_callback(
-                account, executor
+                account, executor, allowed_task_names=allowed_interrupts
             )
         elif intent.task_type == TaskType.XUANSHANG:
             executor = XuanShangExecutor(
@@ -797,6 +817,25 @@ class WorkerActor:
                 system_config=self.syscfg,
                 answer=intent.payload.get("answer") if intent.payload else None,
             )
+        elif intent.task_type == TaskType.TEAM_YUHUN:
+            executor = TeamYuhunExecutor(
+                worker_id=self.emulator.id,
+                emulator_id=self.emulator.id,
+            )
+        elif intent.task_type == TaskType.FOSTER:
+            executor = FosterExecutor(
+                worker_id=self.emulator.id,
+                emulator_id=self.emulator.id,
+                emulator_row=self.emulator,
+                system_config=self.syscfg,
+            )
+        elif intent.task_type == TaskType.FANGKA:
+            executor = FangkaExecutor(
+                worker_id=self.emulator.id,
+                emulator_id=self.emulator.id,
+                emulator_row=self.emulator,
+                system_config=self.syscfg,
+            )
         else:
             executor = MockExecutor(
                 worker_id=self.emulator.id, emulator_id=self.emulator.id
@@ -819,6 +858,9 @@ class WorkerActor:
             self._last_executor_adapter = getattr(executor, 'adapter', None) or executor.shared_adapter
             self._last_executor_ui = getattr(executor, 'ui', None) or executor.shared_ui
 
+        # 将执行结果描述保存到 intent，供云端上报使用
+        intent.result_message = result.get("message") or result.get("error")
+
         return result.get("status") in (TaskStatus.SUCCEEDED, TaskStatus.SKIPPED)
 
     def _build_success_next_time_op(
@@ -837,8 +879,13 @@ class WorkerActor:
     def _build_failure_next_time_op(
         self, intent: TaskIntent
     ) -> Optional[Tuple[str, str, Optional[str]]]:
-        """构建任务失败后的 next_time 延迟操作。"""
+        """构建任务失败后的 next_time 延迟操作。
+        已有自定义 _update_next_time 的执行器：使用 delay_if_stale 作为安全网，
+        仅在 next_time 仍在过去时施加延迟（执行器可能因异常未调用自身的 _update_next_time）。
+        """
         task_type = TaskType(intent.task_type)
+        if task_type in _EXECUTOR_HAS_OWN_UPDATE:
+            return "delay_if_stale", task_type.value, None
         return "delay", task_type.value, None
 
     async def _flush_next_time_updates(
@@ -893,6 +940,34 @@ class WorkerActor:
                             changed = True
                             self._log.info(
                                 f"[{config_key}] 任务失败，next_time 延后 {int(fail_delay)} 分钟至 {new_next_time} (account={account_id})"
+                            )
+
+                        if action == "delay_if_stale":
+                            # 安全网：仅在 next_time 仍在过去时施加延迟
+                            current_next_str = task_cfg.get("next_time")
+                            if current_next_str:
+                                try:
+                                    current_next = parse_beijing_time(current_next_str)
+                                    if current_next > bj_now:
+                                        self._log.debug(
+                                            f"[{config_key}] next_time={current_next_str} 已在未来，"
+                                            f"跳过安全延迟 (account={account_id})"
+                                        )
+                                        continue
+                                except Exception:
+                                    pass
+                            fail_delay = task_cfg.get("fail_delay", 30)
+                            if not isinstance(fail_delay, (int, float)) or fail_delay <= 0:
+                                continue
+                            new_next_time = format_beijing_time(
+                                bj_now + timedelta(minutes=int(fail_delay))
+                            )
+                            task_cfg["next_time"] = new_next_time
+                            cfg[config_key] = task_cfg
+                            changed = True
+                            self._log.info(
+                                f"[{config_key}] 安全延迟: next_time 延后 {int(fail_delay)} 分钟"
+                                f"至 {new_next_time} (account={account_id})"
                             )
 
                     if changed:
@@ -1031,41 +1106,54 @@ class WorkerActor:
         except Exception as exc:
             self._log.warning(f"保存失败截图异常（不影响主流程）: {exc}")
 
-    def _make_interrupt_callback(self, account: GameAccount, executor_ref):
+    def _make_interrupt_callback(
+        self, account: GameAccount, executor_ref,
+        allowed_task_names: list | None = None,
+    ):
         """创建中断回调闭包，供长任务执行器在 yield point 调用。
 
-        探索等长时间执行器在每轮循环后调用此回调，检查是否有更高优先级
-        的到期任务需要插队执行。
+        探索等长时间执行器在每轮循环后调用此回调，检查白名单内是否有
+        到期任务需要插队执行。
 
         Args:
             account: 当前账号
             executor_ref: 调用方执行器实例（用于获取其 adapter/ui）
+            allowed_task_names: 允许中断执行的任务类型名称白名单。
+                              None 或空列表 = 不中断任何任务。
         """
         from ...core.constants import TASK_PRIORITY
 
+        _allowed = set(allowed_task_names) if allowed_task_names else set()
+
         async def _interrupt_cb(current_priority: int) -> list[str]:
-            if not self.rescan_callback:
+            if not self.rescan_callback or not _allowed:
                 return []
 
             due_intents = await run_in_db(self.rescan_callback, account.id)
-            higher = [
+            # 基于白名单过滤（替代原来的优先级过滤）
+            matched = [
                 i for i in due_intents
-                if TASK_PRIORITY.get(i.task_type, 0) > current_priority
+                if (
+                    i.task_type.value
+                    if isinstance(i.task_type, TaskType)
+                    else str(i.task_type)
+                ) in _allowed
             ]
-            if not higher:
+            if not matched:
                 return []
 
-            higher.sort(
+            # 按优先级排序（高优先级先执行）
+            matched.sort(
                 key=lambda i: TASK_PRIORITY.get(i.task_type, 0), reverse=True
             )
-            task_names = [i.task_type.value for i in higher]
+            task_names = [i.task_type.value for i in matched]
             self._log.info(
-                f"[中断] 发现 {len(higher)} 个高优先级任务: {task_names}, "
+                f"[中断] 发现 {len(matched)} 个白名单到期任务: {task_names}, "
                 f"account={account.id}"
             )
 
             completed = []
-            for hi in higher:
+            for hi in matched:
                 task_name = (
                     hi.task_type.value
                     if isinstance(hi.task_type, TaskType)
@@ -1098,10 +1186,6 @@ class WorkerActor:
     def _compute_next_time(task_type: TaskType) -> Optional[str]:
         """根据任务类型计算下一次执行时间。"""
         bj_now_str = format_beijing_time(now_beijing())
-
-        if task_type == TaskType.FOSTER:
-            # 寄养: +6小时
-            return add_hours_to_beijing_time(bj_now_str, 6)
 
         if task_type == TaskType.COOP:
             # 勾协: 下一个 18:00/21:00

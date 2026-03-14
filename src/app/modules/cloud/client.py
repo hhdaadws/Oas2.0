@@ -33,13 +33,14 @@ class CloudApiClient:
         path: str,
         json_data: Optional[dict] = None,
         token: Optional[str] = None,
+        timeout: Optional[int] = None,
     ) -> Dict[str, Any]:
         if not self.configured():
             raise CloudApiError("CLOUD_API_BASE_URL 未配置")
         headers = {}
         if token:
             headers["Authorization"] = f"Bearer {token}"
-        async with httpx.AsyncClient(timeout=self._timeout) as client:
+        async with httpx.AsyncClient(timeout=timeout or self._timeout) as client:
             response = await client.request(
                 method=method,
                 url=self._url(path),
@@ -68,7 +69,7 @@ class CloudApiClient:
 
     async def agent_login(
         self, username: str, password: str, node_id: str, version: str = "1.0.0"
-    ) -> str:
+    ) -> dict:
         payload = await self._request(
             "POST",
             "/api/v1/agent/auth/login",
@@ -82,7 +83,11 @@ class CloudApiClient:
         token = payload.get("token")
         if not token:
             raise CloudApiError("云端 agent 登录未返回 token")
-        return token
+        return {
+            "token": token,
+            "manager_type": payload.get("manager_type", "all"),
+            "manager_id": payload.get("manager_id"),
+        }
 
     async def poll_jobs(
         self,
@@ -90,15 +95,19 @@ class CloudApiClient:
         node_id: str,
         limit: int,
         lease_seconds: int,
+        user_types: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
+        body: Dict[str, Any] = {
+            "node_id": node_id,
+            "limit": limit,
+            "lease_seconds": lease_seconds,
+        }
+        if user_types:
+            body["user_types"] = user_types
         payload = await self._request(
             "POST",
             "/api/v1/agent/poll-jobs",
-            {
-                "node_id": node_id,
-                "limit": limit,
-                "lease_seconds": lease_seconds,
-            },
+            body,
             token=agent_token,
         )
         jobs = payload.get("jobs") or []
@@ -269,6 +278,7 @@ class CloudApiClient:
             f"/api/v1/agent/scan/{scan_id}/phase",
             json_data=payload,
             token=agent_token,
+            timeout=30 if screenshot else None,
         )
 
     async def scan_get_choice(

@@ -126,8 +126,14 @@ class UIDetector:
 
     def _match_tag_only(self, big_gray, ui: UIDef, thr: float) -> float:
         """Phase 1: 只匹配 tag 模板返回分数。无 tag 的 UI 匹配所有模板取最大值。"""
-        if ui._tag_template is not None:
-            return self._match_one_template(big_gray, ui._tag_template, thr)
+        if ui._tag_templates:
+            score = 0.0
+            for tpl in ui._tag_templates:
+                s = self._match_one_template(big_gray, tpl, thr)
+                score = max(score, s)
+                if score >= 0.95:
+                    break
+            return score
 
         # 无 tag（如 SHIXIAO）：匹配所有模板取最大值
         score = 0.0

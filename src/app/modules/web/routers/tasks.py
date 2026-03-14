@@ -153,7 +153,7 @@ async def get_task_stats(db: Session = Depends(get_db)):
 
 
 @router.post("/scheduler/start")
-async def start_scheduler():
+async def start_scheduler(scheduler_type: str = Query("all")):
     """
     启动运行时调度引擎（feeder + executor）
     """
@@ -166,6 +166,8 @@ async def start_scheduler():
     if mode == "cloud":
         await feeder.stop()
         try:
+            cloud_task_poller.set_user_type_filter(scheduler_type)
+            runtime_mode_state.set_scheduler_type(scheduler_type)
             await cloud_task_poller.start()
             await scan_task_poller.start()
         except CloudApiError as exc:

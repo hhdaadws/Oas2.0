@@ -1,5 +1,0 @@
-<?xml version='1.0' encoding='utf-8' standalone='yes' ?>
-<map>
-    <boolean name="is_foreground" value="true" />
-    <boolean name="last_time_foreground" value="true" />
-</map>

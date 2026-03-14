@@ -19,7 +19,6 @@ from ...db.base import SessionLocal
 from ...db.models import AccountRestConfig, GameAccount, RestPlan, SystemConfig
 from ..executor.service import executor_service
 from ..executor.types import TaskIntent
-from ..executor.yaml_loader import yaml_task_loader
 
 
 class Feeder:
@@ -426,39 +425,53 @@ class Feeder:
 
         # 预先检查租借式神数据（用于条件过滤依赖任务 + 动态优先级）
         shiki_cfg = account.shikigami_config or {}
-        has_rental = bool(shiki_cfg.get("租借式神"))
+        rentals = shiki_cfg.get("租借式神", [])
+        rental_count = len([r for r in rentals if isinstance(r, dict)])
+        has_5star_rental = any(r.get("star") == 5 for r in rentals if isinstance(r, dict))
 
         self._check_time_task(intents, account, cfg, "起号_租借式神", TaskType.INIT_RENT_SHIKIGAMI)
         self._check_time_task(intents, account, cfg, "起号_领取奖励", TaskType.INIT_COLLECT_REWARD)
-        self._check_time_task(intents, account, cfg, "起号_新手任务", TaskType.INIT_NEWBIE_QUEST)
         self._check_time_task(intents, account, cfg, "起号_经验副本", TaskType.INIT_EXP_DUNGEON)
         self._check_time_task(intents, account, cfg, "起号_领取锦囊", TaskType.INIT_COLLECT_JINNANG)
         self._check_time_task(intents, account, cfg, "起号_式神养成", TaskType.INIT_SHIKIGAMI_TRAIN)
         self._check_time_task(intents, account, cfg, "起号_升级饭盒", TaskType.INIT_FANHE_UPGRADE)
 
-        # 探索突破：依赖租借式神数据，无数据则跳过等待 re-scan
-        if has_rental:
-            self._check_time_task(intents, account, cfg, "探索突破", TaskType.EXPLORE)
-        else:
-            explore_cfg = cfg.get("探索突破", {})
-            if (explore_cfg.get("enabled") is True
-                    and explore_cfg.get("next_time")
-                    and is_time_reached(explore_cfg["next_time"])):
-                self.log.info(
-                    f"[init] 跳过探索突破: 租借式神数据为空, account={account.id}"
-                )
+        # 探索突破：始终按时间调度；若无5★租借则强制先调度租借任务
+        explore_cfg = cfg.get("探索突破", {})
+        explore_due = (
+            explore_cfg.get("enabled") is True
+            and explore_cfg.get("next_time")
+            and is_time_reached(explore_cfg["next_time"])
+        )
+        if explore_due:
+            intents.append(TaskIntent(account_id=account.id, task_type=TaskType.EXPLORE))
+            if not has_5star_rental:
+                # 无5★租借 → 强制调度租借（绕过 next_time）
+                rent_already = any(i.task_type == TaskType.INIT_RENT_SHIKIGAMI for i in intents)
+                if not rent_already:
+                    intents.append(TaskIntent(account_id=account.id, task_type=TaskType.INIT_RENT_SHIKIGAMI))
+                    self.log.info(
+                        f"[init] 探索突破需要5★式神，强制调度租借任务, account={account.id}"
+                    )
+            elif rental_count < 3:
+                # 有5★但不满3个 → 补租（绕过 next_time）
+                rent_already = any(i.task_type == TaskType.INIT_RENT_SHIKIGAMI for i in intents)
+                if not rent_already:
+                    intents.append(TaskIntent(account_id=account.id, task_type=TaskType.INIT_RENT_SHIKIGAMI))
+                    self.log.info(
+                        f"[init] 租借不满3个({rental_count}/3)，强制调度租借任务, account={account.id}"
+                    )
 
-        if yaml_task_loader.is_enabled("climb_tower"):
+        self._check_time_task(intents, account, cfg, "寄养", TaskType.FOSTER)
+
+        if global_switches.get("爬塔", True):
             self._check_time_task(intents, account, cfg, "爬塔", TaskType.CLIMB_TOWER)
-        self._check_time_task(intents, account, cfg, "地鬼", TaskType.DIGUI)
         self._check_time_task(intents, account, cfg, "每周商店", TaskType.WEEKLY_SHOP)
         self._check_time_task(intents, account, cfg, "寮商店", TaskType.LIAO_SHOP)
-        self._check_time_task(intents, account, cfg, "领取寮金币", TaskType.LIAO_COIN)
         self._check_time_task(intents, account, cfg, "领取邮件", TaskType.COLLECT_MAIL)
         self._check_time_task(intents, account, cfg, "加好友", TaskType.ADD_FRIEND)
         self._check_time_task(intents, account, cfg, "签到", TaskType.SIGNIN)
         self._check_time_task(intents, account, cfg, "领取登录礼包", TaskType.COLLECT_LOGIN_GIFT)
-        self._check_time_task(intents, account, cfg, "每日一抽", TaskType.DAILY_SUMMON)
         self._check_time_task(intents, account, cfg, "弥助", TaskType.DELEGATE_HELP)
         self._check_time_task(intents, account, cfg, "领取成就奖励", TaskType.COLLECT_ACHIEVEMENT)
         self._check_time_task(intents, account, cfg, "每周分享", TaskType.WEEKLY_SHARE)
@@ -466,24 +479,10 @@ class Feeder:
             self._check_time_task(intents, account, cfg, "召唤礼包", TaskType.SUMMON_GIFT)
         self._check_time_task(intents, account, cfg, "领取饭盒酒壶", TaskType.COLLECT_FANHE_JIUHU)
 
-        # 对弈竞猜：需要当前窗口有全局答案配置
-        self._check_duiyi_task(intents, account, cfg, duiyi_answers)
-
-        # 斗技：时间窗口检查
-        douji_cfg = cfg.get("斗技", {})
-        if (douji_cfg.get("enabled") is True
-                and douji_cfg.get("next_time")
-                and is_time_reached(douji_cfg["next_time"])):
-            bj_hour = now_beijing().hour
-            start_h = douji_cfg.get("start_hour", 12)
-            end_h = douji_cfg.get("end_hour", 23)
-            if start_h <= bj_hour < end_h:
-                intents.append(TaskIntent(account_id=account.id, task_type=TaskType.DOUJI))
-
-        # 当账号没有租借式神数据时，提升租借任务优先级至最高
+        # 没有5★租借或不满3个时，提升租借任务优先级至最高
         def _priority(intent: TaskIntent) -> int:
             p = TASK_PRIORITY.get(intent.task_type, 0)
-            if intent.task_type == TaskType.INIT_RENT_SHIKIGAMI and not has_rental:
+            if intent.task_type == TaskType.INIT_RENT_SHIKIGAMI and (not has_5star_rental or rental_count < 3):
                 p = 200
             return p
 
@@ -502,13 +501,12 @@ class Feeder:
             intents, account, cfg, "领取登录礼包", TaskType.COLLECT_LOGIN_GIFT
         )
         self._check_time_task(intents, account, cfg, "领取邮件", TaskType.COLLECT_MAIL)
-        if yaml_task_loader.is_enabled("climb_tower"):
+        if global_switches.get("爬塔", True):
             self._check_time_task(intents, account, cfg, "爬塔", TaskType.CLIMB_TOWER)
         self._check_time_task(intents, account, cfg, "逢魔", TaskType.FENGMO)
         self._check_time_task(intents, account, cfg, "地鬼", TaskType.DIGUI)
         self._check_time_task(intents, account, cfg, "道馆", TaskType.DAOGUAN)
         self._check_time_task(intents, account, cfg, "寮商店", TaskType.LIAO_SHOP)
-        self._check_time_task(intents, account, cfg, "领取寮金币", TaskType.LIAO_COIN)
         self._check_time_task(intents, account, cfg, "每日一抽", TaskType.DAILY_SUMMON)
         self._check_time_task(intents, account, cfg, "每周商店", TaskType.WEEKLY_SHOP)
         self._check_time_task(intents, account, cfg, "秘闻", TaskType.MIWEN)

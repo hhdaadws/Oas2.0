@@ -83,7 +83,6 @@ class TaskConfigUpdate(BaseModel):
         default=None, alias="签到"
     )  # {enabled: bool, next_time: str, fail_delay: int}
     liao_shop: Optional[Dict[str, Any]] = Field(default=None, alias="寮商店")
-    liao_coin: Optional[Dict[str, Any]] = Field(default=None, alias="领取寮金币")
     daily_summon: Optional[Dict[str, Any]] = Field(default=None, alias="每日一抽")
     weekly_shop: Optional[Dict[str, Any]] = Field(default=None, alias="每周商店")
     miwen: Optional[Dict[str, Any]] = Field(default=None, alias="秘闻")
@@ -250,14 +249,22 @@ async def create_game_account(
     if existing:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="游戏账号已存在")
 
+    # 读取默认账号类型
+    sys_row = db.query(SystemConfig).order_by(SystemConfig.id.asc()).first()
+    default_progress = (sys_row.default_account_progress or "ok") if sys_row else "ok"
+    if default_progress == "init":
+        task_cfg = deepcopy(DEFAULT_INIT_TASK_CONFIG)
+    else:
+        task_cfg = build_default_task_config(_get_global_fail_delays(db), _get_global_task_enabled(db))
+
     # 创建游戏账号
     game_account = GameAccount(
         login_id=account.login_id,
         level=account.level,
         stamina=account.stamina,
-        progress="ok",
+        progress=default_progress,
         status=AccountStatus.ACTIVE,
-        task_config=build_default_task_config(_get_global_fail_delays(db), _get_global_task_enabled(db)),
+        task_config=task_cfg,
         explore_progress=build_default_explore_progress(),
     )
     db.add(game_account)

@@ -123,6 +123,10 @@ a = Analysis(
         'app.modules.executor.collect_fanhe_jiuhu',
         'app.modules.executor.collect_achievement',
         'app.modules.executor.resource_check',
+        'app.modules.executor.fangka',
+        'app.modules.executor.foster',
+        'app.modules.executor.team_yuhun',
+        'app.modules.executor.duiyi_jingcai',
 
         # ── OCR ──
         'app.modules.ocr.engine',

@@ -34,6 +34,7 @@ liao_templates = _discover_templates("liao")
 shishen_templates = _discover_templates("shishen")
 zhaohuan_templates = _discover_templates("zhaohuan")
 zudui_templates = _discover_templates("zudui")
+tag_haoyou_templates = _discover_templates("tag_haoyou")
 
 # 游戏启动后出现 "进入" 按钮的界面
 registry.register(UIDef(
@@ -121,13 +122,12 @@ registry.register(UIDef(
     ],
 ))
 
-# 寮界面：tag=liaoxinxi 用于识别；liaojinbi_1/back 用于导航锚点
+# 寮界面：tag=liaoxinxi 用于识别；back 用于导航锚点
 registry.register(UIDef(
     id="LIAO",
     tag="liaoxinxi",
     templates=[
         TemplateDef(name="liaoxinxi", path="assets/ui/templates/liaoxinxi.png"),
-        TemplateDef(name="liaojinbi_1", path="assets/ui/templates/liaojinbi_1.png"),
         TemplateDef(name="jiejie", path="assets/ui/templates/jiejie.png"),
         TemplateDef(name="back", path="assets/ui/templates/back.png"),
     ],
@@ -140,6 +140,7 @@ registry.register(UIDef(
     templates=[
         TemplateDef(name="shenshe", path="assets/ui/templates/shenshe.png"),
         TemplateDef(name="xinxi", path="assets/ui/templates/xinxi.png"),
+        TemplateDef(name="back", path="assets/ui/templates/back.png"),
     ],
 ))
 
@@ -170,6 +171,16 @@ registry.register(UIDef(
     templates=[
         TemplateDef(name="tag_jiejie", path="assets/ui/templates/tag_jiejie.png"),
         TemplateDef(name="back", path="assets/ui/templates/back.png"),
+    ],
+))
+
+# 结界卡界面：tag=tag_jiejieka 用于识别；exit_dark 用于返回结界界面
+registry.register(UIDef(
+    id="JIEJIE_KA",
+    tag="tag_jiejieka",
+    templates=[
+        TemplateDef(name="tag_jiejieka", path="assets/ui/templates/tag_jiejieka.png"),
+        TemplateDef(name="exit_dark", path="assets/ui/templates/exit_dark.png"),
     ],
 ))
 
@@ -251,7 +262,7 @@ registry.register(UIDef(
     id="HAOYOU",
     tag="tag_haoyou",
     templates=[
-        TemplateDef(name="tag_haoyou", path="assets/ui/templates/tag_haoyou.png"),
+        *tag_haoyou_templates,
         TemplateDef(name="exit", path="assets/ui/templates/exit.png"),
     ],
 ))

@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import random
 import time
 from typing import TYPE_CHECKING, Any, Optional, Union
+from pathlib import Path
 
 from ...core.config import settings
 from ..vision.frame_cache import compute_frame_fingerprint
@@ -104,6 +106,17 @@ async def _adapter_swipe(
         )
 
 
+def discover_template_paths(prefix: str) -> list[str]:
+    """自动发现 assets/ui/templates/{prefix}_*.png 模板路径列表。
+
+    返回排序后的 posix 路径列表；若 glob 未命中，兜底返回 ['{prefix}_1.png']。
+    """
+    paths = sorted(
+        p.as_posix() for p in Path("assets/ui/templates").glob(f"{prefix}_*.png")
+    )
+    return paths or [f"assets/ui/templates/{prefix}_1.png"]
+
+
 def _vision_cache_options() -> tuple[bool, int, float]:
     """获取识图缓存相关参数。"""
     enabled = bool(getattr(settings, "vision_frame_cache_enabled", True))
@@ -181,6 +194,7 @@ async def wait_for_template(
     log: Any = None,
     label: str = "",
     popup_handler: Any = None,
+    dismiss_retry: int = 1,
 ) -> Optional[Match]:
     """轮询截图直到模板出现。
 
@@ -194,6 +208,7 @@ async def wait_for_template(
         log: 日志对象
         label: 日志标签
         popup_handler: 可选的弹窗处理器（PopupHandler 实例）
+        dismiss_retry: 超时后点击右上角关闭未知弹窗并重试的次数（默认 1）
 
     Returns:
         Match 对象，超时返回 None。
@@ -241,6 +256,16 @@ async def wait_for_template(
                     return m
             if frame_fp is not None:
                 same_frame_miss_streak += 1
+            # 调试：定期输出未匹配模板的最佳分数（每30秒一次）
+            if log and elapsed > 0 and int(elapsed) % 30 < interval:
+                for tpl in templates:
+                    raw = match_template(screenshot, tpl, threshold=0.0)
+                    score_str = f"{raw.score:.3f}" if raw else "N/A"
+                    log.info(
+                        f"{tag}[debug] 模板 {tpl} 未匹配, "
+                        f"best_score={score_str} (阈值={kwargs.get('threshold', 0.85):.2f}, "
+                        f"elapsed={elapsed:.0f}s)"
+                    )
             # 所有模板都未匹配时检查弹窗
             if popup_handler is not None:
                 dismissed = await popup_handler.check_and_dismiss(screenshot)
@@ -253,6 +278,29 @@ async def wait_for_template(
         await asyncio.sleep(interval)
         elapsed += interval
 
+    # 超时后尝试点击右上角关闭未知弹窗并重试
+    if dismiss_retry > 0:
+        rx, ry = random.randint(940, 960), random.randint(0, 20)
+        if log:
+            log.info(
+                f"{tag}等待模板超时，点击右上角 ({rx}, {ry}) 尝试关闭未知弹窗 "
+                f"(剩余重试={dismiss_retry})"
+            )
+        await _adapter_tap(adapter, rx, ry)
+        await asyncio.sleep(1.0)
+        return await wait_for_template(
+            adapter,
+            capture_method,
+            template,
+            timeout=timeout,
+            interval=interval,
+            threshold=threshold,
+            log=log,
+            label=label,
+            popup_handler=popup_handler,
+            dismiss_retry=dismiss_retry - 1,
+        )
+
     if log:
         log.warning(f"{tag}等待模板超时 ({timeout:.0f}s)")
         _maybe_log_cache_stats(log, _TEMPLATE_CACHE_STATS, "wait_for_template")
@@ -262,7 +310,7 @@ async def wait_for_template(
 async def click_template(
     adapter: EmulatorAdapter,
     capture_method: str,
-    template: str,
+    template: str | list[str],
     *,
     timeout: float = 8.0,
     interval: float = 0.5,
@@ -275,6 +323,7 @@ async def click_template(
     log: Any = None,
     label: str = "",
     popup_handler: Any = None,
+    dismiss_retry: int = 1,
 ) -> bool:
     """等待模板出现 → 稳定等待 → 点击 → 可选验证消失。
 
@@ -297,18 +346,20 @@ async def click_template(
     """
     tag = f"[{label}] " if label else ""
     kwargs = {"threshold": threshold} if threshold is not None else {}
+    templates = [template] if isinstance(template, str) else template
 
     # 1) 等待模板出现
     m = await wait_for_template(
         adapter,
         capture_method,
-        template,
+        templates,
         timeout=timeout,
         interval=interval,
         threshold=threshold,
         log=log,
         label=label,
         popup_handler=popup_handler,
+        dismiss_retry=dismiss_retry,
     )
     if not m:
         return False
@@ -327,7 +378,11 @@ async def click_template(
             await asyncio.sleep(gone_interval)
             continue
 
-        m = match_template(screenshot, template, **kwargs)
+        m = None
+        for tpl in templates:
+            m = match_template(screenshot, tpl, **kwargs)
+            if m:
+                break
         if not m:
             # 模板已经不在了（可能之前的操作已生效或 UI 发生变化）
             if log:
@@ -348,7 +403,11 @@ async def click_template(
         await asyncio.sleep(gone_interval)
         screenshot = await _adapter_capture(adapter, capture_method)
         if screenshot is not None:
-            still = match_template(screenshot, template, **kwargs)
+            still = None
+            for tpl in templates:
+                still = match_template(screenshot, tpl, **kwargs)
+                if still:
+                    break
             if not still:
                 if log:
                     log.info(f"{tag}验证通过，模板已消失")
@@ -376,6 +435,7 @@ __all__ = [
     "log_wait_cache_stats",
     "check_and_handle_liao_not_joined",
     "check_and_create_jiejie",
+    "discover_template_paths",
 ]
 
 
@@ -394,6 +454,7 @@ async def wait_for_qrcode(
     interval: float = 0.5,
     log: Any = None,
     label: str = "",
+    dismiss_retry: int = 1,
 ) -> bool:
     """轮询截图直到检测到二维码出现。
 
@@ -404,6 +465,7 @@ async def wait_for_qrcode(
         interval: 轮询间隔
         log: 日志对象
         label: 日志标签
+        dismiss_retry: 超时后点击右上角关闭未知弹窗并重试的次数（默认 1）
 
     Returns:
         True 表示检测到二维码，False 表示超时未检测到。
@@ -419,6 +481,26 @@ async def wait_for_qrcode(
             return True
         await asyncio.sleep(interval)
         elapsed += interval
+
+    # 超时后尝试点击右上角关闭未知弹窗并重试
+    if dismiss_retry > 0:
+        rx, ry = random.randint(940, 960), random.randint(0, 20)
+        if log:
+            log.info(
+                f"{tag}等待二维码超时，点击右上角 ({rx}, {ry}) 尝试关闭未知弹窗 "
+                f"(剩余重试={dismiss_retry})"
+            )
+        await _adapter_tap(adapter, rx, ry)
+        await asyncio.sleep(1.0)
+        return await wait_for_qrcode(
+            adapter,
+            capture_method,
+            timeout=timeout,
+            interval=interval,
+            log=log,
+            label=label,
+            dismiss_retry=dismiss_retry - 1,
+        )
 
     if log:
         log.warning(f"{tag}等待二维码超时 ({timeout:.0f}s)")
@@ -445,6 +527,7 @@ async def wait_for_text(
     log: Any = None,
     label: str = "",
     popup_handler: Any = None,
+    dismiss_retry: int = 1,
 ) -> Optional[OcrBox]:
     """轮询截图直到 OCR 识别出包含 keyword 的文本。
 
@@ -461,6 +544,7 @@ async def wait_for_text(
         log: 日志对象
         label: 日志标签
         popup_handler: 可选的弹窗处理器（PopupHandler 实例）
+        dismiss_retry: 超时后点击右上角关闭未知弹窗并重试的次数（默认 1）
 
     Returns:
         OcrBox 对象，超时返回 None。
@@ -522,6 +606,30 @@ async def wait_for_text(
         await asyncio.sleep(interval)
         elapsed += interval
 
+    # 超时后尝试点击右上角关闭未知弹窗并重试
+    if dismiss_retry > 0:
+        rx, ry = random.randint(940, 960), random.randint(0, 20)
+        if log:
+            log.info(
+                f'{tag}OCR 等待 "{keyword}" 超时，点击右上角 ({rx}, {ry}) '
+                f"尝试关闭未知弹窗 (剩余重试={dismiss_retry})"
+            )
+        await _adapter_tap(adapter, rx, ry)
+        await asyncio.sleep(1.0)
+        return await wait_for_text(
+            adapter,
+            capture_method,
+            keyword,
+            roi=roi,
+            timeout=timeout,
+            interval=interval,
+            min_confidence=min_confidence,
+            log=log,
+            label=label,
+            popup_handler=popup_handler,
+            dismiss_retry=dismiss_retry - 1,
+        )
+
     if log:
         log.warning(f'{tag}OCR 等待 "{keyword}" 超时 ({timeout:.0f}s)')
         _maybe_log_cache_stats(log, _TEXT_CACHE_STATS, "wait_for_text")
@@ -542,6 +650,7 @@ async def click_text(
     log: Any = None,
     label: str = "",
     popup_handler: Any = None,
+    dismiss_retry: int = 1,
 ) -> bool:
     """等待 OCR 识别出关键词 → 点击文本中心。
 
@@ -568,6 +677,7 @@ async def click_text(
         log=log,
         label=label,
         popup_handler=popup_handler,
+        dismiss_retry=dismiss_retry,
     )
     if not box:
         return False
@@ -694,7 +804,7 @@ async def _defer_all_liao_tasks(
     bj_now = now_beijing()
     new_next_time = format_beijing_time(bj_now + timedelta(hours=delay_hours))
 
-    liao_config_keys = ["领取寮金币", "寮商店"]
+    liao_config_keys = ["寮商店"]
 
     def _do_defer():
         try:

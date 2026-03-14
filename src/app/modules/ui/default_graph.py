@@ -178,13 +178,13 @@ def build_default_graph() -> UIGraph:
         )
     )
 
-    # 寮信息 -> 寮界面：点击 xinxi 返回
+    # 寮信息 -> 寮界面：点击 back.png 返回
     graph.add_edge(
         Edge(
             src="LIAO_XINXI",
             dst="LIAO",
             actions=[
-                Action(type="tap_anchor", args=("xinxi",)),
+                Action(type="tap_anchor", args=("back",)),
                 Action(type="sleep", args=(800,)),
             ],
         )
@@ -257,6 +257,30 @@ def build_default_graph() -> UIGraph:
             dst="LIAO",
             actions=[
                 Action(type="tap_anchor", args=("back",)),
+                Action(type="sleep", args=(800,)),
+            ],
+        )
+    )
+
+    # 结界 -> 结界卡：点击 (692, 266) 进入
+    graph.add_edge(
+        Edge(
+            src="JIEJIE",
+            dst="JIEJIE_KA",
+            actions=[
+                Action(type="tap", args=(692, 266)),
+                Action(type="sleep", args=(1200,)),
+            ],
+        )
+    )
+
+    # 结界卡 -> 结界：点击 exit_dark 返回
+    graph.add_edge(
+        Edge(
+            src="JIEJIE_KA",
+            dst="JIEJIE",
+            actions=[
+                Action(type="tap_anchor", args=("exit_dark",)),
                 Action(type="sleep", args=(800,)),
             ],
         )

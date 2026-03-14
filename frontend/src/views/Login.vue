@@ -30,7 +30,14 @@
           />
         </el-form-item>
 
-        <el-form-item v-else-if="loginForm.mode === 'local'" prop="code">
+        <el-form-item v-if="loginForm.mode === 'local' && !canAutoLoginLocal">
+          <el-radio-group v-model="localAuthMethod" size="default">
+            <el-radio-button label="code">验证码</el-radio-button>
+            <el-radio-button label="password">账号密码</el-radio-button>
+          </el-radio-group>
+        </el-form-item>
+
+        <el-form-item v-if="loginForm.mode === 'local' && localAuthMethod === 'code' && !canAutoLoginLocal" prop="code">
           <el-input
             v-model="loginForm.code"
             placeholder="请输入6位验证码"
@@ -42,7 +49,7 @@
           />
         </el-form-item>
 
-        <el-form-item v-if="loginForm.mode === 'cloud'" prop="username">
+        <el-form-item v-if="showPasswordFields" prop="username">
           <el-input
             v-model="loginForm.username"
             placeholder="请输入管理员账号"
@@ -52,7 +59,7 @@
           />
         </el-form-item>
 
-        <el-form-item v-if="loginForm.mode === 'cloud'" prop="password">
+        <el-form-item v-if="showPasswordFields" prop="password">
           <el-input
             v-model="loginForm.password"
             type="password"
@@ -64,7 +71,7 @@
           />
         </el-form-item>
 
-        <el-form-item v-if="loginForm.mode === 'cloud'">
+        <el-form-item v-if="showPasswordFields">
           <el-checkbox v-model="rememberCredentials">记住账号密码</el-checkbox>
         </el-form-item>
 
@@ -83,7 +90,7 @@
 
       <div class="login-tip">
         <el-text type="info" size="small">
-          {{ loginForm.mode === 'cloud' ? '云端模式会从云端拉取任务执行' : '请联系管理员获取验证码' }}
+          {{ loginForm.mode === 'cloud' ? '云端模式会从云端拉取任务执行' : (localAuthMethod === 'password' ? '本地模式使用本地任务调度' : '请联系管理员获取验证码') }}
         </el-text>
       </div>
     </el-card>
@@ -96,13 +103,14 @@ import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Lock } from '@element-plus/icons-vue'
 import { login, checkAuthStatus } from '@/api/auth'
-import { setToken, setMode, getToken, getCloudCredentials, setCloudCredentials, removeCloudCredentials } from '@/api/request'
+import { setToken, setMode, getToken, getCloudCredentials, setCloudCredentials, removeCloudCredentials, setManagerType } from '@/api/request'
 
 const router = useRouter()
 const loginFormRef = ref(null)
 const loading = ref(false)
 const canAutoLoginLocal = ref(false)
 const rememberCredentials = ref(false)
+const localAuthMethod = ref('code')
 
 const loginForm = reactive({
   mode: 'local',
@@ -127,12 +135,21 @@ const loginRules = {
   ]
 }
 
+const showPasswordFields = computed(() => {
+  if (loginForm.mode === 'cloud') return true
+  if (loginForm.mode === 'local' && localAuthMethod.value === 'password' && !canAutoLoginLocal.value) return true
+  return false
+})
+
 const loginHeaderTip = computed(() => {
   if (loginForm.mode === 'cloud') {
     return '请输入管理员账号密码（云端模式）'
   }
   if (canAutoLoginLocal.value) {
     return '24小时内免验证码，支持一键自动登录（本地模式）'
+  }
+  if (localAuthMethod.value === 'password') {
+    return '请输入管理员账号密码（本地模式）'
   }
   return '请输入验证码（本地模式）'
 })
@@ -145,7 +162,7 @@ const loginButtonText = computed(() => {
 })
 
 const activeRules = computed(() => {
-  if (loginForm.mode === 'cloud') {
+  if (showPasswordFields.value) {
     return {
       mode: loginRules.mode,
       username: loginRules.username,
@@ -195,8 +212,18 @@ watch(
     }
 
     if (mode === 'local') {
-      loginForm.username = ''
-      loginForm.password = ''
+      const saved = getCloudCredentials()
+      if (saved) {
+        loginForm.username = saved.username
+        loginForm.password = saved.password
+        rememberCredentials.value = true
+        localAuthMethod.value = 'password'
+      } else {
+        loginForm.username = ''
+        loginForm.password = ''
+        rememberCredentials.value = false
+        localAuthMethod.value = 'code'
+      }
       await refreshAutoLoginState()
     } else {
       canAutoLoginLocal.value = false
@@ -214,10 +241,17 @@ watch(
   }
 )
 
+watch(localAuthMethod, () => {
+  if (loginFormRef.value) {
+    loginFormRef.value.clearValidate()
+  }
+})
+
 const handleLogin = async () => {
   if (!loginFormRef.value) return
 
   if (loginForm.mode === 'local' && canAutoLoginLocal.value) {
+    setMode('local')
     ElMessage.success('已使用24小时内登录状态自动登录')
     router.push('/dashboard')
     return
@@ -234,7 +268,7 @@ const handleLogin = async () => {
     const payload = {
       mode: loginForm.mode
     }
-    if (loginForm.mode === 'cloud') {
+    if (showPasswordFields.value) {
       payload.username = loginForm.username.trim()
       payload.password = loginForm.password
     } else {
@@ -244,7 +278,8 @@ const handleLogin = async () => {
     const res = await login(payload)
     setToken(res.token)
     setMode(res.mode || loginForm.mode)
-    if (loginForm.mode === 'cloud') {
+    setManagerType(res.manager_type || 'all')
+    if (showPasswordFields.value) {
       if (rememberCredentials.value) {
         setCloudCredentials(payload.username, payload.password)
       } else {

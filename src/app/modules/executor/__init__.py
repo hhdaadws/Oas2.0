@@ -6,7 +6,6 @@ from .delegate_help import DelegateHelpExecutor
 from .collect_login_gift import CollectLoginGiftExecutor
 from .collect_mail import CollectMailExecutor
 from .liao_shop import LiaoShopExecutor
-from .liao_coin import LiaoCoinExecutor
 from .add_friend import AddFriendExecutor
 from .init_executor import InitExecutor
 from .init_collect_reward import InitCollectRewardExecutor
@@ -28,6 +27,9 @@ from .collect_achievement import CollectAchievementExecutor
 from .summon_gift import SummonGiftExecutor
 from .weekly_share import WeeklyShareExecutor
 from .collect_fanhe_jiuhu import CollectFanheJiuhuExecutor
+from .fangka import FangkaExecutor
+from .foster import FosterExecutor
+from .team_yuhun import TeamYuhunExecutor
 
 __all__ = [
     "BaseExecutor",
@@ -36,7 +38,6 @@ __all__ = [
     "CollectLoginGiftExecutor",
     "CollectMailExecutor",
     "LiaoShopExecutor",
-    "LiaoCoinExecutor",
     "AddFriendExecutor",
     "InitExecutor",
     "InitCollectRewardExecutor",
@@ -58,4 +59,7 @@ __all__ = [
     "SummonGiftExecutor",
     "WeeklyShareExecutor",
     "CollectFanheJiuhuExecutor",
+    "FangkaExecutor",
+    "FosterExecutor",
+    "TeamYuhunExecutor",
 ]

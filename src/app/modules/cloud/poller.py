@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Deque, Dict, List, Optional
 
 from ...core.config import settings, BASE_DIR
-from ...core.constants import TaskType
+from ...core.constants import AccountStatus, TaskType
 from ...core.logger import logger
 from ...db.base import SessionLocal
 from ...db.models import GameAccount
@@ -122,6 +122,7 @@ class CloudTaskPoller:
         self._running = False
         self._task: Optional[asyncio.Task] = None
         self._heartbeat_task: Optional[asyncio.Task] = None
+        self._heartbeat_running_task: Optional[asyncio.Task] = None
         self._agent_token: str = ""
         self._node_id = _resolve_node_id()
         self._poll_interval = max(1, int(settings.cloud_poll_interval_sec or 5))
@@ -133,21 +134,24 @@ class CloudTaskPoller:
         self._deferred_jobs: Dict[int, List[DeferredJob]] = defaultdict(list)
         self._job_meta: Dict[int, dict] = {}  # job_id -> {task_type, login_id, account_id}
         self._map_lock = asyncio.Lock()
+        self._user_type_filter: Optional[List[str]] = None
         self.log = logger.bind(module="CloudTaskPoller")
 
-    async def verify_agent_login(self, username: str, password: str) -> None:
-        """Verify credentials by performing an agent login against the cloud API."""
+    async def verify_agent_login(self, username: str, password: str) -> dict:
+        """Verify credentials by performing an agent login against the cloud API.
+        Returns dict with token and manager_type."""
         if not cloud_api_client.configured():
             raise CloudApiError("CLOUD_API_BASE_URL 未配置")
-        await cloud_api_client.agent_login(
+        result = await cloud_api_client.agent_login(
             username=username,
             password=password,
             node_id=self._node_id,
         )
+        return result
 
     # Keep old name as alias for backward compatibility with auth.py
-    async def verify_manager_login(self, username: str, password: str) -> None:
-        await self.verify_agent_login(username=username, password=password)
+    async def verify_manager_login(self, username: str, password: str) -> dict:
+        return await self.verify_agent_login(username=username, password=password)
 
     async def start(self) -> None:
         if self._running:
@@ -165,6 +169,7 @@ class CloudTaskPoller:
         self._running = True
         self._task = asyncio.create_task(self._loop())
         self._heartbeat_task = asyncio.create_task(self._heartbeat_deferred_loop())
+        self._heartbeat_running_task = asyncio.create_task(self._heartbeat_running_loop())
         self.log.info("CloudTaskPoller started, node_id={}", self._node_id)
 
     async def stop(self) -> None:
@@ -185,6 +190,13 @@ class CloudTaskPoller:
             except asyncio.CancelledError:
                 pass
             self._heartbeat_task = None
+        if self._heartbeat_running_task:
+            self._heartbeat_running_task.cancel()
+            try:
+                await self._heartbeat_running_task
+            except asyncio.CancelledError:
+                pass
+            self._heartbeat_running_task = None
         executor_service.unregister_batch_done_listener(self._on_batch_done)
         executor_service.unregister_intent_done_listener(self._on_intent_done)
         async with self._map_lock:
@@ -207,7 +219,22 @@ class CloudTaskPoller:
             "deferred_jobs": sum(len(v) for v in self._deferred_jobs.values()),
             "tracked_job_details": self._get_tracked_job_details(),
             "deferred_job_details": self._get_deferred_job_details(),
+            "user_type_filter": self._user_type_filter,
         }
+
+    _SCHEDULER_TYPE_MAP = {
+        "all": None,
+        "foster": ["foster"],
+        "daily": ["daily"],
+        "shuaka": ["shuaka"],
+        "jingzhi": ["jingzhi"],
+    }
+
+    def set_user_type_filter(self, scheduler_type: str) -> None:
+        """Set user_type filter for poll_jobs based on scheduler_type selection."""
+        self._user_type_filter = self._SCHEDULER_TYPE_MAP.get(
+            scheduler_type, None
+        )
 
     def _get_tracked_job_details(self) -> list:
         """返回当前正在执行的 cloud job 列表。"""
@@ -239,11 +266,12 @@ class CloudTaskPoller:
         return details
 
     async def _ensure_agent_login(self, username: str, password: str) -> None:
-        self._agent_token = await cloud_api_client.agent_login(
+        result = await cloud_api_client.agent_login(
             username=username,
             password=password,
             node_id=self._node_id,
         )
+        self._agent_token = result["token"]
 
     async def _loop(self) -> None:
         while self._running:
@@ -274,6 +302,7 @@ class CloudTaskPoller:
                     node_id=self._node_id,
                     limit=10,
                     lease_seconds=self._lease_seconds,
+                    user_types=self._user_type_filter,
                 )
                 self._last_poll_at = datetime.utcnow().isoformat()
 
@@ -297,6 +326,16 @@ class CloudTaskPoller:
         if not isinstance(job, dict):
             return
         job_id = int(job.get("id") or job.get("ID") or 0)
+
+        # 去重：跳过已在本地追踪中的 job（防止租约过期后被重复拉取）
+        if job_id > 0:
+            async with self._map_lock:
+                if job_id in self._job_meta:
+                    self.log.warning(
+                        f"跳过重复 job: job_id={job_id} (已在本地追踪中)"
+                    )
+                    return
+
         task_type_value = job.get("task_type") or job.get("TaskType")
         payload = job.get("payload") or job.get("Payload")
         if not isinstance(payload, dict):
@@ -410,6 +449,8 @@ class CloudTaskPoller:
                 "account_id": account_id,
             }
 
+        self.log.info(f"云端任务已入队: job_id={job_id}, account={account_id}, type={task_type_value}, login_id={login_id}")
+
         await cloud_api_client.report_job_start(
             agent_token=self._agent_token,
             node_id=self._node_id,
@@ -447,7 +488,16 @@ class CloudTaskPoller:
         result = self._collect_account_result(account_id, success)
 
         task_name = intent.task_type.value if hasattr(intent.task_type, "value") else str(intent.task_type)
-        message = f"任务{'完成' if success else '失败'}: {task_name}, 账号={account_id}"
+
+        # 对 on_demand 类任务成功时，回传执行器写入的 next_time 给云端
+        if success:
+            next_times = self._extract_task_next_times(account_id, task_name)
+            if next_times:
+                result["task_next_times"] = next_times
+
+        message = f"任务{'完成' if success else '失败'}: {task_name}"
+        if intent.result_message:
+            message += f", {intent.result_message}"
 
         try:
             if success:
@@ -479,7 +529,7 @@ class CloudTaskPoller:
                 log_entry = {
                     "type": task_name,
                     "level": "INFO" if success else "WARNING",
-                    "message": f"{'执行成功' if success else '执行失败'}: {task_name}",
+                    "message": f"{'执行成功' if success else '执行失败'}: {task_name}" + (f", {intent.result_message}" if intent.result_message else ""),
                     "ts": ts,
                 }
                 await cloud_api_client.report_logs(
@@ -534,34 +584,64 @@ class CloudTaskPoller:
                 account = db.query(GameAccount).filter(GameAccount.id == account_id).first()
                 if not account:
                     return {"current_task": ""}
+                # 任务成功时，重置本地残留的失效状态（说明登录数据有效）
+                if success and account.status == AccountStatus.INVALID:
+                    account.status = AccountStatus.ACTIVE
+                    db.commit()
+                    self.log.info(f"账号本地状态已重置为 ACTIVE: account={account_id}")
+
+                # 在 session 内完成所有属性访问，避免 detached 状态错误
+                if success:
+                    reported_status = "active"
+                else:
+                    reported_status = _STATUS_MAP.get(account.status, "active")
+
+                result: dict = {
+                    "account_status": reported_status,
+                    "login_id": account.login_id or "",
+                    "current_task": "",
+                }
+
+                if success:
+                    result["assets"] = {
+                        "level": account.level or 0,
+                        "stamina": account.stamina or 0,
+                        "gouyu": account.gouyu or 0,
+                        "lanpiao": account.lanpiao or 0,
+                        "gold": account.gold or 0,
+                        "gongxun": account.gongxun or 0,
+                        "xunzhang": account.xunzhang or 0,
+                        "tupo_ticket": account.tupo_ticket or 0,
+                        "fanhe_level": account.fanhe_level or 0,
+                        "jiuhu_level": account.jiuhu_level or 0,
+                        "liao_level": account.liao_level or 0,
+                    }
+                    if account.explore_progress:
+                        result["explore_progress"] = account.explore_progress
+
+                return result
         except Exception:
             return {"current_task": ""}
 
-        result: dict = {
-            "account_status": _STATUS_MAP.get(account.status, "active"),
-            "login_id": account.login_id or "",
-            "current_task": "",
-        }
+    # on_demand 规则且执行器自行管理 next_time 的任务
+    _ON_DEMAND_TASKS = {"放卡", "寄养", "御魂", "组队御魂"}
 
-        # Only sync assets and explore_progress on success (data may be incomplete on failure)
-        if success:
-            result["assets"] = {
-                "level": account.level or 0,
-                "stamina": account.stamina or 0,
-                "gouyu": account.gouyu or 0,
-                "lanpiao": account.lanpiao or 0,
-                "gold": account.gold or 0,
-                "gongxun": account.gongxun or 0,
-                "xunzhang": account.xunzhang or 0,
-                "tupo_ticket": account.tupo_ticket or 0,
-                "fanhe_level": account.fanhe_level or 0,
-                "jiuhu_level": account.jiuhu_level or 0,
-                "liao_level": account.liao_level or 0,
-            }
-            if account.explore_progress:
-                result["explore_progress"] = account.explore_progress
-
-        return result
+    def _extract_task_next_times(self, account_id: int, task_name: str) -> dict:
+        """对 on_demand 类任务，从本地 DB 读取执行器写入的 next_time 回传给云端。"""
+        if task_name not in self._ON_DEMAND_TASKS:
+            return {}
+        try:
+            with SessionLocal() as db:
+                account = db.query(GameAccount).filter(GameAccount.id == account_id).first()
+                if not account:
+                    return {}
+                task_cfg = (account.task_config or {}).get(task_name, {})
+                next_time = task_cfg.get("next_time")
+                if next_time and isinstance(next_time, str) and next_time > "2020-02-01":
+                    return {task_name: next_time}
+        except Exception as exc:
+            self.log.warning(f"读取 task_next_times 失败: account={account_id}, task={task_name}, err={exc}")
+        return {}
 
     async def _retry_deferred(self, account_id: int) -> None:
         """批次完成后，尝试入队该账号的缓冲任务。"""
@@ -571,6 +651,23 @@ class CloudTaskPoller:
             return
 
         for deferred in pending:
+            # 先向云端确认租约，避免重复执行已完成/已失效的任务
+            try:
+                await cloud_api_client.report_job_start(
+                    agent_token=self._agent_token,
+                    node_id=self._node_id,
+                    job_id=deferred.job_id,
+                    lease_seconds=self._lease_seconds,
+                    message=f"缓冲任务开始执行, 账号={deferred.account_id}",
+                )
+            except Exception as exc:
+                self.log.warning(
+                    f"缓冲任务云端确认失败，跳过执行: job_id={deferred.job_id}, err={exc}"
+                )
+                async with self._map_lock:
+                    self._job_meta.pop(deferred.job_id, None)
+                continue
+
             enqueued = executor_service.enqueue(
                 account_id=deferred.account_id,
                 task_type=deferred.task_type,
@@ -579,16 +676,6 @@ class CloudTaskPoller:
             if enqueued:
                 async with self._map_lock:
                     self._account_jobs[deferred.account_id].append(deferred.job_id)
-                try:
-                    await cloud_api_client.report_job_start(
-                        agent_token=self._agent_token,
-                        node_id=self._node_id,
-                        job_id=deferred.job_id,
-                        lease_seconds=self._lease_seconds,
-                        message=f"缓冲任务开始执行, 账号={deferred.account_id}",
-                    )
-                except Exception:
-                    pass
                 self.log.info(f"缓冲任务入队成功: job_id={deferred.job_id}, account={deferred.account_id}")
             else:
                 # 仍然无法入队，放回缓冲
@@ -616,6 +703,33 @@ class CloudTaskPoller:
                         )
                     except Exception:
                         pass
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                pass
+
+    async def _heartbeat_running_loop(self) -> None:
+        """定期对正在执行的任务发心跳，防止租约超时。"""
+        while self._running:
+            try:
+                await asyncio.sleep(30)
+                async with self._map_lock:
+                    running_job_ids = [
+                        jid for q in self._account_jobs.values() for jid in q
+                    ]
+                for job_id in running_job_ids:
+                    try:
+                        await cloud_api_client.report_job_heartbeat(
+                            agent_token=self._agent_token,
+                            node_id=self._node_id,
+                            job_id=job_id,
+                            lease_seconds=self._lease_seconds,
+                            message="任务执行中",
+                        )
+                    except Exception as exc:
+                        self.log.warning(
+                            f"running job heartbeat failed: job_id={job_id}, err={exc}"
+                        )
             except asyncio.CancelledError:
                 raise
             except Exception:

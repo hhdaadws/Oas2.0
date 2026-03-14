@@ -1,5 +1,0 @@
-<?xml version='1.0' encoding='utf-8' standalone='yes' ?>
-<map>
-    <boolean name="is_data_migrated_key" value="true" />
-    <string name="game_events_key"></string>
-</map>

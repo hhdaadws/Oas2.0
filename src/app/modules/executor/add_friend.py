@@ -18,13 +18,16 @@ from ..emu.adapter import AdapterConfig, EmulatorAdapter
 from ..ui.manager import UIManager
 from ..vision.template import match_template
 from .base import BaseExecutor
-from .helpers import click_template, wait_for_template
+from .helpers import click_template, discover_template_paths, wait_for_template
 
 # 渠道包名
 PKG_NAME = "com.netease.onmyoji.wyzymnqsd_cps"
 
 # 安全限制：最大加好友循环次数
 MAX_ADD_FRIEND_LOOPS = 30
+
+# 添加按钮模板（支持多变体）
+_TPL_TIANJIA = discover_template_paths("tianjia")
 
 
 class AddFriendExecutor(BaseExecutor):
@@ -125,11 +128,11 @@ class AddFriendExecutor(BaseExecutor):
         self.logger.info("[加好友] 已到达好友界面")
         await asyncio.sleep(1.0)
 
-        # 3. 点击"添加"按钮（tianjia.png）进入推荐好友列表
+        # 3. 点击"添加"按钮进入推荐好友列表
         clicked_tianjia = await click_template(
             self.adapter,
             self.ui.capture_method,
-            "assets/ui/templates/tianjia.png",
+            _TPL_TIANJIA,
             timeout=5.0,
             interval=1.0,
             settle=0.5,

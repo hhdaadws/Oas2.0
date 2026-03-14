@@ -38,6 +38,7 @@ class TaskType(str, Enum):
     COOP = "勾协"
     EXPLORE = "探索突破"  # 合并探索和突破
     CARD_SYNTHESIS = "结界卡合成"
+    FANGKA = "放卡"
     COLLECT_LOGIN_GIFT = "领取登录礼包"
     COLLECT_MAIL = "领取邮件"
     CLIMB_TOWER = "爬塔"
@@ -46,7 +47,6 @@ class TaskType(str, Enum):
     DIGUI = "地鬼"
     DAOGUAN = "道馆"
     LIAO_SHOP = "寮商店"
-    LIAO_COIN = "领取寮金币"
     DAILY_SUMMON = "每日一抽"
     WEEKLY_SHOP = "每周商店"
     MIWEN = "秘闻"
@@ -59,6 +59,7 @@ class TaskType(str, Enum):
     COLLECT_FANHE_JIUHU = "领取饭盒酒壶"
     REST = "休息"
     SCAN_QR = "扫码"
+    TEAM_YUHUN = "组队御魂"
 
 
 class TaskStatus(str, Enum):
@@ -95,6 +96,7 @@ class EmulatorState(str, Enum):
 # 任务优先级配置
 TASK_PRIORITY = {
     TaskType.SCAN_QR: 110,  # 扫码优先级最高（实时交互）
+    TaskType.TEAM_YUHUN: 85,  # 组队御魂（高优先级协作任务）
     TaskType.INIT: 100,
     TaskType.INIT_COLLECT_REWARD: 99,
     TaskType.INIT_RENT_SHIKIGAMI: 98,
@@ -108,7 +110,7 @@ TASK_PRIORITY = {
     TaskType.COOP: 80,
     TaskType.XUANSHANG: 70,
     TaskType.DELEGATE_HELP: 65,
-    TaskType.FOSTER: 60,
+    TaskType.FOSTER: 111,  # 寄养优先级最高（竞争性资源，需尽快执行）
     TaskType.COLLECT_LOGIN_GIFT: 55,  # 登录礼包（进入游戏后优先领取）
     TaskType.SIGNIN: 56,  # 签到（进入游戏后优先执行）
     TaskType.EXPLORE: 21,  # 探索突破（最低功能性任务）
@@ -119,7 +121,7 @@ TASK_PRIORITY = {
     TaskType.DIGUI: 46,
     TaskType.DAOGUAN: 44,
     TaskType.CARD_SYNTHESIS: 40,
-    TaskType.LIAO_COIN: 43,
+    TaskType.FANGKA: 39,
     TaskType.LIAO_SHOP: 42,
     TaskType.DAILY_SUMMON: 38,
     TaskType.WEEKLY_SHOP: 41,
@@ -138,6 +140,11 @@ DEFAULT_TASK_CONFIG = {
         "enabled": True,
         "next_time": "2020-01-01 00:00",  # 默认2020年，确保起号完成后立即触发
         "fail_delay": 30,  # 失败延迟（分钟）
+        "foster_priority": "gouyu",  # "gouyu" | "tili" | "custom"
+        "custom_priority": ["6xtg", "6xdy", "5xtg", "5xdy", "4xtg", "4xdy"],
+        "auto_accept_friend": False,  # 寄养前自动同意好友申请
+        "collect_fanhe": False,  # 寄养前领取饭盒
+        "foster_low_star": False,  # 寄养低星（扩展识别到1x-3x）
     },
     "悬赏": {
         "enabled": True,
@@ -162,10 +169,20 @@ DEFAULT_TASK_CONFIG = {
         "difficulty": "normal",     # 探索难度："normal" | "hard"
         "next_time": "2020-01-01 00:00",  # 时间触发
         "fail_delay": 30,
+        "allowed_interrupts": ["寄养"],  # 允许在探索期间中断执行的任务白名单
     },
     "结界卡合成": {
         "enabled": True,
         "explore_count": 0  # 探索突破执行次数，40次后触发
+    },
+    "放卡": {
+        "enabled": True,
+        "next_time": "2020-01-01 00:00",
+        "fail_delay": 30,
+        "card_type": "taigu",        # "taigu" | "douyu"
+        "level_min": 1,               # 1-6
+        "level_max": 6,               # 1-6
+        "sort_order": "high_to_low",  # "high_to_low" | "low_to_high"
     },
     "加好友": {
         "enabled": True,
@@ -207,11 +224,6 @@ DEFAULT_TASK_CONFIG = {
         "next_time": "2020-01-01 00:00",
         "buy_heisui": True,
         "buy_lanpiao": True,
-        "fail_delay": 30,
-    },
-    "领取寮金币": {
-        "enabled": True,
-        "next_time": "2020-01-01 00:00",
         "fail_delay": 30,
     },
     "每日一抽": {
@@ -279,17 +291,22 @@ DEFAULT_TASK_CONFIG = {
 # 起号阶段任务默认配置
 DEFAULT_INIT_TASK_CONFIG = {
     # === 重复任务（按优先级/间隔并行调度）===
+    "寄养": {
+        "enabled": True,
+        "next_time": "2020-01-01 00:00",
+        "fail_delay": 30,
+        "foster_priority": "tili",
+        "custom_priority": ["6xdy", "5xdy", "4xdy", "3xdy", "2xdy", "1xdy"],
+        "auto_accept_friend": False,
+        "collect_fanhe": False,
+        "foster_low_star": True,
+    },
     "起号_租借式神": {
         "enabled": True,
         "next_time": "2020-01-01 00:00",
         "fail_delay": 30,
     },
     "起号_领取奖励": {
-        "enabled": True,
-        "next_time": "2020-01-01 00:00",
-        "fail_delay": 30,
-    },
-    "起号_新手任务": {
         "enabled": True,
         "next_time": "2020-01-01 00:00",
         "fail_delay": 30,
@@ -307,7 +324,6 @@ DEFAULT_INIT_TASK_CONFIG = {
     "起号_式神养成": {
         "enabled": True,
         "next_time": "2020-01-01 00:00",
-        "fail_delay": 30,
     },
     "起号_升级饭盒": {
         "enabled": True,
@@ -333,11 +349,6 @@ DEFAULT_INIT_TASK_CONFIG = {
         "next_time": "2020-01-01 00:00",
         "fail_delay": 30,
     },
-    "地鬼": {
-        "enabled": True,
-        "next_time": "2020-01-01 00:00",
-        "fail_delay": 30,
-    },
     "每周商店": {
         "enabled": True,
         "next_time": "2020-01-01 00:00",
@@ -353,11 +364,6 @@ DEFAULT_INIT_TASK_CONFIG = {
         "buy_lanpiao": True,
         "fail_delay": 30,
     },
-    "领取寮金币": {
-        "enabled": True,
-        "next_time": "2020-01-01 00:00",
-        "fail_delay": 30,
-    },
     "领取邮件": {
         "enabled": True,
         "next_time": "2020-01-01 00:00",
@@ -369,11 +375,6 @@ DEFAULT_INIT_TASK_CONFIG = {
         "fail_delay": 30,
     },
     "领取登录礼包": {
-        "enabled": True,
-        "next_time": "2020-01-01 00:00",
-        "fail_delay": 30,
-    },
-    "每日一抽": {
         "enabled": True,
         "next_time": "2020-01-01 00:00",
         "fail_delay": 30,
@@ -399,20 +400,6 @@ DEFAULT_INIT_TASK_CONFIG = {
         "fail_delay": 30,
     },
     "领取饭盒酒壶": {
-        "enabled": True,
-        "next_time": "2020-01-01 00:00",
-        "fail_delay": 30,
-    },
-    "斗技": {
-        "enabled": False,
-        "start_hour": 12,
-        "end_hour": 23,
-        "mode": "honor",
-        "target_score": 2000,
-        "next_time": "2020-01-01 00:00",
-        "fail_delay": 30,
-    },
-    "对弈竞猜": {
         "enabled": True,
         "next_time": "2020-01-01 00:00",
         "fail_delay": 30,
@@ -473,3 +460,14 @@ def build_default_explore_progress() -> dict:
         {"1": {"simple": false, "hard": false}, ..., "28": {"simple": false, "hard": false}}
     """
     return {str(i): {"simple": False, "hard": False} for i in range(1, 29)}
+
+
+# 探索突破可配置的中断任务类型列表（排除探索自身、休息、起号系列、条件触发型任务）
+EXPLORE_INTERRUPTABLE_TASKS = [
+    "寄养", "悬赏", "弥助", "勾协", "领取登录礼包", "领取邮件",
+    "爬塔", "逢魔", "地鬼", "道馆", "寮商店",
+    "每日一抽", "每周商店", "秘闻", "签到", "御魂", "每周分享",
+    "召唤礼包", "领取饭盒酒壶", "斗技", "对弈竞猜", "加好友",
+    "领取成就奖励",
+    "放卡",
+]

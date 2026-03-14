@@ -23,7 +23,7 @@ from ..vision.template import match_template
 from ..vision.utils import random_point_in_circle
 from .base import BaseExecutor
 from .db_logger import emit as db_log
-from .helpers import click_template, click_text, wait_for_template, _adapter_capture, _adapter_tap
+from .helpers import click_template, wait_for_template, _adapter_capture, _adapter_tap
 
 # 渠道包名
 PKG_NAME = "com.netease.onmyoji.wyzymnqsd_cps"
@@ -156,13 +156,11 @@ class InitCollectRewardExecutor(BaseExecutor):
         self.logger.info("[起号_领取奖励] 已到达新手任务界面")
         await asyncio.sleep(1.0)
 
-        # OCR 识别左侧标签列，点击"缘初之路"
-        LEFT_COL_ROI = (0, 50, 150, 450)
-        clicked_yuanchu = await click_text(
+        # 模板匹配点击"缘初之路"按钮；若未找到则说明已在对应界面，直接验证锚点
+        clicked_yuanchu = await click_template(
             self.adapter,
             self.ui.capture_method,
-            "缘初之路",
-            roi=LEFT_COL_ROI,
+            "assets/ui/templates/yuanchuzhilu.png",
             timeout=5.0,
             settle=0.5,
             post_delay=1.5,
@@ -171,8 +169,7 @@ class InitCollectRewardExecutor(BaseExecutor):
             popup_handler=self.ui.popup_handler,
         )
         if not clicked_yuanchu:
-            self.logger.warning("[起号_领取奖励] 未识别到缘初之路标签，跳过")
-            return True
+            self.logger.info("[起号_领取奖励] 缘初之路按钮未找到，假设已在对应界面，直接验证锚点")
 
         # 等待缘初之路页面加载完成
         yuanchu_ready = await wait_for_template(

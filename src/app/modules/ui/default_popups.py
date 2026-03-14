@@ -83,7 +83,7 @@ def register_default_popups(reg: Optional[PopupRegistry] = None) -> None:
         priority=20,
     ))
 
-    # 插画弹窗（全屏插画/过场画面，点击屏幕中心关闭）
+    # 插画弹窗（全屏插画/过场画面，点击左上角关闭）
     r.register(PopupDef(
         id="story_illustration",
         label="插画弹窗",
@@ -94,9 +94,9 @@ def register_default_popups(reg: Optional[PopupRegistry] = None) -> None:
         dismiss_actions=[
             DismissAction(
                 type=DismissType.TAP,
-                tap_x=480,
-                tap_y=270,
-                post_delay_ms=1000,
+                tap_x=20,
+                tap_y=20,
+                post_delay_ms=1500,
             ),
         ],
         priority=25,
@@ -286,6 +286,31 @@ def register_default_popups(reg: Optional[PopupRegistry] = None) -> None:
             ),
         ],
         priority=50,
+    ))
+
+    # 寮一键申请（账号未加入寮时出现，自动点击申请 + 确认）
+    r.register(PopupDef(
+        id="liao_yijianshenqing",
+        label="寮一键申请",
+        detect_template=TemplateDef(
+            name="liao_yijianshenqing",
+            path="assets/ui/templates/liao_yijianshenqing.png",
+        ),
+        dismiss_actions=[
+            DismissAction(
+                type=DismissType.TAP_SELF,
+                post_delay_ms=1500,
+            ),
+            DismissAction(
+                type=DismissType.TAP_TEMPLATE,
+                template_path="assets/ui/templates/liao_queding.png",
+                post_delay_ms=1500,
+                wait_disappear=True,
+                wait_disappear_timeout_ms=5000,
+                wait_disappear_poll_ms=500,
+            ),
+        ],
+        priority=30,
     ))
 
     # 祭号弹窗（检测到后抛出异常，由 Worker 处理关闭游戏 + 批量延后）

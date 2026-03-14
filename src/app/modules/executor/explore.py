@@ -33,7 +33,7 @@ from ..ocr.async_recognize import async_ocr_digits
 from ..ui.assets import parse_number, AssetType
 from ..ui.manager import UIManager
 from .base import BaseExecutor
-from .battle import run_battle, ManualLineupInfo, VICTORY, DEFEAT, TIMEOUT, ERROR
+from .battle import run_battle, ManualLineupInfo, VICTORY, DEFEAT, TIMEOUT, ERROR, SCENE
 from .helpers import (
     check_and_create_jiejie,
     check_and_handle_liao_not_joined,
@@ -58,6 +58,7 @@ _TPL_JIEJIE_QUEREN = "assets/ui/templates/jiejie_queren.png"
 _TPL_JIEJIE_SHUAXIN = "assets/ui/templates/jiejie_shuaxin.png"
 _TPL_JIEJIE_QUEDING = "assets/ui/templates/jiejie_queding.png"
 _TPL_ZHANDOU_SHIBAI = "assets/ui/templates/zhandou_shibai.png"
+_TPL_TAG_JIEJIETUPO = "assets/ui/templates/tag_jiejietupo.png"
 
 # 突破票 OCR 区域 (x, y, w, h)
 _TUPO_TICKET_ROI = (855, 13, 30, 18)              # 结界突破界面
@@ -769,7 +770,14 @@ class ExploreExecutor(BaseExecutor):
                 popup_handler=self.ui.popup_handler,
                 lineup=battle_lineup,
                 manual_lineup=manual_lineup if not has_lineup and is_first else None,
+                scene_template=_TPL_TAG_JIEJIETUPO,
+                dismiss_retry_enabled=False,
             )
+
+            if result == SCENE:
+                # 仍在结界突破界面，卡片可能未点中，重新点击
+                self.logger.info(f"{tag} 卡片未点中，重试 (attempt={attempt})")
+                continue
 
             if result != "error":
                 return result
@@ -811,6 +819,7 @@ class ExploreExecutor(BaseExecutor):
                 timeout=8.0, settle=0.5, post_delay=1.5,
                 log=self.logger, label=f"卡片8-进攻确认-R{exit_round + 1}",
                 popup_handler=self.ui.popup_handler,
+                dismiss_retry=0,
             )
             if not clicked:
                 self.logger.warning(
@@ -824,6 +833,7 @@ class ExploreExecutor(BaseExecutor):
                 timeout=8.0, settle=0.5, post_delay=1.5,
                 log=self.logger, label=f"卡片8-退出-R{exit_round + 1}",
                 popup_handler=self.ui.popup_handler,
+                dismiss_retry=0,
             )
             if not clicked:
                 self.logger.warning(
@@ -837,6 +847,7 @@ class ExploreExecutor(BaseExecutor):
                 timeout=8.0, settle=0.5, post_delay=1.5,
                 log=self.logger, label=f"卡片8-确认退出-R{exit_round + 1}",
                 popup_handler=self.ui.popup_handler,
+                dismiss_retry=0,
             )
             if not clicked:
                 self.logger.warning(
@@ -850,6 +861,7 @@ class ExploreExecutor(BaseExecutor):
                 timeout=15.0, settle=0.5, post_delay=1.5,
                 log=self.logger, label=f"卡片8-失败画面-R{exit_round + 1}",
                 popup_handler=self.ui.popup_handler,
+                dismiss_retry=0,
             )
             if not clicked:
                 self.logger.warning(
@@ -877,6 +889,8 @@ class ExploreExecutor(BaseExecutor):
             log=self.logger,
             popup_handler=self.ui.popup_handler,
             lineup=None,  # 已锁定，不切换
+            scene_template=_TPL_TAG_JIEJIETUPO,
+            dismiss_retry_enabled=False,
         )
 
         return result
@@ -1143,6 +1157,23 @@ class ExploreExecutor(BaseExecutor):
 
             if need_break:
                 break
+
+            # 一轮结束后，检查是否有 FAILED 卡片需要刷新
+            # FAILED 卡片表示上轮战败的对手，重复挑战胜率低，应刷新换新对手
+            post_screenshot = await self._capture()
+            if post_screenshot is not None:
+                post_grid = detect_tupo_grid(post_screenshot)
+                if post_grid.failed_count > 0:
+                    self.logger.info(
+                        f"[结界突破] 本轮结束，存在 {post_grid.failed_count} 张失败卡片，刷新网格"
+                    )
+                    refreshed = await self._refresh_tupo_grid()
+                    if refreshed:
+                        refresh_count += 1
+                    else:
+                        self.logger.warning(
+                            "[结界突破] 轮次结束后刷新失败，将以当前网格继续"
+                        )
 
         return self._make_result(
             total_victories, total_defeats, refresh_count

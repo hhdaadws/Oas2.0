@@ -255,6 +255,16 @@ class ExecutorService:
                 self._metrics["dispatch_success"] += 1
                 self._last_dispatch_at = now
 
+                task_names = ", ".join(
+                    i.task_type.value if isinstance(i.task_type, TaskType)
+                    else str(i.task_type)
+                    for i in batch.intents
+                )
+                self._log.info(
+                    f"批次已分发: account={batch.account_id}, "
+                    f"worker={worker_id}, 任务=[{task_names}]"
+                )
+
                 wait_ms = max(0.0, (now - batch.enqueue_at).total_seconds() * 1000)
                 self._queue_wait_samples_ms.append(wait_ms)
                 if len(self._queue_wait_samples_ms) > 500:
@@ -368,8 +378,10 @@ class ExecutorService:
         key = (int(account_id), TaskType(task_type))
         payload = payload or {}
         if account_id in self._running_accounts:
+            self._log.debug(f"入队拒绝(运行中): account={account_id}, task={task_type}")
             return False
         if key in self._queued_keys:
+            self._log.debug(f"入队拒绝(已排队): account={account_id}, task={task_type}")
             return False
 
         intent = TaskIntent(
@@ -389,6 +401,8 @@ class ExecutorService:
 
         self._queued_keys.add(key)
         self._have_items.set()
+        task_name = task_type.value if isinstance(task_type, TaskType) else str(task_type)
+        self._log.info(f"任务入队: account={account_id}, task={task_name}")
         return True
 
     def enqueue_batch(self, account_id: int, intents: List[TaskIntent]) -> bool:

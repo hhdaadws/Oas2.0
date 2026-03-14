@@ -79,6 +79,7 @@ VICTORY = "victory"
 DEFEAT = "defeat"
 TIMEOUT = "timeout"
 ERROR = "error"
+SCENE = "scene"  # 已回到场景界面（战斗弹窗被跳过或卡片未点中）
 
 
 async def _wait_for_any_template(
@@ -454,6 +455,8 @@ async def run_battle(
     lineup: dict | None = None,
     manual_lineup: ManualLineupInfo | None = None,
     reward_exit_template: str | None = None,
+    scene_template: str | None = None,
+    dismiss_retry_enabled: bool = True,
 ) -> str:
     """执行一场完整战斗并返回结果。
 
@@ -476,11 +479,18 @@ async def run_battle(
         reward_exit_template: 奖励退出模板路径。指定后，胜利时持续点击奖励区域
                               直到该模板出现（用于探索等需要多次点击奖励的场景）。
                               为 None 时使用默认的 verify_gone 逻辑。
+        scene_template: 场景模板路径。指定后，在各等待阶段同步检测是否已回到
+                        调用场景。确认阶段检测到返回 SCENE（卡片未点中），
+                        战后阶段检测到返回 VICTORY（战斗已完成，弹窗被跳过）。
+        dismiss_retry_enabled: 是否启用超时后点击右上角关闭弹窗的机制。
+                               False 时所有 click_template/wait_for_template
+                               的 dismiss_retry 设为 0。
 
     Returns:
-        "victory" | "defeat" | "timeout" | "error"
+        "victory" | "defeat" | "timeout" | "error" | "scene"
     """
     tag = "[战斗]"
+    _dr = 1 if dismiss_retry_enabled else 0
 
     # 1. 点击确认按钮（如 digui_tiaozhan_sure.png）（2 次重试）
     if confirm_template:
@@ -491,10 +501,24 @@ async def run_battle(
                 timeout=10.0, settle=0.5, post_delay=1.5,
                 log=log, label=f"战斗-确认(attempt={attempt}/2)",
                 popup_handler=popup_handler,
+                dismiss_retry=_dr,
             )
             if clicked:
                 confirm_clicked = True
                 break
+            # 确认按钮未出现时检测场景模板（卡片可能未点中）
+            if scene_template:
+                screenshot = await _adapter_capture(adapter, capture_method)
+                if screenshot is not None:
+                    m_scene = match_template(screenshot, scene_template)
+                    if m_scene:
+                        if log:
+                            log.info(
+                                f"{tag} 确认阶段检测到场景模板 "
+                                f"{Path(scene_template).name}"
+                                f" (score={m_scene.score:.3f})，卡片可能未点中"
+                            )
+                        return SCENE
             if log:
                 log.warning(
                     f"{tag} 未检测到确认按钮 (attempt={attempt}/2)"
@@ -598,9 +622,12 @@ async def run_battle(
         log.info(f"{tag} 已进入战斗，等待战斗结束 (timeout={battle_timeout}s)")
 
     # 4. 轮询等待战斗结束（胜利 / 失败 / 奖励界面直接出现）
+    _battle_end_templates = [_TPL_SHENGLI, _TPL_SHIBAI, _TPL_JIANGLI]
+    if scene_template:
+        _battle_end_templates = _battle_end_templates + [scene_template]
     end_match = await _wait_for_any_template(
         adapter, capture_method,
-        [_TPL_SHENGLI, _TPL_SHIBAI, _TPL_JIANGLI],
+        _battle_end_templates,
         timeout=battle_timeout, interval=2.0,
         log=log, label="战斗-结果",
         popup_handler=popup_handler,
@@ -622,18 +649,42 @@ async def run_battle(
         m_jiangli_check = match_template(screenshot, _TPL_JIANGLI)
         if m_jiangli_check:
             is_jiangli = True
+        # 检测是否已回到场景界面（战斗弹窗被游戏自动跳过）
+        if scene_template and is_victory and not is_jiangli:
+            m_scene = match_template(screenshot, scene_template)
+            if m_scene:
+                if log:
+                    log.info(
+                        f"{tag} 战后检测到场景模板 "
+                        f"{Path(scene_template).name}，"
+                        f"游戏已自动跳过弹窗"
+                    )
+                return VICTORY
 
     if is_victory or is_jiangli:
         if not is_jiangli:
             # 5. 点击胜利（奖励界面已出现时跳过此步骤）
             if log:
                 log.info(f"{tag} 战斗胜利，点击")
-            await click_template(
+            shengli_clicked = await click_template(
                 adapter, capture_method, _TPL_SHENGLI,
                 timeout=5.0, settle=0.5, post_delay=1.5,
                 log=log, label="战斗-点击胜利",
                 popup_handler=popup_handler,
+                dismiss_retry=_dr,
             )
+            # 胜利模板消失后检测场景（游戏可能自动跳过了弹窗）
+            if not shengli_clicked and scene_template:
+                screenshot = await _adapter_capture(adapter, capture_method)
+                if screenshot is not None:
+                    m_scene = match_template(screenshot, scene_template)
+                    if m_scene:
+                        if log:
+                            log.info(
+                                f"{tag} 胜利画面已消失，检测到场景模板，"
+                                f"直接返回"
+                            )
+                        return VICTORY
         else:
             if log:
                 log.info(f"{tag} 战斗胜利，奖励界面已出现，跳过点击胜利")
@@ -738,10 +789,23 @@ async def run_battle(
                 verify_gone=True, max_clicks=3, gone_interval=1.0,
                 log=log, label="战斗-奖励",
                 popup_handler=popup_handler,
+                dismiss_retry=_dr,
             )
             if not clicked:
                 if log:
                     log.warning(f"{tag} 未检测到奖励界面，但战斗已胜利")
+                # 检测是否已回到场景界面
+                if scene_template:
+                    screenshot = await _adapter_capture(adapter, capture_method)
+                    if screenshot is not None:
+                        m_scene = match_template(screenshot, scene_template)
+                        if m_scene:
+                            if log:
+                                log.info(
+                                    f"{tag} 奖励未出现但已回到场景，"
+                                    f"直接返回"
+                                )
+                            return VICTORY
 
         if log:
             log.info(f"{tag} 战斗流程完成")
@@ -755,10 +819,11 @@ async def run_battle(
             timeout=5.0, settle=0.5, post_delay=1.5,
             log=log, label="战斗-点击失败",
             popup_handler=popup_handler,
+            dismiss_retry=_dr,
         )
         if log:
             log.info(f"{tag} 战斗失败流程完成")
         return DEFEAT
 
 
-__all__ = ["run_battle", "ManualLineupInfo", "VICTORY", "DEFEAT", "TIMEOUT", "ERROR"]
+__all__ = ["run_battle", "ManualLineupInfo", "VICTORY", "DEFEAT", "TIMEOUT", "ERROR", "SCENE"]

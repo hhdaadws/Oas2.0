@@ -1,7 +1,7 @@
 """
 起号 - 租借式神执行器
 时间驱动的重复任务，每天执行一次。
-流程：导航到新手任务界面 → OCR 点击新手特权 → 等待租借界面加载 →
+流程：导航到新手任务界面 → 模板匹配点击新手特权(xinshoutequan.png) → 等待租借界面加载 →
       检测各式神星级（紫色勾玉数量）→ 按 5★>6★ + 旧优先级排序后租借。
 """
 from __future__ import annotations
@@ -26,7 +26,7 @@ from ..vision.template import find_all_templates, match_template
 from ..vision.utils import load_image, random_point_in_circle
 from .base import BaseExecutor
 from .db_logger import emit as db_log
-from .helpers import click_template, click_text, wait_for_template, _adapter_capture, _adapter_tap
+from .helpers import click_template, wait_for_template, _adapter_capture, _adapter_tap
 
 # 渠道包名
 PKG_NAME = "com.netease.onmyoji.wyzymnqsd_cps"
@@ -38,6 +38,14 @@ SHIKIGAMI_CANDIDATES: List[Tuple[str, str, int]] = [
     ("assets/ui/templates/zujie_dayuewan.png", "大月丸", 2),
 ]
 
+# 已租借检测模板：zujie模板路径 → 对应的yizujie（已租借）模板路径
+# 如果界面上能匹配到 yizujie 模板，说明该式神已被自己租借，应跳过
+ALREADY_RENTED_TEMPLATES: Dict[str, str] = {
+    "assets/ui/templates/zujie_axiuluo.png": "assets/ui/templates/yizujie_axiuluo.png",
+    "assets/ui/templates/zujie_guhuoniao.png": "assets/ui/templates/yizujie_guhuoniao.png",
+    "assets/ui/templates/zujie_dayuewan.png": "assets/ui/templates/yizujie_dayuewan.png",
+}
+
 # 勾玉检测区域高度（模板下方多少像素包含勾玉图标）
 GOUYU_ROI_HEIGHT = 25
 
@@ -45,6 +53,7 @@ GOUYU_ROI_HEIGHT = 25
 TPL_TAG_ZUJIE = "assets/ui/templates/tag_zujie.png"
 TPL_ZUJIE_BLANK = "assets/ui/templates/zujie_blank.png"
 TPL_BACK = "assets/ui/templates/back.png"
+TPL_XINSHOU_TEQUAN = "assets/ui/templates/xinshoutequan.png"
 
 
 class InitRentShikigamiExecutor(BaseExecutor):
@@ -172,13 +181,11 @@ class InitRentShikigamiExecutor(BaseExecutor):
         self.logger.info("[起号_租借式神] 已到达新手任务界面")
         await asyncio.sleep(1.0)
 
-        # 2. OCR 点击左侧"新手特权"标签
-        LEFT_COL_ROI = (0, 50, 150, 450)
-        clicked_tequan = await click_text(
+        # 2. 模板匹配点击左侧"新手特权"标签
+        clicked_tequan = await click_template(
             self.adapter,
             self.ui.capture_method,
-            "新手特权",
-            roi=LEFT_COL_ROI,
+            TPL_XINSHOU_TEQUAN,
             timeout=5.0,
             settle=0.5,
             post_delay=1.5,
@@ -187,8 +194,21 @@ class InitRentShikigamiExecutor(BaseExecutor):
             popup_handler=self.ui.popup_handler,
         )
         if not clicked_tequan:
-            self.logger.warning("[起号_租借式神] 未识别到新手特权标签，跳过")
-            return []
+            # 未找到按钮 → 可能已在新手特权界面，用锚点验证
+            self.logger.info("[起号_租借式神] 未找到新手特权按钮，验证是否已在租借界面")
+            already_in = await wait_for_template(
+                self.adapter,
+                self.ui.capture_method,
+                TPL_TAG_ZUJIE,
+                timeout=3.0,
+                interval=1.0,
+                log=self.logger,
+                label="起号_锚点验证租借界面",
+                popup_handler=self.ui.popup_handler,
+            )
+            if not already_in:
+                self.logger.warning("[起号_租借式神] 未在租借界面，跳过")
+                return []
 
         # 3. 等待租借界面加载（tag_zujie.png 出现）
         zujie_ready = await wait_for_template(
@@ -221,7 +241,16 @@ class InitRentShikigamiExecutor(BaseExecutor):
         self.logger.info(f"[起号_租借式神] 检测到 {blank_count} 个空位")
 
         if blank_count == 0:
-            self.logger.info("[起号_租借式神] 没有空位，已全部租借")
+            self.logger.info("[起号_租借式神] 没有空位，检测已租借式神")
+            already_rented = self._detect_already_rented(screenshot)
+            if already_rented:
+                self._save_rented_shikigami(already_rented)
+                self.logger.info(
+                    f"[起号_租借式神] 已全部租借，检测到: "
+                    + ", ".join(f"{r['name']}({r['star']}★)" for r in already_rented)
+                )
+            else:
+                self.logger.info("[起号_租借式神] 没有空位，未检测到已知已租借式神")
             await click_template(
                 self.adapter,
                 self.ui.capture_method,
@@ -233,7 +262,7 @@ class InitRentShikigamiExecutor(BaseExecutor):
                 label="起号_租借返回",
                 popup_handler=self.ui.popup_handler,
             )
-            return []
+            return already_rented
 
         # 5. 检测各式神及其星级，构建候选列表
         candidates = self._detect_candidates(screenshot)
@@ -342,6 +371,16 @@ class InitRentShikigamiExecutor(BaseExecutor):
                 self.logger.info(f"[起号_租借式神] 未检测到 {name}")
                 continue
 
+            # 检测该式神是否已被自己租借（匹配 yizujie_*.png）
+            rented_tpl = ALREADY_RENTED_TEMPLATES.get(tpl_path)
+            if rented_tpl:
+                rented_match = match_template(screenshot, rented_tpl, threshold=0.8)
+                if rented_match:
+                    self.logger.info(
+                        f"[起号_租借式神] {name} 已被自己租借（匹配到已租借标识），跳过"
+                    )
+                    continue
+
             # 计算勾玉 ROI：模板正下方区域
             roi_y = m.y + m.h
             roi_h = min(GOUYU_ROI_HEIGHT, img_h - roi_y)
@@ -374,6 +413,39 @@ class InitRentShikigamiExecutor(BaseExecutor):
 
         return candidates
 
+    def _detect_already_rented(self, screenshot) -> List[Dict[str, Any]]:
+        """检测界面中已被自己租借的式神（通过 yizujie_*.png 模板）。"""
+        rented: List[Dict[str, Any]] = []
+        img_h = screenshot.shape[0]
+
+        for tpl_path, name, _priority_idx in SHIKIGAMI_CANDIDATES:
+            rented_tpl = ALREADY_RENTED_TEMPLATES.get(tpl_path)
+            if not rented_tpl:
+                continue
+
+            m = match_template(screenshot, rented_tpl, threshold=0.8)
+            if not m:
+                continue
+
+            # 尝试用 zujie 模板定位勾玉区域检测星级
+            star = 6
+            zujie_match = match_template(screenshot, tpl_path, threshold=0.8)
+            if zujie_match:
+                roi_y = zujie_match.y + zujie_match.h
+                roi_h = min(GOUYU_ROI_HEIGHT, img_h - roi_y)
+                if roi_h > 0:
+                    gouyu_roi = (zujie_match.x, roi_y, zujie_match.w, roi_h)
+                    detected_star = count_purple_gouyu(screenshot, roi=gouyu_roi)
+                    if detected_star > 0:
+                        star = detected_star
+
+            self.logger.info(
+                f"[起号_租借式神] 检测到已租借: {name} ({star}★)"
+            )
+            rented.append({"name": name, "star": star})
+
+        return rented
+
     def _save_rented_shikigami(self, rented_list: List[Dict[str, Any]]) -> None:
         """将租借式神列表（含名字和星级）保存到 shikigami_config。"""
         try:
@@ -385,10 +457,17 @@ class InitRentShikigamiExecutor(BaseExecutor):
                 )
                 if account:
                     cfg = account.shikigami_config or {}
-                    cfg["租借式神"] = rented_list
+                    # 合并已有 + 新租借，按 name 去重（新数据优先）
+                    existing = cfg.get("租借式神", [])
+                    by_name = {r["name"]: r for r in existing if isinstance(r, dict) and "name" in r}
+                    for r in rented_list:
+                        by_name[r["name"]] = r
+                    cfg["租借式神"] = list(by_name.values())
                     account.shikigami_config = cfg
                     flag_modified(account, "shikigami_config")
                     db.commit()
+                    # 同步更新内存中的 account 对象，确保同批次后续任务可见
+                    self.current_account.shikigami_config = cfg
                     self.logger.info(
                         f"[起号_租借式神] 已保存租借式神: {rented_list}"
                     )

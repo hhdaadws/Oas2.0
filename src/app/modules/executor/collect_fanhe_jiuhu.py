@@ -23,9 +23,6 @@ from .helpers import click_template
 
 PKG_NAME = "com.netease.onmyoji.wyzymnqsd_cps"
 
-# 育成空位最多填充次数（防止无限循环）
-MAX_FILL_LOOPS = 6
-
 
 class CollectFanheJiuhuExecutor(BaseExecutor):
     """领取饭盒/酒壶执行器"""
@@ -166,7 +163,7 @@ class CollectFanheJiuhuExecutor(BaseExecutor):
         return None
 
     async def _fill_yucheng_slots(self) -> None:
-        """导航到结界养成界面，检测空位并补充育成式神。"""
+        """导航到结界养成界面，检测空位并通过智能放入补充育成式神。"""
         self.logger.info("[领取饭盒酒壶] 导航到结界养成界面")
         in_yangcheng = await self.ui.ensure_ui(
             "JIEJIE_YANGCHENG", max_steps=6, step_timeout=3.0
@@ -175,54 +172,33 @@ class CollectFanheJiuhuExecutor(BaseExecutor):
             self.logger.warning("[领取饭盒酒壶] 导航到结界养成界面失败，跳过育成补充")
             return
 
-        for loop_idx in range(MAX_FILL_LOOPS):
-            screenshot = await self._capture()
-            if screenshot is None:
-                self.logger.warning("[领取饭盒酒壶] 截图失败，退出育成补充")
-                break
+        screenshot = await self._capture()
+        if screenshot is None:
+            self.logger.warning("[领取饭盒酒壶] 截图失败，退出育成补充")
+            return
 
-            blanks = find_all_templates(
-                screenshot, "assets/ui/templates/yucheng_blank.png"
-            )
-            blanks = nms_by_distance(blanks)
-            blank_count = len(blanks)
+        blanks = find_all_templates(
+            screenshot, "assets/ui/templates/yucheng_blank.png"
+        )
+        blanks = nms_by_distance(blanks)
 
-            if blank_count == 0:
-                self.logger.info("[领取饭盒酒壶] 育成位已满，无需补充")
-                break
+        if len(blanks) == 0:
+            self.logger.info("[领取饭盒酒壶] 育成位已满，无需补充")
+            return
 
-            self.logger.info(
-                f"[领取饭盒酒壶] 第 {loop_idx + 1} 轮：检测到 {blank_count} 个育成空位"
-            )
-
-            # 尝试点击蓝蛋
-            filled = await click_template(
-                self.adapter,
-                self.ui.capture_method,
-                "assets/ui/templates/yucheng_landan.png",
-                timeout=3.0,
-                settle=0.3,
-                post_delay=1.0,
-                log=self.logger,
-                label="育成蓝蛋",
-            )
-            if not filled:
-                # 尝试点击红蛋
-                filled = await click_template(
-                    self.adapter,
-                    self.ui.capture_method,
-                    "assets/ui/templates/yucheng_hongdan.png",
-                    timeout=3.0,
-                    settle=0.3,
-                    post_delay=1.0,
-                    log=self.logger,
-                    label="育成红蛋",
-                )
-            if not filled:
-                self.logger.warning("[领取饭盒酒壶] 无可用式神补充，退出补充循环")
-                break
-
-            await asyncio.sleep(1.0)
+        self.logger.info(f"[领取饭盒酒壶] 检测到 {len(blanks)} 个育成空位，点击智能放入")
+        clicked = await click_template(
+            self.adapter,
+            self.ui.capture_method,
+            "assets/ui/templates/zhinengfangru.png",
+            timeout=5.0,
+            settle=0.5,
+            post_delay=2.0,
+            log=self.logger,
+            label="智能放入",
+        )
+        if not clicked:
+            self.logger.warning("[领取饭盒酒壶] 未检测到智能放入按钮")
 
     async def _collect_jiuhu(self) -> Optional[Dict[str, Any]]:
         """导航到酒壶界面，点击提取。返回 None 表示成功，返回 dict 表示失败。"""

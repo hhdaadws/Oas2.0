@@ -49,9 +49,7 @@ numpy>=1.24
 opencv-python>=4.8
 
 # OCR
-paddlepaddle>=3.0
-paddleocr>=3.0
-paddlex>=3.0
+pytesseract
 ddddocr
 
 # Desktop UI

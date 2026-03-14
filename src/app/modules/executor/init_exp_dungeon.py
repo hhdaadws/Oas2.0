@@ -298,7 +298,7 @@ class InitExpDungeonExecutor(BaseExecutor):
             self.logger.info(
                 f"[起号_经验副本] 第{scroll_i + 1}次未找到经验妖怪，下滑"
             )
-            await self._swipe(480, 350, 480, 150, 500)
+            await self._swipe(191, 220, 191, 60, 500)
             await asyncio.sleep(1.5)
 
         self.logger.warning(

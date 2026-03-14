@@ -67,7 +67,7 @@ async def login(req: LoginRequest):
                 detail="云端模式需要管理员账号和密码",
             )
         try:
-            await cloud_task_poller.verify_manager_login(
+            result = await cloud_task_poller.verify_manager_login(
                 username=username, password=password
             )
         except CloudApiError as exc:
@@ -77,6 +77,7 @@ async def login(req: LoginRequest):
                 detail=f"云端登录失败: {exc}",
             )
         runtime_mode_state.set_manager_credentials(username=username, password=password)
+        runtime_mode_state.set_manager_type(result.get("manager_type", "all"))
         runtime_mode_state.set_mode("cloud")
         token, expires_in = _create_jwt_token(mode="cloud")
         logger.info(f"云端模式登录成功: {username}")
@@ -88,6 +89,26 @@ async def login(req: LoginRequest):
             detail="mode 仅支持 local 或 cloud",
         )
 
+    # 本地模式：账号密码验证（通过云端 API 验证凭证，但设置为本地模式）
+    username = (req.username or "").strip()
+    password = req.password or ""
+    if username and password:
+        try:
+            await cloud_task_poller.verify_manager_login(
+                username=username, password=password
+            )
+        except CloudApiError as exc:
+            logger.warning(f"本地模式密码验证失败: {exc}")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=f"密码验证失败: {exc}",
+            )
+        runtime_mode_state.set_mode("local")
+        token, expires_in = _create_jwt_token(mode="local")
+        logger.info(f"本地模式（密码验证）登录成功: {username}")
+        return LoginResponse(token=token, expires_in=expires_in, mode="local")
+
+    # 本地模式：TOTP 验证码验证
     totp = pyotp.TOTP(TOTP_SECRET)
     if not totp.verify(req.code, valid_window=2):
         logger.warning("登录失败 - 验证码无效")
@@ -107,6 +128,17 @@ async def auth_status(
     credentials: HTTPAuthorizationCredentials = Depends(security),
 ):
     """检查认证状态"""
-    if not credentials or not verify_jwt_token(credentials.credentials):
+    if not credentials:
         return {"authenticated": False, "mode": runtime_mode_state.get_mode()}
-    return {"authenticated": True, "mode": runtime_mode_state.get_mode()}
+    try:
+        payload = jwt.decode(credentials.credentials, JWT_SECRET, algorithms=["HS256"])
+        if not payload.get("authenticated"):
+            return {"authenticated": False, "mode": runtime_mode_state.get_mode()}
+        token_mode = payload.get("mode", runtime_mode_state.get_mode())
+        return {
+            "authenticated": True,
+            "mode": token_mode,
+            "manager_type": runtime_mode_state.get_manager_type(),
+        }
+    except (jwt.ExpiredSignatureError, jwt.InvalidTokenError):
+        return {"authenticated": False, "mode": runtime_mode_state.get_mode()}

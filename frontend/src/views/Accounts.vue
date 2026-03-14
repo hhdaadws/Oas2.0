@@ -298,31 +298,6 @@
               />
               <span v-if="taskConfig.起号_租借式神.enabled" class="config-item">分钟延迟</span>
             </el-form-item>
-            <el-form-item v-if="selectedAccount?.progress === 'init'" label="新手任务">
-              <el-switch
-                v-model="taskConfig.起号_新手任务.enabled"
-                @change="updateTaskConfigData"
-              />
-              <el-date-picker
-                v-if="taskConfig.起号_新手任务.enabled"
-                v-model="taskConfig.起号_新手任务.next_time"
-                type="datetime"
-                placeholder="下次执行时间"
-                format="YYYY-MM-DD HH:mm"
-                value-format="YYYY-MM-DD HH:mm"
-                style="margin-left: 10px; width: 200px"
-                @change="updateTaskConfigData"
-              />
-              <el-input-number
-                v-if="taskConfig.起号_新手任务.enabled"
-                v-model="taskConfig.起号_新手任务.fail_delay"
-                :min="1"
-                :max="1440"
-                style="margin-left: 10px; width: 130px"
-                @change="updateTaskConfigData"
-              />
-              <span v-if="taskConfig.起号_新手任务.enabled" class="config-item">分钟延迟</span>
-            </el-form-item>
             <el-form-item v-if="selectedAccount?.progress === 'init'" label="经验副本">
               <el-switch
                 v-model="taskConfig.起号_经验副本.enabled"
@@ -388,15 +363,7 @@
                 style="margin-left: 10px; width: 200px"
                 @change="updateTaskConfigData"
               />
-              <el-input-number
-                v-if="taskConfig.起号_式神养成.enabled"
-                v-model="taskConfig.起号_式神养成.fail_delay"
-                :min="1"
-                :max="1440"
-                style="margin-left: 10px; width: 130px"
-                @change="updateTaskConfigData"
-              />
-              <span v-if="taskConfig.起号_式神养成.enabled" class="config-item">分钟延迟</span>
+              <span v-if="taskConfig.起号_式神养成.enabled" class="config-item">固定24h间隔</span>
             </el-form-item>
             <el-form-item v-if="selectedAccount?.progress === 'init'" label="升级饭盒">
               <el-switch
@@ -458,7 +425,7 @@
               <span v-if="taskConfig.领取成就奖励.enabled" class="config-item">分钟延迟</span>
             </el-form-item>
             <!-- === 正常专属任务（仅 ok 状态显示）=== -->
-            <el-form-item v-if="selectedAccount?.progress === 'ok'" label="寄养">
+            <el-form-item label="寄养">
               <el-switch
                 v-model="taskConfig.寄养.enabled"
                 @change="updateTaskConfigData"
@@ -482,6 +449,54 @@
                 @change="updateTaskConfigData"
               />
               <span v-if="taskConfig.寄养.enabled" class="config-item">分钟延迟</span>
+              <el-select
+                v-if="taskConfig.寄养.enabled"
+                v-model="taskConfig.寄养.foster_priority"
+                :disabled="selectedAccount?.progress === 'init'"
+                style="margin-left: 10px; width: 120px"
+                @change="updateTaskConfigData"
+              >
+                <el-option label="勾玉优先" value="gouyu" />
+                <el-option label="体力优先" value="tili" />
+                <el-option label="自定义" value="custom" />
+              </el-select>
+              <div
+                v-if="taskConfig.寄养.enabled && taskConfig.寄养.foster_priority === 'custom'"
+                style="margin-top: 8px;"
+              >
+                <span class="config-item" style="margin-right: 8px">自定义顺序:</span>
+                <el-select
+                  v-model="taskConfig.寄养.custom_priority"
+                  multiple
+                  collapse-tags
+                  collapse-tags-tooltip
+                  placeholder="选择并排序奖励优先级"
+                  style="width: 350px"
+                  @change="updateTaskConfigData"
+                >
+                  <el-option
+                    v-for="r in fosterRewardOptions"
+                    :key="r.value"
+                    :label="r.label"
+                    :value="r.value"
+                  />
+                </el-select>
+              </div>
+              <div v-if="taskConfig.寄养.enabled" style="margin-top: 8px;">
+                <el-checkbox
+                  v-model="taskConfig.寄养.auto_accept_friend"
+                  @change="updateTaskConfigData"
+                >自动同意好友申请</el-checkbox>
+                <el-checkbox
+                  v-model="taskConfig.寄养.collect_fanhe"
+                  @change="updateTaskConfigData"
+                >领取饭盒</el-checkbox>
+                <el-checkbox
+                  v-model="taskConfig.寄养.foster_low_star"
+                  :disabled="selectedAccount?.progress === 'init'"
+                  @change="updateTaskConfigData"
+                >寄养低星</el-checkbox>
+              </div>
             </el-form-item>
             <el-form-item v-if="selectedAccount?.progress === 'ok'" label="悬赏">
               <el-switch
@@ -603,6 +618,25 @@
                 @change="updateTaskConfigData"
               />
               <span v-if="taskConfig.探索突破.enabled" class="config-item">分钟延迟</span>
+              <div v-if="taskConfig.探索突破.enabled" style="margin-top: 8px;">
+                <span class="config-item" style="margin-right: 8px">中断白名单:</span>
+                <el-select
+                  v-model="taskConfig.探索突破.allowed_interrupts"
+                  multiple
+                  collapse-tags
+                  collapse-tags-tooltip
+                  placeholder="选择允许中断的任务"
+                  style="width: 350px"
+                  @change="updateTaskConfigData"
+                >
+                  <el-option
+                    v-for="t in interruptableTaskOptions"
+                    :key="t"
+                    :label="t"
+                    :value="t"
+                  />
+                </el-select>
+              </div>
             </el-form-item>
             <el-form-item v-if="selectedAccount?.progress === 'ok'" label="结界卡合成">
               <el-switch
@@ -621,6 +655,50 @@
                 />
                 /40 次
               </span>
+            </el-form-item>
+            <el-form-item v-if="selectedAccount?.progress === 'ok'" label="放卡">
+              <el-switch
+                v-model="taskConfig.放卡.enabled"
+                @change="updateTaskConfigData"
+              />
+              <template v-if="taskConfig.放卡.enabled">
+                <el-select
+                  v-model="taskConfig.放卡.card_type"
+                  size="small"
+                  style="margin-left: 10px; width: 100px"
+                  @change="updateTaskConfigData"
+                >
+                  <el-option label="太鼓" value="taigu" />
+                  <el-option label="斗鱼" value="douyu" />
+                </el-select>
+                <span style="margin-left: 10px">从</span>
+                <el-select
+                  v-model="taskConfig.放卡.level_min"
+                  size="small"
+                  style="margin-left: 5px; width: 70px"
+                  @change="updateTaskConfigData"
+                >
+                  <el-option v-for="n in 6" :key="n" :label="n + 'x'" :value="n" />
+                </el-select>
+                <span style="margin-left: 5px">到</span>
+                <el-select
+                  v-model="taskConfig.放卡.level_max"
+                  size="small"
+                  style="margin-left: 5px; width: 70px"
+                  @change="updateTaskConfigData"
+                >
+                  <el-option v-for="n in 6" :key="n" :label="n + 'x'" :value="n" />
+                </el-select>
+                <el-select
+                  v-model="taskConfig.放卡.sort_order"
+                  size="small"
+                  style="margin-left: 10px; width: 120px"
+                  @change="updateTaskConfigData"
+                >
+                  <el-option label="由高到低" value="high_to_low" />
+                  <el-option label="由低到高" value="low_to_high" />
+                </el-select>
+              </template>
             </el-form-item>
             <el-form-item label="加好友">
               <el-switch
@@ -772,7 +850,7 @@
               />
               <span v-if="taskConfig.逢魔.enabled" class="config-item">分钟延迟</span>
             </el-form-item>
-            <el-form-item label="地鬼">
+            <el-form-item v-if="selectedAccount?.progress === 'ok'" label="地鬼">
               <el-switch
                 v-model="taskConfig.地鬼.enabled"
                 @change="updateTaskConfigData"
@@ -862,32 +940,7 @@
                 <span class="config-item">分钟延迟</span>
               </template>
             </el-form-item>
-            <el-form-item label="领取寮金币">
-              <el-switch
-                v-model="taskConfig.领取寮金币.enabled"
-                @change="updateTaskConfigData"
-              />
-              <el-date-picker
-                v-if="taskConfig.领取寮金币.enabled"
-                v-model="taskConfig.领取寮金币.next_time"
-                type="datetime"
-                placeholder="下次执行时间"
-                format="YYYY-MM-DD HH:mm"
-                value-format="YYYY-MM-DD HH:mm"
-                style="margin-left: 10px; width: 200px"
-                @change="updateTaskConfigData"
-              />
-              <el-input-number
-                v-if="taskConfig.领取寮金币.enabled"
-                v-model="taskConfig.领取寮金币.fail_delay"
-                :min="1"
-                :max="1440"
-                style="margin-left: 10px; width: 130px"
-                @change="updateTaskConfigData"
-              />
-              <span v-if="taskConfig.领取寮金币.enabled" class="config-item">分钟延迟</span>
-            </el-form-item>
-            <el-form-item label="每日一抽">
+            <el-form-item v-if="selectedAccount?.progress === 'ok'" label="每日一抽">
               <el-switch
                 v-model="taskConfig.每日一抽.enabled"
                 @change="updateTaskConfigData"
@@ -1051,7 +1104,7 @@
               />
               <span v-if="taskConfig.签到.enabled" class="config-item">分钟延迟</span>
             </el-form-item>
-            <el-form-item label="御魂">
+            <el-form-item v-if="selectedAccount?.progress === 'ok'" label="御魂">
               <el-switch
                 v-model="taskConfig.御魂.enabled"
                 @change="updateTaskConfigData"
@@ -1100,7 +1153,7 @@
                 <span class="config-item">分钟</span>
               </template>
             </el-form-item>
-            <el-form-item label="斗技">
+            <el-form-item v-if="selectedAccount?.progress === 'ok'" label="斗技">
               <el-switch
                 v-model="taskConfig.斗技.enabled"
                 @change="updateTaskConfigData"
@@ -1173,7 +1226,7 @@
                 <span class="config-item">分钟延迟</span>
               </template>
             </el-form-item>
-            <el-form-item label="对弈竞猜">
+            <el-form-item v-if="selectedAccount?.progress === 'ok'" label="对弈竞猜">
               <el-switch
                 v-model="taskConfig.对弈竞猜.enabled"
                 @change="updateTaskConfigData"
@@ -1391,6 +1444,31 @@ import { API_ENDPOINTS, apiRequest } from '@/config'
 // 全局休息开关状态
 const globalRestEnabled = ref(true)
 
+// 探索突破可中断任务选项
+const interruptableTaskOptions = [
+  "寄养", "悬赏", "弥助", "勾协", "领取登录礼包", "领取邮件",
+  "爬塔", "逢魔", "地鬼", "道馆", "寮商店",
+  "每日一抽", "每周商店", "秘闻", "签到", "御魂", "每周分享",
+  "召唤礼包", "领取饭盒酒壶", "斗技", "对弈竞猜", "加好友",
+  "领取成就奖励",
+]
+
+// 寄养奖励优先级选项
+const fosterRewardOptions = [
+  { value: "6xtg", label: "6星太鼓" },
+  { value: "6xdy", label: "6星大引" },
+  { value: "5xtg", label: "5星太鼓" },
+  { value: "5xdy", label: "5星大引" },
+  { value: "4xtg", label: "4星太鼓" },
+  { value: "4xdy", label: "4星大引" },
+  { value: "3xtg", label: "3星太鼓" },
+  { value: "3xdy", label: "3星大引" },
+  { value: "2xtg", label: "2星太鼓" },
+  { value: "2xdy", label: "2星大引" },
+  { value: "1xtg", label: "1星太鼓" },
+  { value: "1xdy", label: "1星大引" },
+]
+
 // 数据
 const accountTree = ref([])
 const searchText = ref('')
@@ -1399,12 +1477,13 @@ const selectedAccount = ref(null)
 const accountTreeRef = ref(null)
 const selectedGameIds = ref([])
 const taskConfig = reactive({
-  寄养: { enabled: true, next_time: "2020-01-01 00:00" },
+  寄养: { enabled: true, next_time: "2020-01-01 00:00", foster_priority: "gouyu", custom_priority: ["6xtg","6xdy","5xtg","5xdy","4xtg","4xdy"], auto_accept_friend: false, collect_fanhe: false, foster_low_star: false },
   悬赏: { enabled: true, next_time: "2020-01-01 00:00" },
   弥助: { enabled: true, next_time: "2020-01-01 00:00" },
   勾协: { enabled: true, next_time: "2020-01-01 00:00" },
-  探索突破: { enabled: true, sub_explore: true, sub_tupo: true, stamina_threshold: 1000, next_time: "2020-01-01 00:00", fail_delay: 30 },
+  探索突破: { enabled: true, sub_explore: true, sub_tupo: true, stamina_threshold: 1000, next_time: "2020-01-01 00:00", fail_delay: 30, allowed_interrupts: ["寄养"] },
   结界卡合成: { enabled: true, explore_count: 0 },
+  放卡: { enabled: true, next_time: "2020-01-01 00:00", fail_delay: 30, card_type: "taigu", level_min: 1, level_max: 6, sort_order: "high_to_low" },
   加好友: { enabled: true, next_time: "2020-01-01 00:00" },
   领取登录礼包: { enabled: true, next_time: "2020-01-01 00:00" },
   领取饭盒酒壶: { enabled: true, next_time: "2020-01-01 00:00", fail_delay: 30 },
@@ -1414,7 +1493,6 @@ const taskConfig = reactive({
   地鬼: { enabled: true, next_time: "2020-01-01 00:00" },
   道馆: { enabled: true, next_time: "2020-01-01 00:00" },
   寮商店: { enabled: true, next_time: "2020-01-01 00:00", buy_heisui: true, buy_lanpiao: true },
-  领取寮金币: { enabled: true, next_time: "2020-01-01 00:00" },
   每日一抽: { enabled: true, next_time: "2020-01-01 00:00" },
   每周商店: { enabled: true, next_time: "2020-01-01 00:00", buy_lanpiao: true, buy_heidan: true, buy_tili: true },
   秘闻: { enabled: true, next_time: "2020-01-01 00:00" },
@@ -1426,10 +1504,9 @@ const taskConfig = reactive({
   召唤礼包: { enabled: true, next_time: "2020-01-01 00:00", fail_delay: 30 },
   起号_领取奖励: { enabled: true, next_time: "2020-01-01 00:00", fail_delay: 30 },
   起号_租借式神: { enabled: true, next_time: "2020-01-01 00:00", fail_delay: 30 },
-  起号_新手任务: { enabled: true, next_time: "2020-01-01 00:00", fail_delay: 30 },
   起号_经验副本: { enabled: true, next_time: "2020-01-01 00:00", fail_delay: 30 },
   起号_领取锦囊: { enabled: true, next_time: "2020-01-01 00:00", fail_delay: 30 },
-  起号_式神养成: { enabled: true, next_time: "2020-01-01 00:00", fail_delay: 30 },
+  起号_式神养成: { enabled: true, next_time: "2020-01-01 00:00" },
   起号_升级饭盒: { enabled: true, next_time: "2020-01-01 00:00", fail_delay: 30 },
   领取成就奖励: { enabled: true, next_time: "2020-01-01 00:00", fail_delay: 30 },
 })
@@ -1650,11 +1727,17 @@ const handleNodeClick = async (data) => {
     // 加载任务配置，支持新的配置结构
     const savedConfig = data.task_config || {}
 
-    // 寄养：支持next_time，默认2020年
+    // 寄养：支持next_time，默认2020年；刷卡账号强制体力优先+低星
+    const isInitFoster = data.progress === 'init'
     taskConfig.寄养 = {
       enabled: savedConfig.寄养?.enabled === true,
       next_time: savedConfig.寄养?.next_time ?? "2020-01-01 00:00",
       fail_delay: savedConfig.寄养?.fail_delay ?? 30,
+      foster_priority: isInitFoster ? 'tili' : (savedConfig.寄养?.foster_priority ?? "gouyu"),
+      custom_priority: savedConfig.寄养?.custom_priority ?? ["6xtg","6xdy","5xtg","5xdy","4xtg","4xdy"],
+      auto_accept_friend: savedConfig.寄养?.auto_accept_friend === true,
+      collect_fanhe: savedConfig.寄养?.collect_fanhe === true,
+      foster_low_star: isInitFoster ? true : (savedConfig.寄养?.foster_low_star === true),
     }
 
     // 悬赏：支持next_time，默认2020年
@@ -1687,6 +1770,7 @@ const handleNodeClick = async (data) => {
         stamina_threshold: savedConfig.探索突破.stamina_threshold ?? 1000,
         next_time: savedConfig.探索突破.next_time ?? "2020-01-01 00:00",
         fail_delay: savedConfig.探索突破.fail_delay ?? 30,
+        allowed_interrupts: savedConfig.探索突破.allowed_interrupts ?? ["寄养"],
       }
     } else {
       // 兼容旧数据
@@ -1699,6 +1783,7 @@ const handleNodeClick = async (data) => {
         stamina_threshold: 1000,
         next_time: "2020-01-01 00:00",
         fail_delay: 30,
+        allowed_interrupts: ["寄养"],
       }
     }
 
@@ -1706,6 +1791,17 @@ const handleNodeClick = async (data) => {
     taskConfig.结界卡合成 = {
       enabled: savedConfig.结界卡合成?.enabled === true,
       explore_count: savedConfig.结界卡合成?.explore_count ?? 0
+    }
+
+    // 放卡：支持card_type, level_min, level_max, sort_order
+    taskConfig.放卡 = {
+      enabled: savedConfig.放卡?.enabled === true,
+      next_time: savedConfig.放卡?.next_time ?? "2020-01-01 00:00",
+      fail_delay: savedConfig.放卡?.fail_delay ?? 30,
+      card_type: savedConfig.放卡?.card_type ?? "taigu",
+      level_min: savedConfig.放卡?.level_min ?? 1,
+      level_max: savedConfig.放卡?.level_max ?? 6,
+      sort_order: savedConfig.放卡?.sort_order ?? "high_to_low",
     }
 
     // 加好友：支持next_time，默认2020年
@@ -1771,13 +1867,6 @@ const handleNodeClick = async (data) => {
       buy_heisui: savedConfig.寮商店?.buy_heisui !== false,
       buy_lanpiao: savedConfig.寮商店?.buy_lanpiao !== false,
       fail_delay: savedConfig.寮商店?.fail_delay ?? 30,
-    }
-
-    // 领取寮金币：支持next_time，默认2020年
-    taskConfig.领取寮金币 = {
-      enabled: savedConfig.领取寮金币?.enabled === true,
-      next_time: savedConfig.领取寮金币?.next_time ?? "2020-01-01 00:00",
-      fail_delay: savedConfig.领取寮金币?.fail_delay ?? 30,
     }
 
     // 每日一抽：支持next_time，默认2020年
@@ -1864,11 +1953,6 @@ const handleNodeClick = async (data) => {
       next_time: savedConfig.起号_租借式神?.next_time ?? "2020-01-01 00:00",
       fail_delay: savedConfig.起号_租借式神?.fail_delay ?? 30,
     }
-    taskConfig.起号_新手任务 = {
-      enabled: savedConfig.起号_新手任务?.enabled === true,
-      next_time: savedConfig.起号_新手任务?.next_time ?? "2020-01-01 00:00",
-      fail_delay: savedConfig.起号_新手任务?.fail_delay ?? 30,
-    }
     taskConfig.起号_经验副本 = {
       enabled: savedConfig.起号_经验副本?.enabled === true,
       next_time: savedConfig.起号_经验副本?.next_time ?? "2020-01-01 00:00",
@@ -1882,7 +1966,6 @@ const handleNodeClick = async (data) => {
     taskConfig.起号_式神养成 = {
       enabled: savedConfig.起号_式神养成?.enabled === true,
       next_time: savedConfig.起号_式神养成?.next_time ?? "2020-01-01 00:00",
-      fail_delay: savedConfig.起号_式神养成?.fail_delay ?? 30,
     }
     taskConfig.起号_升级饭盒 = {
       enabled: savedConfig.起号_升级饭盒?.enabled === true,
@@ -2023,11 +2106,7 @@ const updateTaskConfigData = async () => {
         stamina_threshold: taskConfig["探索突破"].stamina_threshold,
         next_time: taskConfig["探索突破"].next_time,
         fail_delay: taskConfig["探索突破"].fail_delay,
-      },
-      "地鬼": {
-        enabled: taskConfig["地鬼"].enabled,
-        next_time: taskConfig["地鬼"].next_time,
-        fail_delay: taskConfig["地鬼"].fail_delay,
+        allowed_interrupts: taskConfig["探索突破"].allowed_interrupts ?? ["寄养"],
       },
       "寮商店": {
         enabled: taskConfig["寮商店"].enabled,
@@ -2035,11 +2114,6 @@ const updateTaskConfigData = async () => {
         buy_heisui: taskConfig["寮商店"].buy_heisui,
         buy_lanpiao: taskConfig["寮商店"].buy_lanpiao,
         fail_delay: taskConfig["寮商店"].fail_delay,
-      },
-      "领取寮金币": {
-        enabled: taskConfig["领取寮金币"].enabled,
-        next_time: taskConfig["领取寮金币"].next_time,
-        fail_delay: taskConfig["领取寮金币"].fail_delay,
       },
       "每周商店": {
         enabled: taskConfig["每周商店"].enabled,
@@ -2069,19 +2143,6 @@ const updateTaskConfigData = async () => {
         next_time: taskConfig["领取饭盒酒壶"].next_time,
         fail_delay: taskConfig["领取饭盒酒壶"].fail_delay,
       },
-      "每日一抽": {
-        enabled: taskConfig["每日一抽"].enabled,
-        next_time: taskConfig["每日一抽"].next_time,
-        fail_delay: taskConfig["每日一抽"].fail_delay,
-      },
-      "御魂": {
-        enabled: taskConfig["御魂"].enabled,
-        run_count: taskConfig["御魂"].run_count,
-        remaining_count: taskConfig["御魂"].remaining_count,
-        unlocked_count: taskConfig["御魂"].unlocked_count,
-        target_level: taskConfig["御魂"].target_level,
-        fail_delay: taskConfig["御魂"].fail_delay,
-      },
       "加好友": {
         enabled: taskConfig["加好友"].enabled,
         next_time: taskConfig["加好友"].next_time,
@@ -2097,19 +2158,15 @@ const updateTaskConfigData = async () => {
         next_time: taskConfig["召唤礼包"].next_time,
         fail_delay: taskConfig["召唤礼包"].fail_delay,
       },
-      "斗技": {
-        enabled: taskConfig["斗技"].enabled,
-        start_hour: taskConfig["斗技"].start_hour,
-        end_hour: taskConfig["斗技"].end_hour,
-        mode: taskConfig["斗技"].mode,
-        target_score: taskConfig["斗技"].target_score,
-        next_time: taskConfig["斗技"].next_time,
-        fail_delay: taskConfig["斗技"].fail_delay,
-      },
-      "对弈竞猜": {
-        enabled: taskConfig["对弈竞猜"].enabled,
-        next_time: taskConfig["对弈竞猜"].next_time,
-        fail_delay: taskConfig["对弈竞猜"].fail_delay,
+      "寄养": {
+        enabled: taskConfig["寄养"].enabled,
+        next_time: taskConfig["寄养"].next_time,
+        fail_delay: taskConfig["寄养"].fail_delay,
+        foster_priority: isInit ? "tili" : taskConfig["寄养"].foster_priority,
+        custom_priority: taskConfig["寄养"].custom_priority,
+        auto_accept_friend: taskConfig["寄养"].auto_accept_friend,
+        collect_fanhe: taskConfig["寄养"].collect_fanhe,
+        foster_low_star: isInit ? true : taskConfig["寄养"].foster_low_star,
       }
     }
 
@@ -2125,11 +2182,6 @@ const updateTaskConfigData = async () => {
         next_time: taskConfig["起号_租借式神"].next_time,
         fail_delay: taskConfig["起号_租借式神"].fail_delay,
       }
-      configToSend["起号_新手任务"] = {
-        enabled: taskConfig["起号_新手任务"].enabled,
-        next_time: taskConfig["起号_新手任务"].next_time,
-        fail_delay: taskConfig["起号_新手任务"].fail_delay,
-      }
       configToSend["起号_经验副本"] = {
         enabled: taskConfig["起号_经验副本"].enabled,
         next_time: taskConfig["起号_经验副本"].next_time,
@@ -2143,7 +2195,6 @@ const updateTaskConfigData = async () => {
       configToSend["起号_式神养成"] = {
         enabled: taskConfig["起号_式神养成"].enabled,
         next_time: taskConfig["起号_式神养成"].next_time,
-        fail_delay: taskConfig["起号_式神养成"].fail_delay,
       }
       configToSend["起号_升级饭盒"] = {
         enabled: taskConfig["起号_升级饭盒"].enabled,
@@ -2167,11 +2218,6 @@ const updateTaskConfigData = async () => {
       }
     } else {
       // 正常专属任务
-      configToSend["寄养"] = {
-        enabled: taskConfig["寄养"].enabled,
-        next_time: taskConfig["寄养"].next_time,
-        fail_delay: taskConfig["寄养"].fail_delay,
-      }
       configToSend["悬赏"] = {
         enabled: taskConfig["悬赏"].enabled,
         next_time: taskConfig["悬赏"].next_time,
@@ -2190,6 +2236,15 @@ const updateTaskConfigData = async () => {
       configToSend["结界卡合成"] = {
         enabled: taskConfig["结界卡合成"].enabled,
         explore_count: taskConfig["结界卡合成"].explore_count
+      }
+      configToSend["放卡"] = {
+        enabled: taskConfig["放卡"].enabled,
+        next_time: taskConfig["放卡"].next_time,
+        fail_delay: taskConfig["放卡"].fail_delay,
+        card_type: taskConfig["放卡"].card_type,
+        level_min: taskConfig["放卡"].level_min,
+        level_max: taskConfig["放卡"].level_max,
+        sort_order: taskConfig["放卡"].sort_order,
       }
       configToSend["爬塔"] = {
         enabled: taskConfig["爬塔"].enabled,
@@ -2210,6 +2265,38 @@ const updateTaskConfigData = async () => {
         enabled: taskConfig["秘闻"].enabled,
         next_time: taskConfig["秘闻"].next_time,
         fail_delay: taskConfig["秘闻"].fail_delay,
+      }
+      configToSend["御魂"] = {
+        enabled: taskConfig["御魂"].enabled,
+        run_count: taskConfig["御魂"].run_count,
+        remaining_count: taskConfig["御魂"].remaining_count,
+        unlocked_count: taskConfig["御魂"].unlocked_count,
+        target_level: taskConfig["御魂"].target_level,
+        fail_delay: taskConfig["御魂"].fail_delay,
+      }
+      configToSend["斗技"] = {
+        enabled: taskConfig["斗技"].enabled,
+        start_hour: taskConfig["斗技"].start_hour,
+        end_hour: taskConfig["斗技"].end_hour,
+        mode: taskConfig["斗技"].mode,
+        target_score: taskConfig["斗技"].target_score,
+        next_time: taskConfig["斗技"].next_time,
+        fail_delay: taskConfig["斗技"].fail_delay,
+      }
+      configToSend["对弈竞猜"] = {
+        enabled: taskConfig["对弈竞猜"].enabled,
+        next_time: taskConfig["对弈竞猜"].next_time,
+        fail_delay: taskConfig["对弈竞猜"].fail_delay,
+      }
+      configToSend["地鬼"] = {
+        enabled: taskConfig["地鬼"].enabled,
+        next_time: taskConfig["地鬼"].next_time,
+        fail_delay: taskConfig["地鬼"].fail_delay,
+      }
+      configToSend["每日一抽"] = {
+        enabled: taskConfig["每日一抽"].enabled,
+        next_time: taskConfig["每日一抽"].next_time,
+        fail_delay: taskConfig["每日一抽"].fail_delay,
       }
     }
 

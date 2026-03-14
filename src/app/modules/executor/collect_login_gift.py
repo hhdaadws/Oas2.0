@@ -212,7 +212,7 @@ class CollectLoginGiftExecutor(BaseExecutor):
         # 弹窗检测
         if screenshot2 is not None and await self.ui.popup_handler.check_and_dismiss(screenshot2) > 0:
             screenshot2 = await self._capture()
-        lingqu_result = match_template(screenshot2, "assets/ui/templates/lingqu.png") if screenshot2 else None
+        lingqu_result = match_template(screenshot2, "assets/ui/templates/lingqu.png") if screenshot2 is not None else None
 
         if not lingqu_result:
             # 没有领取按钮 → 今天已经领取过了
@@ -237,7 +237,7 @@ class CollectLoginGiftExecutor(BaseExecutor):
         # 弹窗检测
         if screenshot3 is not None and await self.ui.popup_handler.check_and_dismiss(screenshot3) > 0:
             screenshot3 = await self._capture()
-        jiangli_result = match_template(screenshot3, "assets/ui/templates/jiangli.png") if screenshot3 else None
+        jiangli_result = match_template(screenshot3, "assets/ui/templates/jiangli.png") if screenshot3 is not None else None
 
         if jiangli_result:
             self.logger.info("[领取登录礼包] 检测到奖励弹窗，点击关闭")

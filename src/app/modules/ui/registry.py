@@ -28,19 +28,26 @@ class UIDef:
     threshold: Optional[float] = None
     tag: Optional[str] = None  # 用于界面识别的主模板名称，其余模板仅用于锚点提取
     # 预索引缓存（__post_init__ 自动建立）
-    _tag_template: Optional[TemplateDef] = field(default=None, repr=False, init=False)
+    _tag_templates: List[TemplateDef] = field(default_factory=list, repr=False, init=False)
     _anchor_templates: List[TemplateDef] = field(default_factory=list, repr=False, init=False)
+
+    @property
+    def _tag_template(self) -> Optional[TemplateDef]:
+        """向后兼容：返回首个 tag 模板或 None。"""
+        return self._tag_templates[0] if self._tag_templates else None
 
     def __post_init__(self) -> None:
         self._index_templates()
 
     def _index_templates(self) -> None:
-        """建立 tag / anchor 模板索引，避免每次检测时线性查找。"""
-        self._tag_template = None
+        """建立 tag / anchor 模板索引，避免每次检测时线性查找。
+        tag 匹配规则：tpl.name 精确等于 self.tag，或以 self.tag + '_' 为前缀。
+        """
+        self._tag_templates = []
         self._anchor_templates = []
         for tpl in self.templates:
-            if self.tag and tpl.name == self.tag:
-                self._tag_template = tpl
+            if self.tag and (tpl.name == self.tag or tpl.name.startswith(self.tag + "_")):
+                self._tag_templates.append(tpl)
             else:
                 self._anchor_templates.append(tpl)
 

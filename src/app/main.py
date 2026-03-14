@@ -94,14 +94,14 @@ async def startup() -> None:
 
 
 async def _init_ocr_pools() -> None:
-    """后台初始化 OCR 实例池，支持并行推理。"""
-    from .modules.ocr.engine import init_ocr_pool, init_digit_pool
+    """后台初始化 ddddocr 实例池，支持并行推理。"""
+    from .modules.ocr.engine import init_digit_pool, configure_tesseract
     from .core.thread_pool import run_in_compute
     try:
-        await run_in_compute(init_ocr_pool, settings.ocr_pool_size)
+        configure_tesseract()
         await run_in_compute(init_digit_pool, settings.digit_ocr_pool_size)
     except Exception as e:
-        logger.warning(f"OCR 实例池初始化失败（将回退到单例模式）: {e}")
+        logger.warning(f"OCR 引擎初始化失败（将回退到单例模式）: {e}")
 
 
 @app.on_event("shutdown")

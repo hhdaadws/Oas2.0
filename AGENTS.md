@@ -184,7 +184,6 @@ UIRegistry → UIDetector → UIGraph → UIManager → PopupHandler
 | 46 | DIGUI | 地鬼 |
 | 45 | COLLECT_MAIL | 领取邮件 |
 | 44 | DAOGUAN | 道馆 |
-| 43 | LIAO_COIN | 领取寮金币 |
 | 42 | LIAO_SHOP | 寮商店 |
 | 41 | WEEKLY_SHOP | 每周商店 |
 | 40 | CARD_SYNTHESIS | 结界卡合成（explore_count≥40 触发） |

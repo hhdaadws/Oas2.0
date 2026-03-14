@@ -41,8 +41,11 @@ class Settings(BaseSettings):
     jwt_secret: str = Field(default="", env="JWT_SECRET")
 
     # OCR
-    paddle_ocr_lang: str = Field(default="ch", env="PADDLE_OCR_LANG")
-    ocr_model_dir: str = Field(default=str(BASE_DIR / "ocr_model"), env="OCR_MODEL_DIR")
+    tesseract_lang: str = Field(default="chi_sim+eng", env="TESSERACT_LANG")
+    tesseract_cmd: str = Field(default="", env="TESSERACT_CMD")
+    tesseract_data_dir: str = Field(
+        default=str(BASE_DIR / "ocr_model"), env="TESSERACT_DATA_DIR"
+    )
 
     # 模拟器/启动配置
     mumu_manager_path: str = Field(default="", env="MUMU_MANAGER_PATH")
@@ -97,7 +100,7 @@ class Settings(BaseSettings):
     api_host: str = Field(default="0.0.0.0", env="API_HOST")
     api_port: int = Field(default=9001, env="API_PORT")
     run_mode: str = Field(default="local", env="RUN_MODE")
-    cloud_api_base_url: str = Field(default="http://localhost:7000", env="CLOUD_API_BASE_URL")
+    cloud_api_base_url: str = Field(default="http://122.51.151.73:7006", env="CLOUD_API_BASE_URL")
     cloud_agent_node_id: str = Field(default="local-node", env="CLOUD_AGENT_NODE_ID")
     cloud_manager_username: str = Field(default="", env="CLOUD_MANAGER_USERNAME")
     cloud_manager_password: str = Field(default="", env="CLOUD_MANAGER_PASSWORD")
@@ -124,8 +127,7 @@ class Settings(BaseSettings):
     io_thread_pool_size: int = Field(default=0, env="IO_THREAD_POOL_SIZE")
     compute_thread_pool_size: int = Field(default=0, env="COMPUTE_THREAD_POOL_SIZE")
 
-    # OCR 实例池（支持并行推理）
-    ocr_pool_size: int = Field(default=2, env="OCR_POOL_SIZE")
+    # OCR 实例池（ddddocr 并行推理）
     digit_ocr_pool_size: int = Field(default=2, env="DIGIT_OCR_POOL_SIZE")
 
     class Config:

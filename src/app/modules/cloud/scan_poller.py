@@ -111,9 +111,10 @@ class ScanTaskPoller:
                 # token 过期重新登录
                 if not self._agent_token:
                     username, password = runtime_mode_state.get_manager_credentials()
-                    self._agent_token = await cloud_api_client.agent_login(
+                    result = await cloud_api_client.agent_login(
                         username=username, password=password, node_id=self._node_id,
                     )
+                    self._agent_token = result["token"]
 
                 # 拉取扫码任务
                 jobs = await cloud_api_client.scan_poll(
@@ -197,13 +198,14 @@ class ScanTaskPoller:
             except Exception:
                 pass
         except Exception as exc:
-            self.log.error(f"扫码任务异常: scan_id={scan_id}, error={exc}")
+            self.log.error(f"扫码任务异常: scan_id={scan_id}, error={exc!r}", exc_info=True)
             try:
+                err_msg = f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__
                 await cloud_api_client.scan_fail(
                     agent_token=self._agent_token,
                     node_id=self._node_id,
                     scan_id=scan_id,
-                    message=str(exc)[:200],
+                    message=err_msg[:200],
                     error_code="EXECUTOR_ERROR",
                 )
             except Exception:

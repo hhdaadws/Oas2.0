@@ -1,7 +1,8 @@
 """异步 OCR 识别包装器。
 
 将同步 OCR 推理 offload 到计算线程池，避免阻塞事件循环。
-使用推理锁保证 PaddleOCR / ddddocr 单例线程安全。
+Tesseract (pytesseract) 天然线程安全（每次调用独立子进程），无需推理锁。
+ddddocr 仍需推理锁，逻辑不变。
 """
 from __future__ import annotations
 
@@ -15,48 +16,55 @@ from .types import OcrBox, OcrResult
 Roi = Tuple[int, int, int, int]
 
 
-def _sync_ocr_with_lock(
+def _sync_ocr(
     image: ImageLike,
     *,
     roi: Optional[Roi] = None,
     min_confidence: float = 0.6,
 ) -> OcrResult:
-    """带推理锁的同步 OCR（在线程池中调用）。"""
-    from .engine import acquire_ocr
-    from ..vision.utils import load_image
-    import cv2
-    import numpy as np
+    """在计算线程池中调用的同步 OCR。
 
-    engine, lock = acquire_ocr()
+    pytesseract 天然线程安全，无需推理锁。
+    """
+    import cv2
+    import pytesseract
+
+    from ...core.config import settings
+    from ..vision.utils import load_image
+
     img = load_image(image)
 
     offset_x, offset_y = 0, 0
     if roi:
         x, y, w, h = roi
-        img = img[y : y + h, x : x + w]
+        img = img[y: y + h, x: x + w]
         offset_x, offset_y = x, y
 
-    with lock:
-        results = engine.predict(img)
+    img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    data = pytesseract.image_to_data(
+        img_rgb,
+        lang=settings.tesseract_lang,
+        output_type=pytesseract.Output.DICT,
+    )
 
     boxes: List[OcrBox] = []
-    if results:
-        result = results[0]
-        rec_texts = result["rec_texts"]
-        rec_scores = result["rec_scores"]
-        rec_polys = result["rec_polys"]
-        for text, confidence, poly in zip(rec_texts, rec_scores, rec_polys):
-            if confidence < min_confidence:
-                continue
-            adjusted_box = [
-                (int(p[0] + offset_x), int(p[1] + offset_y))
-                for p in poly
-            ]
-            boxes.append(OcrBox(
-                text=text,
-                confidence=float(confidence),
-                box=adjusted_box,
-            ))
+    for i in range(len(data["text"])):
+        text = data["text"][i].strip()
+        conf = int(data["conf"][i])
+        if not text or conf == -1:
+            continue
+        confidence = conf / 100.0
+        if confidence < min_confidence:
+            continue
+        x1 = int(data["left"][i]) + offset_x
+        y1 = int(data["top"][i]) + offset_y
+        x2 = x1 + int(data["width"][i])
+        y2 = y1 + int(data["height"][i])
+        boxes.append(OcrBox(
+            text=text,
+            confidence=confidence,
+            box=[(x1, y1), (x2, y1), (x2, y2), (x1, y2)],
+        ))
 
     return OcrResult(boxes=boxes)
 
@@ -76,7 +84,7 @@ def _sync_ocr_digits_with_lock(
 
     if roi:
         x, y, w, h = roi
-        img = img[y : y + h, x : x + w]
+        img = img[y: y + h, x: x + w]
 
     _, buf = cv2.imencode(".png", img)
 
@@ -99,7 +107,7 @@ async def async_ocr(
     """异步版本的 ocr()，在计算线程池中执行。"""
     return await run_in_compute(
         functools.partial(
-            _sync_ocr_with_lock, image,
+            _sync_ocr, image,
             roi=roi, min_confidence=min_confidence,
         )
     )

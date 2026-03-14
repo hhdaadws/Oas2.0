@@ -62,7 +62,8 @@ export const API_ENDPOINTS = {
     globalRest: '/api/system/global-rest',
     defaultRestConfig: '/api/system/default-rest-config',
     duiyiAnswers: '/api/system/duiyi-answers',
-    duiyiRewardCoord: '/api/system/duiyi-reward-coord'
+    duiyiRewardCoord: '/api/system/duiyi-reward-coord',
+    defaultAccountProgress: '/api/system/default-account-progress'
   }
 }
 

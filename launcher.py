@@ -92,7 +92,8 @@ def main():
         resizable=True,
         min_size=(800, 600),
     )
-    webview.start()
+    storage_path = str(app_dir / "webview_data")
+    webview.start(private_mode=False, storage_path=storage_path)
 
 
 if __name__ == "__main__":

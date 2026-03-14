@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+import random
 from dataclasses import dataclass
 from enum import Enum
 from typing import List, Optional, Tuple
@@ -36,6 +37,17 @@ class TupoCard:
     roi: Tuple[int, int, int, int]              # 卡片边界框 (x, y, w, h)
     avg_v: float                                # 卡片平均亮度 V（调试用）
     failed_score: float                         # 没打过旗帜模板匹配得分
+
+    def random_point(self, margin: float = 0.2) -> Tuple[int, int]:
+        """在卡片区域内生成随机点击坐标（每边向内缩 margin 比例）。"""
+        x, y, w, h = self.roi
+        margin = max(0.0, min(margin, 0.45))
+        mx = int(w * margin)
+        my = int(h * margin)
+        return (
+            random.randint(x + mx, x + w - 1 - mx),
+            random.randint(y + my, y + h - 1 - my),
+        )
 
 
 @dataclass

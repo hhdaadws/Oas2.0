@@ -54,3 +54,29 @@ htmlcov/
 
 # System
 logindata/
+webview_data/
+# Build artifacts
+build/
+
+# Database WAL
+data.db-shm
+data.db-wal
+
+# Login data
+putonglogindata/
+gouxielogindata/
+
+# Test temp
+.pytest_tmp/
+
+# OCR model
+ocr_model/
+
+# Claude settings
+.claude/
+
+# Serena
+.serena/
+
+# Local config
+config/

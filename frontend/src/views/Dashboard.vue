@@ -9,21 +9,21 @@
           </el-tag>
         </div>
         <div>
+          <el-select
+            v-if="isCloud && !schedulerRunning"
+            v-model="schedulerType"
+            style="width: 140px; margin-right: 10px"
+          >
+            <el-option
+              v-for="opt in availableSchedulerTypes"
+              :key="opt.value"
+              :label="opt.label"
+              :value="opt.value"
+            />
+          </el-select>
           <el-button v-if="!schedulerRunning" type="success" @click="startScheduler">启动执行引擎</el-button>
           <el-button v-else type="danger" @click="stopScheduler">停止执行引擎</el-button>
         </div>
-      </div>
-    </el-card>
-
-    <el-card v-if="!isCloud" style="margin-bottom: 20px">
-      <template #header>
-        <div class="card-header">
-          <span>全局任务开关</span>
-        </div>
-      </template>
-      <div style="display: flex; align-items: center">
-        <span style="margin-right: 10px">召唤礼包：</span>
-        <el-switch v-model="taskSwitches.召唤礼包" @change="saveTaskSwitches" />
       </div>
     </el-card>
 
@@ -224,9 +224,40 @@ import dayjs from 'dayjs'
 import { ElMessage } from 'element-plus'
 import { API_ENDPOINTS, apiRequest } from '@/config'
 import { getDashboard, getRealtimeStats } from '@/api/dashboard'
-import { getMode } from '@/api/request'
+import { getMode, getManagerType } from '@/api/request'
 
 const isCloud = computed(() => getMode() === 'cloud')
+
+const SCHEDULER_TYPE_MAP = {
+  daily: [
+    { value: 'all', label: '全部' },
+    { value: 'foster', label: '寄养' },
+    { value: 'daily', label: '日常' },
+    { value: 'jingzhi', label: '精致日常' },
+  ],
+  shuaka: [
+    { value: 'all', label: '全部' },
+    { value: 'shuaka', label: '刷卡' },
+  ],
+  duiyi: [
+    { value: 'all', label: '全部' },
+    { value: 'duiyi', label: '对弈竞猜' },
+  ],
+  all: [
+    { value: 'all', label: '全部' },
+    { value: 'foster', label: '寄养' },
+    { value: 'daily', label: '日常' },
+    { value: 'shuaka', label: '刷卡' },
+    { value: 'duiyi', label: '对弈竞猜' },
+    { value: 'jingzhi', label: '精致日常' },
+  ],
+}
+
+const schedulerType = ref('all')
+const availableSchedulerTypes = computed(() => {
+  const mt = getManagerType()
+  return SCHEDULER_TYPE_MAP[mt] || SCHEDULER_TYPE_MAP.all
+})
 
 const stats = ref({ active_accounts: 0, running_accounts: 0, queue_size: 0, coop_active_accounts: 0 })
 const runningTasks = ref([])
@@ -234,7 +265,6 @@ const queuePreview = ref([])
 const scheduledPreview = ref([])
 const cloudJobsPreview = ref([])
 const schedulerRunning = ref(false)
-const taskSwitches = reactive({ '召唤礼包': false })
 const runtimeLogs = ref([])
 const runtimeLogFilter = reactive({ level: '', emulator_id: null })
 const runtimeEmulatorOptions = ref([])
@@ -300,7 +330,10 @@ const checkSchedulerStatus = async () => {
 
 const startScheduler = async () => {
   try {
-    await apiRequest(API_ENDPOINTS.tasks.scheduler.start, { method: 'POST' })
+    const url = isCloud.value
+      ? `${API_ENDPOINTS.tasks.scheduler.start}?scheduler_type=${schedulerType.value}`
+      : API_ENDPOINTS.tasks.scheduler.start
+    await apiRequest(url, { method: 'POST' })
     schedulerRunning.value = true
     ElMessage.success(
       isCloud.value
@@ -329,29 +362,6 @@ const stopScheduler = async () => {
 const refreshData = () => {
   fetchData()
   ElMessage.success('数据已刷新')
-}
-
-const fetchTaskSwitches = async () => {
-  try {
-    const response = await apiRequest(API_ENDPOINTS.system.taskSwitches)
-    const data = await response.json()
-    const switches = data.switches || {}
-    taskSwitches['召唤礼包'] = Boolean(switches['召唤礼包'])
-  } catch (error) {
-    console.error('获取全局任务开关失败:', error)
-  }
-}
-
-const saveTaskSwitches = async () => {
-  try {
-    await apiRequest(API_ENDPOINTS.system.taskSwitches, {
-      method: 'PUT',
-      body: JSON.stringify({ switches: { '召唤礼包': taskSwitches['召唤礼包'] } })
-    })
-    ElMessage.success('全局任务开关已保存')
-  } catch (error) {
-    ElMessage.error('保存全局任务开关失败')
-  }
 }
 
 const mergeRuntimeLogs = (currentLogs, incomingLogs, maxItems = 80) => {
@@ -431,7 +441,6 @@ const getPriorityType = (priority) => {
 onMounted(async () => {
   await fetchData()
   await fetchRuntimeLogs(true)
-  await fetchTaskSwitches()
   coreRefreshTimer = setInterval(fetchData, 5000)
   runtimeLogTimer = setInterval(() => fetchRuntimeLogs(false), 15000)
 })

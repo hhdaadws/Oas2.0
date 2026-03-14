@@ -275,7 +275,7 @@ class InitShikigamiTrainExecutor(BaseExecutor):
                 "timestamp": datetime.utcnow().isoformat(),
             }
         else:
-            self._update_next_time(account_id, hours=1)
+            self._update_next_time(account_id, hours=24)
             db_log(account_id, "式神养成: 觉醒操作失败", level="WARNING")
             return {"status": TaskStatus.FAILED, "error": "觉醒操作失败"}
 
@@ -299,7 +299,7 @@ class InitShikigamiTrainExecutor(BaseExecutor):
         )
         if not m_zuofu:
             self.logger.warning("[起号_式神养成] 技能升级: 未找到已觉醒座敷童子")
-            self._update_next_time(account_id, hours=1)
+            self._update_next_time(account_id, hours=24)
             db_log(account_id, "式神养成-技能升级: 未找到已觉醒座敷童子", level="WARNING")
             return {"status": TaskStatus.FAILED, "error": "未找到已觉醒座敷童子"}
 
@@ -318,7 +318,7 @@ class InitShikigamiTrainExecutor(BaseExecutor):
         )
         if not clicked:
             self.logger.warning("[起号_式神养成] 技能升级: 未找到养成按钮")
-            self._update_next_time(account_id, hours=1)
+            self._update_next_time(account_id, hours=24)
             db_log(account_id, "式神养成-技能升级: 未找到养成按钮", level="WARNING")
             return {"status": TaskStatus.FAILED, "error": "未找到养成按钮"}
 
@@ -331,7 +331,7 @@ class InitShikigamiTrainExecutor(BaseExecutor):
         )
         if not m_tag:
             self.logger.warning("[起号_式神养成] 技能升级: 未进入养成界面")
-            self._update_next_time(account_id, hours=1)
+            self._update_next_time(account_id, hours=24)
             db_log(account_id, "式神养成-技能升级: 未进入养成界面", level="WARNING")
             return {"status": TaskStatus.FAILED, "error": "未进入养成界面"}
 
@@ -378,7 +378,7 @@ class InitShikigamiTrainExecutor(BaseExecutor):
         )
         if not clicked:
             self.logger.warning("[起号_式神养成] 技能升级: 确认按钮未找到")
-            self._update_next_time(account_id, hours=1)
+            self._update_next_time(account_id, hours=24)
             db_log(account_id, "式神养成-技能升级: 确认按钮未找到", level="WARNING")
             return {"status": TaskStatus.FAILED, "error": "确认按钮未找到"}
 
@@ -424,7 +424,7 @@ class InitShikigamiTrainExecutor(BaseExecutor):
                 "timestamp": datetime.utcnow().isoformat(),
             }
         else:
-            self._update_next_time(account_id, hours=1)
+            self._update_next_time(account_id, hours=24)
             db_log(account_id, "式神养成-技能升级: 未检测到成功提示", level="WARNING")
             return {"status": TaskStatus.FAILED, "error": "养成未检测到成功提示"}
 

@@ -11,6 +11,7 @@ const service = axios.create({
 const TOKEN_KEY = 'yys_auth_token'
 const MODE_KEY = 'yys_auth_mode'
 const CLOUD_CRED_KEY = 'yys_cloud_credentials'
+const MANAGER_TYPE_KEY = 'yys_manager_type'
 
 export function getToken() {
   return localStorage.getItem(TOKEN_KEY)
@@ -23,6 +24,7 @@ export function setToken(token) {
 export function removeToken() {
   localStorage.removeItem(TOKEN_KEY)
   localStorage.removeItem(MODE_KEY)
+  localStorage.removeItem(MANAGER_TYPE_KEY)
 }
 
 export function getMode() {
@@ -31,6 +33,14 @@ export function getMode() {
 
 export function setMode(mode) {
   localStorage.setItem(MODE_KEY, mode)
+}
+
+export function getManagerType() {
+  return localStorage.getItem(MANAGER_TYPE_KEY) || 'all'
+}
+
+export function setManagerType(managerType) {
+  localStorage.setItem(MANAGER_TYPE_KEY, managerType || 'all')
 }
 
 export function getCloudCredentials() {

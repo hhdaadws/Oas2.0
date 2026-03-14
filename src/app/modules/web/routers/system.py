@@ -31,6 +31,8 @@ class SystemSettings(BaseModel):
     pull_post_mode: str = "none"
     save_fail_screenshot: bool = False
     cross_emulator_cache_enabled: bool = False
+    foster_kuaqu_first_interval: float = 0.8
+    foster_scan_interval: float = 0.8
 
 
 class SystemSettingsUpdate(BaseModel):
@@ -46,6 +48,8 @@ class SystemSettingsUpdate(BaseModel):
     pull_post_mode: Optional[str] = None
     save_fail_screenshot: Optional[bool] = None
     cross_emulator_cache_enabled: Optional[bool] = None
+    foster_kuaqu_first_interval: Optional[float] = None
+    foster_scan_interval: Optional[float] = None
 
 
 class CaptureBenchmarkRequest(BaseModel):
@@ -91,6 +95,8 @@ async def get_settings(db: Session = Depends(get_db)) -> SystemSettings:
             cross_emulator_cache_enabled=bool(row.cross_emulator_cache_enabled)
             if row.cross_emulator_cache_enabled is not None
             else bool(getattr(settings, "vision_cross_emulator_cache_enabled", False)),
+            foster_kuaqu_first_interval=float(row.foster_kuaqu_first_interval or 0.8),
+            foster_scan_interval=float(row.foster_scan_interval or 0.8),
         )
     return SystemSettings(**_serialize_settings())
 
@@ -141,6 +147,10 @@ async def update_settings(body: SystemSettingsUpdate, db: Session = Depends(get_
         apply["save_fail_screenshot"] = body.save_fail_screenshot
     if body.cross_emulator_cache_enabled is not None:
         apply["cross_emulator_cache_enabled"] = body.cross_emulator_cache_enabled
+    if body.foster_kuaqu_first_interval is not None:
+        apply["foster_kuaqu_first_interval"] = body.foster_kuaqu_first_interval
+    if body.foster_scan_interval is not None:
+        apply["foster_scan_interval"] = body.foster_scan_interval
 
     if not apply:
         return {"message": "未提供任何需要更新的配置"}
@@ -546,3 +556,35 @@ async def update_duiyi_reward_coord(body: DuiyiRewardCoordUpdate, db: Session = 
 
     logger.info(f"对弈竞猜领奖坐标已更新: ({body.x1},{body.y1})-({body.x2},{body.y2})")
     return {"message": "保存成功", "x1": body.x1, "y1": body.y1, "x2": body.x2, "y2": body.y2}
+
+
+# --------------- 新建账号默认类型 ---------------
+
+class DefaultAccountProgressUpdate(BaseModel):
+    progress: str  # "ok" | "init"
+
+
+@router.get("/default-account-progress")
+async def get_default_account_progress(db: Session = Depends(get_db)):
+    """获取新建账号默认类型。"""
+    row = db.query(SystemConfig).order_by(SystemConfig.id.asc()).first()
+    progress = (row.default_account_progress or "ok") if row else "ok"
+    return {"progress": progress}
+
+
+@router.put("/default-account-progress")
+async def update_default_account_progress(body: DefaultAccountProgressUpdate, db: Session = Depends(get_db)):
+    """更新新建账号默认类型。"""
+    if body.progress not in ("ok", "init"):
+        raise HTTPException(status_code=400, detail="progress 必须为 'ok' 或 'init'")
+
+    row = db.query(SystemConfig).order_by(SystemConfig.id.asc()).first()
+    if not row:
+        row = SystemConfig()
+        db.add(row)
+    row.default_account_progress = body.progress
+    db.commit()
+    db.refresh(row)
+
+    logger.info(f"新建账号默认类型已更新: {body.progress}")
+    return {"message": "保存成功", "progress": row.default_account_progress}

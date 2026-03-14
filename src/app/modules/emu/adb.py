@@ -73,7 +73,13 @@ class Adb:
     def tap(self, addr: str, x: int, y: int, timeout: float = 10.0) -> None:
         cp = self._run(["-s", addr, "shell", "input", "tap", str(x), str(y)], timeout=timeout)
         if cp.returncode != 0:
-            raise AdbError((cp.stderr or b"").decode(errors="ignore"))
+            err = (cp.stderr or b"").decode(errors="ignore")
+            if "SecurityException" in err or "INJECT_EVENTS" in err:
+                cp2 = self._run(["-s", addr, "shell", "input", "touchscreen", "tap", str(x), str(y)], timeout=timeout)
+                if cp2.returncode != 0:
+                    raise AdbError((cp2.stderr or b"").decode(errors="ignore"))
+                return
+            raise AdbError(err)
 
     def swipe(self, addr: str, x1: int, y1: int, x2: int, y2: int, dur_ms: int = 300, timeout: float = 10.0) -> None:
         cp = self._run(
@@ -81,7 +87,17 @@ class Adb:
             timeout=timeout,
         )
         if cp.returncode != 0:
-            raise AdbError((cp.stderr or b"").decode(errors="ignore"))
+            err = (cp.stderr or b"").decode(errors="ignore")
+            if "SecurityException" in err or "INJECT_EVENTS" in err:
+                cp2 = self._run(
+                    ["-s", addr, "shell", "input", "touchscreen", "swipe",
+                     str(x1), str(y1), str(x2), str(y2), str(dur_ms)],
+                    timeout=timeout,
+                )
+                if cp2.returncode != 0:
+                    raise AdbError((cp2.stderr or b"").decode(errors="ignore"))
+                return
+            raise AdbError(err)
 
     def start_app_monkey(self, addr: str, pkg: str, timeout: float = 10.0, fallback_activity: str | None = None) -> None:
         cp = self._run([

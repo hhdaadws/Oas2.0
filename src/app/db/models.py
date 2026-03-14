@@ -276,4 +276,7 @@ class SystemConfig(Base):
     duiyi_jingcai_answers = Column(JSON, nullable=True)  # 对弈竞猜每窗口答案 {"10:00": "左", "12:00": "右", ...}
     duiyi_reward_coord = Column(JSON, nullable=True)  # 对弈竞猜领奖点击区域 {"x1": 0, "y1": 0, "x2": 100, "y2": 100}
     cross_emulator_cache_enabled = Column(Boolean, default=False)  # 是否开启跨模拟器共享识图缓存
+    foster_kuaqu_first_interval = Column(Float, default=0.8)  # 寄养跨区第一次下滑等待时间（秒）
+    foster_scan_interval = Column(Float, default=0.8)          # 寄养跨区第二次/同区下滑等待时间（秒）
+    default_account_progress = Column(String(20), default="ok")  # 新建账号默认类型 "ok"(日常) | "init"(刷卡)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

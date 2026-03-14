@@ -36,6 +36,7 @@ def init_db():
     _migrate_duiyi_jingcai_answers_column()
     _migrate_duiyi_reward_coord_column()
     _migrate_cloud_user_id_column()
+    _migrate_default_account_progress_column()
 
 
 def _migrate_login_id_unique_constraint():
@@ -137,7 +138,8 @@ def _migrate_system_config_columns():
             if not cols:
                 return
             missing = set()
-            for name in ("nemu_folder", "activity_name", "python_path", "capture_method"):
+            for name in ("nemu_folder", "activity_name", "python_path", "capture_method",
+                         "foster_kuaqu_first_interval", "foster_scan_interval"):
                 if name not in cols:
                     missing.add(name)
 
@@ -150,6 +152,10 @@ def _migrate_system_config_columns():
                     conn.exec_driver_sql("ALTER TABLE system_config ADD COLUMN python_path VARCHAR(1000)")
                 elif name == "capture_method":
                     conn.exec_driver_sql("ALTER TABLE system_config ADD COLUMN capture_method VARCHAR(20) DEFAULT 'adb'")
+                elif name == "foster_kuaqu_first_interval":
+                    conn.exec_driver_sql("ALTER TABLE system_config ADD COLUMN foster_kuaqu_first_interval REAL DEFAULT 0.8")
+                elif name == "foster_scan_interval":
+                    conn.exec_driver_sql("ALTER TABLE system_config ADD COLUMN foster_scan_interval REAL DEFAULT 0.8")
     except Exception as e:
         try:
             from ..core.logger import logger
@@ -652,6 +658,26 @@ def _migrate_cloud_user_id_column():
         try:
             from ..core.logger import logger
             logger.error(f"cloud_user_id 列迁移失败: {e}")
+        except Exception:
+            pass
+
+
+def _migrate_default_account_progress_column():
+    """确保 system_config 表包含 default_account_progress 列。"""
+    try:
+        if engine.url.get_backend_name() != 'sqlite':
+            return
+        with engine.begin() as conn:
+            cols = [r[1] for r in conn.exec_driver_sql("PRAGMA table_info('system_config')").fetchall()]
+            if not cols or 'default_account_progress' in cols:
+                return
+            conn.exec_driver_sql(
+                "ALTER TABLE system_config ADD COLUMN default_account_progress VARCHAR(20) DEFAULT 'ok'"
+            )
+    except Exception as e:
+        try:
+            from ..core.logger import logger
+            logger.error(f"default_account_progress 列迁移失败: {e}")
         except Exception:
             pass
 

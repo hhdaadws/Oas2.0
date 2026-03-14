@@ -13,7 +13,8 @@ from ....db.base import get_db
 from ....db.models import AccountRestConfig, Emulator, GameAccount, SystemConfig
 from ....core.logger import logger
 from ....core.config import settings
-from ....core.constants import AccountStatus, build_default_task_config, build_default_explore_progress
+from copy import deepcopy
+from ....core.constants import AccountStatus, DEFAULT_INIT_TASK_CONFIG, build_default_task_config, build_default_explore_progress
 from ...emu.adb import Adb
 from ...emu.adapter import AdapterConfig, EmulatorAdapter
 
@@ -441,6 +442,11 @@ async def batch_create_accounts(
     fail_delays = (syscfg.default_fail_delays or {}) if syscfg else {}
     task_enabled = (syscfg.default_task_enabled or {}) if syscfg else {}
     default_rest = (syscfg.default_rest_config or {}) if syscfg else {}
+    default_progress = (syscfg.default_account_progress or "ok") if syscfg else "ok"
+    if default_progress == "init":
+        task_cfg = deepcopy(DEFAULT_INIT_TASK_CONFIG)
+    else:
+        task_cfg = build_default_task_config(fail_delays, task_enabled)
 
     created = []
     skipped = []
@@ -452,9 +458,9 @@ async def batch_create_accounts(
 
         game_account = GameAccount(
             login_id=account_id,
-            progress="ok",
+            progress=default_progress,
             status=AccountStatus.ACTIVE,
-            task_config=build_default_task_config(fail_delays, task_enabled),
+            task_config=deepcopy(task_cfg),
             explore_progress=build_default_explore_progress(),
         )
         db.add(game_account)

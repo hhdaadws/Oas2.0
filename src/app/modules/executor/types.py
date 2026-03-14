@@ -17,3 +17,4 @@ class TaskIntent:
     enqueue_time: datetime = field(default_factory=datetime.utcnow)
     payload: dict = field(default_factory=dict)
     started_at: Optional[datetime] = None
+    result_message: Optional[str] = None

@@ -86,6 +86,28 @@
           </span>
         </el-form-item>
 
+        <el-divider content-position="left">寄养设置</el-divider>
+
+        <el-form-item label="跨区第一次扫描间隔">
+          <el-input-number
+            v-model="form.foster_kuaqu_first_interval"
+            :min="0.1" :max="10" :step="0.1" :precision="1"
+          />
+          <span style="margin-left: 8px; color: #909399; font-size: 12px;">
+            秒，跨区列表第一次下滑扫描时每帧等待时间
+          </span>
+        </el-form-item>
+
+        <el-form-item label="扫描下滑间隔">
+          <el-input-number
+            v-model="form.foster_scan_interval"
+            :min="0.1" :max="10" :step="0.1" :precision="1"
+          />
+          <span style="margin-left: 8px; color: #909399; font-size: 12px;">
+            秒，跨区第二次及同区列表扫描时每帧等待时间（共用）
+          </span>
+        </el-form-item>
+
         <el-form-item>
           <el-button @click="load" :loading="loading">刷新</el-button>
           <el-button type="primary" @click="save" :loading="loading">保存</el-button>
@@ -95,6 +117,29 @@
             配置保存在数据库，保存后立即生效。
           </template>
         </el-alert>
+      </el-form>
+    </el-card>
+
+    <el-card style="margin-top: 16px">
+      <template #header>
+        <span>新建账号默认类型</span>
+      </template>
+      <el-alert type="info" :closable="false" show-icon style="margin-bottom: 16px">
+        <template #title>
+          配置新建账号时默认的账号类型。刷卡(init)账号使用起号任务模板，日常(ok)账号使用常规任务模板。
+        </template>
+      </el-alert>
+      <el-form label-width="140px" class="config-form">
+        <el-form-item label="默认类型">
+          <el-radio-group v-model="defaultAccountProgress">
+            <el-radio value="init">刷卡</el-radio>
+            <el-radio value="ok">日常</el-radio>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item>
+          <el-button @click="loadDefaultAccountProgress" :loading="defaultAccountProgressLoading">刷新</el-button>
+          <el-button type="primary" @click="saveDefaultAccountProgress" :loading="defaultAccountProgressLoading">保存</el-button>
+        </el-form-item>
       </el-form>
     </el-card>
 
@@ -153,6 +198,34 @@
         <el-form-item>
           <el-button @click="loadTaskEnabledDefaults" :loading="taskEnabledLoading">刷新</el-button>
           <el-button type="primary" @click="saveTaskEnabledDefaults" :loading="taskEnabledLoading">保存</el-button>
+        </el-form-item>
+      </el-form>
+    </el-card>
+
+    <el-card style="margin-top: 16px">
+      <template #header>
+        <span>全局任务开关</span>
+      </template>
+      <el-alert type="info" :closable="false" show-icon style="margin-bottom: 16px">
+        <template #title>
+          控制特定任务是否全局启用。关闭后所有账号均不会执行该任务，无论账号单独配置如何。
+        </template>
+      </el-alert>
+      <el-form label-width="140px" class="config-form">
+        <el-form-item
+          v-for="item in TASK_SWITCH_ITEMS"
+          :key="item.key"
+          :label="item.label"
+        >
+          <el-switch
+            v-model="taskSwitchesForm[item.key]"
+            active-text="开启"
+            inactive-text="关闭"
+          />
+        </el-form-item>
+        <el-form-item>
+          <el-button @click="loadTaskSwitches" :loading="taskSwitchesLoading">刷新</el-button>
+          <el-button type="primary" @click="saveTaskSwitches" :loading="taskSwitchesLoading">保存</el-button>
         </el-form-item>
       </el-form>
     </el-card>
@@ -297,7 +370,9 @@ const form = reactive({
   ipc_dll_path: '',
   activity_name: '.MainActivity',
   save_fail_screenshot: false,
-  cross_emulator_cache_enabled: false
+  cross_emulator_cache_enabled: false,
+  foster_kuaqu_first_interval: 0.8,
+  foster_scan_interval: 0.8
 })
 const loading = ref(false)
 const emulators = ref([])
@@ -344,6 +419,18 @@ const duiyiAnswersForm = reactive({
 })
 const duiyiAnswersLoading = ref(false)
 const duiyiDate = ref(null)
+
+// 新建账号默认类型
+const defaultAccountProgress = ref('ok')
+const defaultAccountProgressLoading = ref(false)
+
+// 全局任务开关
+const TASK_SWITCH_ITEMS = [
+  { key: '爬塔', label: '爬塔' },
+  { key: '召唤礼包', label: '召唤礼包' },
+]
+const taskSwitchesForm = reactive({})
+const taskSwitchesLoading = ref(false)
 
 // 对弈竞猜领奖点击区域
 const duiyiRewardCoordForm = reactive({ x1: null, y1: null, x2: null, y2: null })
@@ -646,6 +733,75 @@ const saveDuiyiRewardCoord = async () => {
   }
 }
 
+// 新建账号默认类型
+const loadDefaultAccountProgress = async () => {
+  defaultAccountProgressLoading.value = true
+  try {
+    const resp = await apiRequest(API_ENDPOINTS.system.defaultAccountProgress)
+    const data = await resp.json()
+    defaultAccountProgress.value = data.progress || 'ok'
+  } catch (e) {
+    ElMessage.error('加载默认账号类型失败')
+  } finally {
+    defaultAccountProgressLoading.value = false
+  }
+}
+
+const saveDefaultAccountProgress = async () => {
+  defaultAccountProgressLoading.value = true
+  try {
+    const resp = await apiRequest(API_ENDPOINTS.system.defaultAccountProgress, {
+      method: 'PUT',
+      body: JSON.stringify({ progress: defaultAccountProgress.value })
+    })
+    if (!resp.ok) {
+      const data = await resp.json()
+      throw new Error(data?.detail || '保存失败')
+    }
+    ElMessage.success('默认账号类型保存成功')
+  } catch (e) {
+    ElMessage.error(e.message || '保存失败')
+  } finally {
+    defaultAccountProgressLoading.value = false
+  }
+}
+
+// 全局任务开关
+const loadTaskSwitches = async () => {
+  taskSwitchesLoading.value = true
+  try {
+    const resp = await apiRequest(API_ENDPOINTS.system.taskSwitches)
+    const data = await resp.json()
+    const switches = data.switches || {}
+    for (const item of TASK_SWITCH_ITEMS) {
+      taskSwitchesForm[item.key] = switches[item.key] ?? true
+    }
+  } catch (e) {
+    ElMessage.error('加载全局任务开关失败')
+  } finally {
+    taskSwitchesLoading.value = false
+  }
+}
+
+const saveTaskSwitches = async () => {
+  taskSwitchesLoading.value = true
+  try {
+    const resp = await apiRequest(API_ENDPOINTS.system.taskSwitches, {
+      method: 'PUT',
+      body: JSON.stringify({ switches: { ...taskSwitchesForm } })
+    })
+    if (!resp.ok) {
+      const data = await resp.json()
+      throw new Error(data?.detail || '保存失败')
+    }
+    ElMessage.success('全局任务开关保存成功')
+  } catch (e) {
+    ElMessage.error(e.message || '保存失败')
+  } finally {
+    taskSwitchesLoading.value = false
+  }
+}
+
 onMounted(async () => {
   await Promise.all([
     load(),
@@ -655,7 +811,9 @@ onMounted(async () => {
     loadGlobalRest(),
     loadDefaultRestConfig(),
     loadDuiyiAnswers(),
-    loadDuiyiRewardCoord()
+    loadDuiyiRewardCoord(),
+    loadTaskSwitches(),
+    loadDefaultAccountProgress()
   ])
 })
 </script>

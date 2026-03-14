@@ -272,6 +272,14 @@ class ScanQRExecutor:
         self.log.info("已点击 saoma")
         await asyncio.sleep(2)
 
+        # 5. 等待 tongyi.png 出现并点击（同意后才会弹出二维码）
+        self.log.info("等待 tongyi 按钮...")
+        if not await self._click_template("tongyi.png", timeout=30):
+            self.log.warning("未检测到 tongyi.png，继续")
+        else:
+            self.log.info("已点击 tongyi")
+        await asyncio.sleep(2)
+
     async def _phase_qrcode_ready(self) -> None:
         """Phase 2: 检测二维码出现 -> 上传截图 -> 等待扫码（二维码消失）"""
         # 等待二维码出现
@@ -367,9 +375,9 @@ class ScanQRExecutor:
         self.log.info("等待进入按钮...")
         enter_pos = await self._wait_for_template("enter.png", timeout=60)
         if enter_pos:
-            # 点击 enter.png
-            await self._tap(enter_pos[0], enter_pos[1])
-            self.log.info("已点击 enter.png，等待其消失...")
+            # 识别到 enter.png 后点击固定坐标
+            await self._tap(466, 449)
+            self.log.info("已点击固定坐标(466, 449)，等待 enter.png 消失...")
 
             # 循环验证 enter.png 消失，最多等 60 秒
             disappeared = False
@@ -382,8 +390,8 @@ class ScanQRExecutor:
                     break
                 # 每 10 秒再点一次，防止点击没生效
                 if attempt > 0 and attempt % 5 == 0:
-                    self.log.info("enter.png 仍在，再次点击...")
-                    await self._tap(pos[0], pos[1])
+                    self.log.info("enter.png 仍在，再次点击固定坐标(466, 449)...")
+                    await self._tap(466, 449)
 
             if not disappeared:
                 self.log.warning("等待 enter.png 消失超时，强制继续")
@@ -458,9 +466,17 @@ class ScanQRExecutor:
         raise Exception("等待进入庭院超时")
 
     async def _phase_pulling_data(self) -> None:
-        """Phase 6: 抓取账号数据"""
+        """Phase 6: 关闭游戏后抓取账号数据"""
         await self._update_phase("pulling_data")
         self.log.info(f"开始抓取账号数据: login_id={self.login_id}")
+
+        # 先关闭游戏，防止数据在抓取过程中被修改
+        if self.adapter:
+            try:
+                await self.adapter.adb_force_stop(PKG_NAME)
+                self.log.info("游戏已关闭（数据抓取前）")
+            except Exception as e:
+                self.log.warning(f"数据抓取前关闭游戏失败: {e}")
 
         save_dir = Path(PUTONG_DIR) / self.login_id
         save_dir.mkdir(parents=True, exist_ok=True)

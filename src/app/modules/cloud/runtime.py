@@ -15,6 +15,8 @@ class RuntimeModeState:
         self._mode = "cloud" if mode == "cloud" else "local"
         self._manager_username = (settings.cloud_manager_username or "").strip()
         self._manager_password = settings.cloud_manager_password or ""
+        self._manager_type = "all"
+        self._scheduler_type = "all"
         self._lock = Lock()
 
     def get_mode(self) -> str:
@@ -49,6 +51,22 @@ class RuntimeModeState:
     def get_manager_username(self) -> Optional[str]:
         username, _ = self.get_manager_credentials()
         return username or None
+
+    def set_manager_type(self, manager_type: str) -> None:
+        with self._lock:
+            self._manager_type = (manager_type or "all").strip().lower()
+
+    def get_manager_type(self) -> str:
+        with self._lock:
+            return self._manager_type
+
+    def set_scheduler_type(self, scheduler_type: str) -> None:
+        with self._lock:
+            self._scheduler_type = (scheduler_type or "all").strip().lower()
+
+    def get_scheduler_type(self) -> str:
+        with self._lock:
+            return self._scheduler_type
 
 
 runtime_mode_state = RuntimeModeState()

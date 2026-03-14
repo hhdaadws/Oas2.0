@@ -282,32 +282,30 @@ class SummonGiftExecutor(BaseExecutor):
         await self._tap(sx, sy)
         await asyncio.sleep(1.5)
 
-        # 6. 确认进入召唤礼包界面
-        screenshot = await self._capture()
-        if screenshot is None:
-            return {
-                "status": TaskStatus.FAILED,
-                "error": "截图失败",
-                "timestamp": datetime.utcnow().isoformat(),
-            }
-
-        libao_tag = match_template(screenshot, "assets/ui/templates/libao_tag.png")
-        if not libao_tag:
-            self.logger.warning("[召唤礼包] 未进入召唤礼包界面，重试一次")
-            await asyncio.sleep(1.5)
+        # 6. 确认进入召唤礼包界面（最多重试3次）
+        libao_tag = None
+        for attempt in range(3):
             screenshot = await self._capture()
-            if screenshot is not None:
-                libao_tag = match_template(
-                    screenshot, "assets/ui/templates/libao_tag.png"
-                )
-            if not libao_tag:
-                self.logger.error("[召唤礼包] 无法进入召唤礼包界面")
-                self._update_next_time()
+            if screenshot is None:
                 return {
                     "status": TaskStatus.FAILED,
-                    "error": "无法进入召唤礼包界面",
+                    "error": "截图失败",
                     "timestamp": datetime.utcnow().isoformat(),
                 }
+            libao_tag = match_template(screenshot, "assets/ui/templates/libao_tag.png")
+            if libao_tag:
+                break
+            self.logger.warning(f"[召唤礼包] 未进入召唤礼包界面，重试 ({attempt + 1}/3)")
+            await asyncio.sleep(1.5)
+
+        if not libao_tag:
+            self.logger.error("[召唤礼包] 3次重试后仍无法进入召唤礼包界面")
+            self._update_next_time()
+            return {
+                "status": TaskStatus.FAILED,
+                "error": "无法进入召唤礼包界面",
+                "timestamp": datetime.utcnow().isoformat(),
+            }
 
         self.logger.info("[召唤礼包] 已进入召唤礼包界面")
 

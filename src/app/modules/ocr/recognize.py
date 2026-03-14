@@ -4,10 +4,9 @@ from __future__ import annotations
 from typing import List, Optional, Tuple
 
 import cv2
-import numpy as np
 
 from ..vision.utils import ImageLike, load_image
-from .engine import acquire_ocr, acquire_digit_ocr
+from .engine import acquire_digit_ocr
 from .types import OcrBox, OcrResult
 
 # ROI 类型：(x, y, w, h)，与 TemplateDef.roi 格式一致
@@ -20,49 +19,54 @@ def ocr(
     roi: Optional[Roi] = None,
     min_confidence: float = 0.6,
 ) -> OcrResult:
-    """对图像执行 OCR 识别。
+    """对图像执行 OCR 识别（使用 Tesseract）。
 
     Args:
         image: 图像来源（路径 / bytes / np.ndarray）
         roi: 可选区域 (x, y, w, h)，仅识别该区域内的文字
-        min_confidence: 最低置信度阈值，低于此值的结果将被过滤
+        min_confidence: 最低置信度阈值（0.0–1.0），低于此值的结果将被过滤
 
     Returns:
         OcrResult，包含所有识别结果（坐标为大图坐标）
     """
-    engine, lock = acquire_ocr()
+    import pytesseract
+    from ...core.config import settings
+
     img = load_image(image)
 
     # ROI 裁剪
     offset_x, offset_y = 0, 0
     if roi:
         x, y, w, h = roi
-        img = img[y : y + h, x : x + w]
+        img = img[y: y + h, x: x + w]
         offset_x, offset_y = x, y
 
-    # PaddleOCR 3.x: predict() 接受 BGR ndarray，返回 OCRResult 列表
-    with lock:
-        results = engine.predict(img)
+    # Tesseract 需要 RGB（OpenCV 默认 BGR）
+    img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+
+    data = pytesseract.image_to_data(
+        img_rgb,
+        lang=settings.tesseract_lang,
+        output_type=pytesseract.Output.DICT,
+    )
 
     boxes: List[OcrBox] = []
-    if results:
-        result = results[0]
-        rec_texts = result["rec_texts"]
-        rec_scores = result["rec_scores"]
-        rec_polys = result["rec_polys"]
-        for text, confidence, poly in zip(rec_texts, rec_scores, rec_polys):
-            if confidence < min_confidence:
-                continue
-            # 坐标偏移还原为大图坐标
-            adjusted_box = [
-                (int(p[0] + offset_x), int(p[1] + offset_y))
-                for p in poly
-            ]
-            boxes.append(OcrBox(
-                text=text,
-                confidence=float(confidence),
-                box=adjusted_box,
-            ))
+    for i in range(len(data["text"])):
+        text = data["text"][i].strip()
+        conf = int(data["conf"][i])
+        # conf == -1 表示该行无有效置信度（非文字区域），text 为空也跳过
+        if not text or conf == -1:
+            continue
+        confidence = conf / 100.0
+        if confidence < min_confidence:
+            continue
+
+        x1 = int(data["left"][i]) + offset_x
+        y1 = int(data["top"][i]) + offset_y
+        x2 = x1 + int(data["width"][i])
+        y2 = y1 + int(data["height"][i])
+        box = [(x1, y1), (x2, y1), (x2, y2), (x1, y2)]
+        boxes.append(OcrBox(text=text, confidence=confidence, box=box))
 
     return OcrResult(boxes=boxes)
 
@@ -89,7 +93,7 @@ def ocr_digits(
 
     if roi:
         x, y, w, h = roi
-        img = img[y : y + h, x : x + w]
+        img = img[y: y + h, x: x + w]
 
     # ddddocr 接受 PNG bytes
     _, buf = cv2.imencode(".png", img)

@@ -97,10 +97,10 @@
           <div class="roi-form">
             <div class="roi-title">区域截取</div>
             <el-form :inline="true">
-              <el-form-item label="x"><el-input-number v-model="roi.x" :min="0" /></el-form-item>
-              <el-form-item label="y"><el-input-number v-model="roi.y" :min="0" /></el-form-item>
-              <el-form-item label="w"><el-input-number v-model="roi.w" :min="0" /></el-form-item>
-              <el-form-item label="h"><el-input-number v-model="roi.h" :min="0" /></el-form-item>
+              <el-form-item label="x1"><el-input-number v-model="roi.x1" :min="0" /></el-form-item>
+              <el-form-item label="y1"><el-input-number v-model="roi.y1" :min="0" /></el-form-item>
+              <el-form-item label="x2"><el-input-number v-model="roi.x2" :min="0" /></el-form-item>
+              <el-form-item label="y2"><el-input-number v-model="roi.y2" :min="0" /></el-form-item>
               <el-form-item>
                 <el-button :disabled="!screenshotUrl" @click="makeRoiPreview">
                   <el-icon><Crop /></el-icon>
@@ -110,7 +110,21 @@
                   OCR 识别
                 </el-button>
               </el-form-item>
+              <el-form-item>
+                <el-button :disabled="savePreviewLoading" @click="pickSaveDirectory">
+                  选择保存文件夹
+                </el-button>
+                <el-button
+                  type="primary"
+                  :disabled="!screenshotUrl || savePreviewLoading"
+                  :loading="savePreviewLoading"
+                  @click="saveRoiPreviewToFolder"
+                >
+                  保存预览到该文件夹
+                </el-button>
+              </el-form-item>
             </el-form>
+            <div class="save-dir-tip">保存目录：{{ saveDirName || '未选择' }}</div>
             <div class="roi-preview" v-if="roiPreviewUrl">
               <img :src="roiPreviewUrl" alt="roi" />
             </div>
@@ -136,7 +150,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, computed, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { API_ENDPOINTS, buildApiUrl, apiRequest } from '@/config'
@@ -159,13 +173,94 @@ const isSelecting = ref(false)
 const hasSelection = ref(false)
 const selStart = ref({ x: 0, y: 0 })
 const selEnd = ref({ x: 0, y: 0 })
-const roi = ref({ x: 0, y: 0, w: 0, h: 0 })
+const roi = ref({ x1: 0, y1: 0, x2: 0, y2: 0 })
 const roiPreviewUrl = ref('')
+const roiPreviewBlob = ref(null)
+const roiPreviewMeta = ref(null)
+const saveDirHandle = ref(null)
+const saveDirName = ref('')
+const savePreviewLoading = ref(false)
 const ocrResult = ref(null)
 const ocrLoading = ref(false)
 const cursorPos = ref(null)
 
 const goBack = () => router.push('/emulators')
+
+const clamp = (v, min, max) => Math.min(max, Math.max(min, v))
+
+const revokeObjectUrl = (url) => {
+  if (url) URL.revokeObjectURL(url)
+}
+
+const clearRoiPreview = () => {
+  revokeObjectUrl(roiPreviewUrl.value)
+  roiPreviewUrl.value = ''
+  roiPreviewBlob.value = null
+  roiPreviewMeta.value = null
+}
+
+const clearScreenshot = () => {
+  revokeObjectUrl(screenshotUrl.value)
+  screenshotUrl.value = ''
+  imgNatural.value = { w: 0, h: 0 }
+}
+
+const normalizeRoiPoints = (raw = roi.value) => {
+  const naturalW = Number(imgNatural.value.w) || 0
+  const naturalH = Number(imgNatural.value.h) || 0
+  if (naturalW <= 0 || naturalH <= 0) return null
+
+  let x1 = Math.round(Number(raw?.x1 ?? 0))
+  let y1 = Math.round(Number(raw?.y1 ?? 0))
+  let x2 = Math.round(Number(raw?.x2 ?? 0))
+  let y2 = Math.round(Number(raw?.y2 ?? 0))
+  if (!Number.isFinite(x1)) x1 = 0
+  if (!Number.isFinite(y1)) y1 = 0
+  if (!Number.isFinite(x2)) x2 = 0
+  if (!Number.isFinite(y2)) y2 = 0
+
+  x1 = clamp(x1, 0, naturalW)
+  y1 = clamp(y1, 0, naturalH)
+  x2 = clamp(x2, 0, naturalW)
+  y2 = clamp(y2, 0, naturalH)
+
+  const left = Math.min(x1, x2)
+  const top = Math.min(y1, y2)
+  const right = Math.max(x1, x2)
+  const bottom = Math.max(y1, y2)
+
+  if (right <= left || bottom <= top) return null
+  return { x1: left, y1: top, x2: right, y2: bottom }
+}
+
+const roiPointsToRect = (points) => {
+  if (!points) return null
+  return {
+    x: points.x1,
+    y: points.y1,
+    w: points.x2 - points.x1,
+    h: points.y2 - points.y1
+  }
+}
+
+const canvasToPngBlob = (canvas) =>
+  new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (blob) resolve(blob)
+      else reject(new Error('生成预览失败'))
+    }, 'image/png')
+  })
+
+const isDirectoryPickerSupported = () =>
+  typeof window !== 'undefined' && typeof window.showDirectoryPicker === 'function'
+
+const formatDateForFileName = (d = new Date()) => {
+  const pad2 = (n) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}${pad2(d.getMonth() + 1)}${pad2(d.getDate())}_${pad2(d.getHours())}${pad2(d.getMinutes())}${pad2(d.getSeconds())}`
+}
+
+const buildRoiFileName = (normalizedPoints) =>
+  `roi_${formatDateForFileName()}_x1${normalizedPoints.x1}_y1${normalizedPoints.y1}_x2${normalizedPoints.x2}_y2${normalizedPoints.y2}.png`
 
 const fetchEmulators = async () => {
   try {
@@ -190,7 +285,9 @@ const fetchSystem = async () => {
 }
 
 const onEmuChange = () => {
-  screenshotUrl.value = ''
+  clearScreenshot()
+  clearRoiPreview()
+  hasSelection.value = false
 }
 
 const refreshScreenshot = async () => {
@@ -214,11 +311,11 @@ const refreshScreenshot = async () => {
       }
     }
     const blob = await resp.blob()
-    if (screenshotUrl.value) URL.revokeObjectURL(screenshotUrl.value)
+    clearScreenshot()
     screenshotUrl.value = URL.createObjectURL(blob)
     // 清除已有选区
     hasSelection.value = false
-    roiPreviewUrl.value = ''
+    clearRoiPreview()
   } catch (e) {
     ElMessage.error(e.message || '拉取截图失败')
   } finally {
@@ -297,17 +394,17 @@ const endSelection = () => {
   hasSelection.value = true
   // 写入 roi（原图坐标）
   const rect = imgRef.value.getBoundingClientRect()
-  const x1 = Math.max(0, Math.min(selStart.value.x, selEnd.value.x))
-  const y1 = Math.max(0, Math.min(selStart.value.y, selEnd.value.y))
-  const x2 = Math.max(0, Math.max(selStart.value.x, selEnd.value.x))
-  const y2 = Math.max(0, Math.max(selStart.value.y, selEnd.value.y))
+  const x1 = clamp(Math.min(selStart.value.x, selEnd.value.x), 0, rect.width)
+  const y1 = clamp(Math.min(selStart.value.y, selEnd.value.y), 0, rect.height)
+  const x2 = clamp(Math.max(selStart.value.x, selEnd.value.x), 0, rect.width)
+  const y2 = clamp(Math.max(selStart.value.y, selEnd.value.y), 0, rect.height)
   const scaleX = imgNatural.value.w / rect.width
   const scaleY = imgNatural.value.h / rect.height
   roi.value = {
-    x: Math.round(x1 * scaleX),
-    y: Math.round(y1 * scaleY),
-    w: Math.round((x2 - x1) * scaleX),
-    h: Math.round((y2 - y1) * scaleY)
+    x1: Math.round(x1 * scaleX),
+    y1: Math.round(y1 * scaleY),
+    x2: Math.round(x2 * scaleX),
+    y2: Math.round(y2 * scaleY)
   }
 }
 
@@ -323,25 +420,106 @@ const selectionStyle = computed(() => {
 })
 
 const makeRoiPreview = async () => {
-  if (!screenshotUrl.value || !imgRef.value) return
-  const imgEl = imgRef.value
-  const canvas = document.createElement('canvas')
-  canvas.width = roi.value.w
-  canvas.height = roi.value.h
-  const ctx = canvas.getContext('2d')
-  const tmpImg = new Image()
-  await new Promise((resolve, reject) => {
-    tmpImg.onload = resolve
-    tmpImg.onerror = reject
-    tmpImg.src = screenshotUrl.value
-  })
-  // 按原图裁剪
-  ctx.drawImage(
-    tmpImg,
-    roi.value.x, roi.value.y, roi.value.w, roi.value.h,
-    0, 0, roi.value.w, roi.value.h
-  )
-  roiPreviewUrl.value = canvas.toDataURL('image/png')
+  if (!screenshotUrl.value || !imgRef.value || imgNatural.value.w <= 0 || imgNatural.value.h <= 0) {
+    ElMessage.warning('请先获取截图')
+    return false
+  }
+
+  const normalizedPoints = normalizeRoiPoints()
+  if (!normalizedPoints) {
+    clearRoiPreview()
+    ElMessage.warning('请先框选有效区域（x2/x1 与 y2/y1 需形成有效矩形）')
+    return false
+  }
+
+  const normalizedRoi = roiPointsToRect(normalizedPoints)
+  if (!normalizedRoi) return false
+  roi.value = { ...normalizedPoints }
+  try {
+    const canvas = document.createElement('canvas')
+    canvas.width = normalizedRoi.w
+    canvas.height = normalizedRoi.h
+    const ctx = canvas.getContext('2d')
+    if (!ctx) throw new Error('画布初始化失败')
+
+    ctx.drawImage(
+      imgRef.value,
+      normalizedRoi.x, normalizedRoi.y, normalizedRoi.w, normalizedRoi.h,
+      0, 0, normalizedRoi.w, normalizedRoi.h
+    )
+
+    const blob = await canvasToPngBlob(canvas)
+    clearRoiPreview()
+    roiPreviewBlob.value = blob
+    roiPreviewMeta.value = { ...normalizedPoints }
+    roiPreviewUrl.value = URL.createObjectURL(blob)
+    return true
+  } catch (e) {
+    clearRoiPreview()
+    ElMessage.error(e.message || '生成预览失败')
+    return false
+  }
+}
+
+const pickSaveDirectory = async () => {
+  if (!isDirectoryPickerSupported()) {
+    ElMessage.warning('当前运行环境不支持指定文件夹保存')
+    return false
+  }
+  try {
+    const dirHandle = await window.showDirectoryPicker({ mode: 'readwrite' })
+    saveDirHandle.value = dirHandle
+    saveDirName.value = dirHandle?.name || ''
+    return true
+  } catch (e) {
+    if (e?.name !== 'AbortError') {
+      ElMessage.error(e.message || '选择保存文件夹失败')
+    }
+    return false
+  }
+}
+
+const saveRoiPreviewToFolder = async () => {
+  if (savePreviewLoading.value) return
+  savePreviewLoading.value = true
+  try {
+    if (!isDirectoryPickerSupported()) {
+      ElMessage.warning('当前运行环境不支持指定文件夹保存')
+      return
+    }
+
+    if (!roiPreviewBlob.value) {
+      const ok = await makeRoiPreview()
+      if (!ok) return
+    }
+
+    if (!saveDirHandle.value) {
+      const selected = await pickSaveDirectory()
+      if (!selected) return
+    }
+
+    const normalizedPoints = roiPreviewMeta.value || normalizeRoiPoints()
+    if (!normalizedPoints || !roiPreviewBlob.value) {
+      ElMessage.warning('当前没有可保存的预览图')
+      return
+    }
+
+    const fileName = buildRoiFileName(normalizedPoints)
+    const fileHandle = await saveDirHandle.value.getFileHandle(fileName, { create: true })
+    const writable = await fileHandle.createWritable()
+    await writable.write(roiPreviewBlob.value)
+    await writable.close()
+    ElMessage.success(`已保存预览：${fileName}`)
+  } catch (e) {
+    if (e?.name === 'AbortError') return
+    if (e?.name === 'NotAllowedError') {
+      ElMessage.error('没有文件夹写入权限，请重新选择目录')
+      return
+    }
+    ElMessage.error(e.message || '保存预览失败')
+  } finally {
+    savePreviewLoading.value = false
+  }
 }
 
 const runOcr = async () => {
@@ -349,15 +527,14 @@ const runOcr = async () => {
   ocrLoading.value = true
   ocrResult.value = null
   try {
+    const normalizedPoints = normalizeRoiPoints()
+    const normalizedRoi = roiPointsToRect(normalizedPoints)
+    const payload = normalizedRoi
+      ? { ...normalizedRoi, method: shotMethod.value }
+      : { x: 0, y: 0, w: 0, h: 0, method: shotMethod.value }
     const resp = await apiRequest(API_ENDPOINTS.emulatorOcr(selectedId.value), {
       method: 'POST',
-      body: JSON.stringify({
-        x: roi.value.x,
-        y: roi.value.y,
-        w: roi.value.w,
-        h: roi.value.h,
-        method: shotMethod.value,
-      })
+      body: JSON.stringify(payload)
     })
     const data = await resp.json()
     if (!resp.ok) throw new Error(data?.detail || 'OCR 识别失败')
@@ -371,6 +548,10 @@ const runOcr = async () => {
 }
 
 onMounted(async () => { await fetchEmulators(); await fetchSystem(); })
+onBeforeUnmount(() => {
+  clearScreenshot()
+  clearRoiPreview()
+})
 </script>
 
 <style scoped>
@@ -396,6 +577,7 @@ onMounted(async () => { await fetchEmulators(); await fetchSystem(); })
 .side-panel { width: 320px; }
 .roi-form { background: #fff; padding: 10px; border-radius: 4px; }
 .roi-title { margin-bottom: 6px; font-weight: 600; }
+.save-dir-tip { margin: 4px 0 10px; color: #606266; font-size: 12px; word-break: break-all; }
 .roi-preview img { max-width: 100%; border: 1px solid #e5e5e5; border-radius: 4px; }
 .ocr-result { margin-top: 8px; }
 .ocr-fulltext { background: #f5f7fa; padding: 8px; border-radius: 4px; font-size: 13px; word-break: break-all; user-select: text; }
